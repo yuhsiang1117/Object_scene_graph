@@ -34,6 +34,10 @@ class YoloeDetector(Detector):
         from ultralytics import YOLOE  # deferred: heavy import
 
         self.model = YOLOE(weights)
+        # Checkpoints ship fp16 weights; get_text_pe feeds the fp32 mobileclip
+        # features through the checkpoint's text head -> dtype mismatch unless
+        # the model is fp32. Inference still runs fp16 via predict(half=True).
+        self.model.model.float()
         self.conf = conf
         self.imgsz = imgsz
         self.half = half
@@ -47,21 +51,21 @@ class YoloeDetector(Detector):
         return label.lower().replace("_", " ").strip()
 
     def set_vocabulary(self, classes: List[str]) -> None:
-        """Text embeddings are computed on CPU: the mobileclip encoder is only
-        needed here, and on small GPUs (6 GB) there is no VRAM to spare for it.
-        Labels are normalized so a repeated vocabulary (the common per-episode
-        case: target already in the default list) is a no-op."""
+        """Labels are normalized so a repeated vocabulary (the common
+        per-episode case: target already in the default list) is a no-op.
+        The mobileclip text encoder is fp16 torchscript (CUDA-only); it is
+        evicted from VRAM right after encoding — with a fixed vocabulary it
+        is never needed again."""
         classes = list(dict.fromkeys(self._normalize(c) for c in classes))
         if classes == self._classes:
             return
         import torch
 
-        prev_device = next(self.model.model.parameters()).device
-        self.model.model.to("cpu")
-        pe = self.model.get_text_pe(classes)
-        self.model.set_classes(classes, pe)
-        self.model.model.to(prev_device)
-        if prev_device.type == "cuda":
+        self.model.model.to(self.device)
+        self.model.set_classes(classes, self.model.get_text_pe(classes))
+        if hasattr(self.model.model, "clip_model"):
+            del self.model.model.clip_model  # free the 572MB encoder
+        if str(self.device).startswith("cuda"):
             torch.cuda.empty_cache()
         self._classes = classes
 

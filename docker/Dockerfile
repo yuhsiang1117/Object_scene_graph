@@ -45,6 +45,10 @@ RUN apt-get update && apt-get install -y --no-install-recommends \
     libopengl0 libglx0 \
     && rm -rf /var/lib/apt/lists/*
 
+# CLIP tokenizer used by YOLOE's text prompts (otherwise ultralytics
+# AutoUpdate re-installs it in every ephemeral container).
+RUN pip install --no-cache-dir git+https://github.com/ultralytics/CLIP.git
+
 COPY docker/entrypoint.sh /entrypoint.sh
 RUN chmod +x /entrypoint.sh
 
