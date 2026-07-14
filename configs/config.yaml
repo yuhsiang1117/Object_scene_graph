@@ -1,0 +1,17 @@
+defaults:
+  - base_config
+  - agent: default
+  - detector: yoloe_small   # 6GB VRAM profile; switch to `yoloe` on >=12GB
+  - scene_graph: default
+  - exploration: vlm
+  - llm: ollama
+  - verification: "on"
+  - eval: hm3d_val_mini
+  - _self_
+
+seed: 42
+output_dir: outputs/${now:%Y%m%d_%H%M%S}
+
+hydra:
+  job:
+    chdir: false

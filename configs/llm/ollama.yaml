@@ -1,0 +1,5 @@
+defaults:
+  - base_ollama
+
+# 6 GB profile: one 3B multimodal model serves both text and vision roles.
+# 12 GB: text_model/vlm_model: qwen2.5vl:7b

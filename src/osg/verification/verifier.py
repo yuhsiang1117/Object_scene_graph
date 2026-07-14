@@ -1,0 +1,56 @@
+"""Improvement C, part 2: VLM verification of candidate targets. A rejected
+candidate is blacklisted in the object layer and exploration resumes —
+false-positive detections are a dominant failure mode of open-vocabulary
+ObjectNav pipelines.
+"""
+from __future__ import annotations
+
+from typing import Optional
+
+import numpy as np
+
+from ..llm import prompts
+from ..llm.client import ChatClient
+from ..objects.association import ObjectTrack
+
+
+class TargetVerifier:
+    def __init__(self, vlm: ChatClient, accept_confidence: float = 0.5) -> None:
+        self.vlm = vlm
+        self.accept_confidence = accept_confidence
+        self.n_calls = 0
+        self.n_rejections = 0
+
+    def verify(
+        self,
+        track: ObjectTrack,
+        target: str,
+        live_view: Optional[np.ndarray] = None,
+    ) -> bool:
+        images = []
+        if track.best_crop is not None:
+            images.append(track.best_crop)
+        if live_view is not None:
+            images.append(live_view)
+        if not images:
+            return False  # nothing to verify against — do not stop blindly
+
+        target_text = target.replace("_", " ")
+        try:
+            resp = self.vlm.chat(
+                prompts.VERIFY_SYSTEM,
+                prompts.VERIFY_USER.format(target=target_text),
+                images=images,
+            )
+        except Exception:
+            # VLM unavailable: fail open (paper behavior = no verification)
+            return True
+        finally:
+            self.n_calls += 1
+
+        is_target = bool(resp.get("is_target", False))
+        conf = float(resp.get("confidence", 0.0))
+        accepted = is_target and conf >= self.accept_confidence
+        if not accepted:
+            self.n_rejections += 1
+        return accepted

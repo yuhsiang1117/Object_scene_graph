@@ -1,0 +1,48 @@
+services:
+  ollama:
+    image: ollama/ollama:latest
+    restart: unless-stopped
+    environment:
+      - OLLAMA_KEEP_ALIVE=30m
+      - OLLAMA_MAX_LOADED_MODELS=1
+    volumes:
+      - ollama-models:/root/.ollama
+    ports:
+      - "11434:11434"
+    deploy:
+      resources:
+        reservations:
+          devices:
+            - driver: nvidia
+              count: 1
+              capabilities: [gpu]
+
+  nav:
+    build:
+      context: .
+      dockerfile: docker/Dockerfile
+    depends_on:
+      - ollama
+    stdin_open: true
+    tty: true
+    environment:
+      - OLLAMA_HOST=http://ollama:11434
+      - NVIDIA_DRIVER_CAPABILITIES=all
+    volumes:
+      - .:/workspace
+      - ${HM3D_DATA_DIR:-./data/scene_datasets/hm3d}:/workspace/data/scene_datasets/hm3d
+      - ${OBJECTNAV_EPISODES_DIR:-./data/datasets/objectnav/hm3d}:/workspace/data/datasets/objectnav/hm3d
+      - weights-cache:/workspace/data/weights
+      - ./outputs:/workspace/outputs
+    deploy:
+      resources:
+        reservations:
+          devices:
+            - driver: nvidia
+              count: 1
+              capabilities: [gpu, graphics]
+    ipc: host
+
+volumes:
+  ollama-models: {}
+  weights-cache: {}

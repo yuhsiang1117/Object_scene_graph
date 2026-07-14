@@ -1,0 +1,5 @@
+# @package _global_
+# Full system: VLM multimodal frontier scoring + verification (improvements B + C)
+defaults:
+  - override /exploration: vlm
+  - override /verification: "on"

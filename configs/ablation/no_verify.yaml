@@ -1,0 +1,5 @@
+# @package _global_
+# VLM scoring but no target verification (isolates improvement C)
+defaults:
+  - override /exploration: vlm
+  - override /verification: "off"

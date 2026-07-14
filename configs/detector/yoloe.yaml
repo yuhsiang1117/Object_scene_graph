@@ -1,0 +1,6 @@
+defaults:
+  - base_yoloe
+
+# 12 GB profile
+weights: data/weights/yoloe-11l-seg.pt
+imgsz: 640
