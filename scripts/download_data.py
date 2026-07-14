@@ -40,31 +40,12 @@ def download_episodes() -> None:
         urllib.request.urlretrieve(EPISODES_URL, zip_path)
     with zipfile.ZipFile(zip_path) as z:
         z.extractall(dest)
-    print(f"episodes extracted under {dest}")
-    # Provide a tiny val_mini split (first scene's episodes) for smoke evals
-    _make_val_mini(dest)
-
-
-def _make_val_mini(dest: Path) -> None:
-    import gzip
-    import json
-
-    val = dest / "v2/val/val.json.gz"
-    content_dir = dest / "v2/val/content"
-    mini_dir = dest / "v2/val_mini"
-    if not val.exists() or (mini_dir / "val_mini.json.gz").exists():
-        return
-    mini_dir.mkdir(parents=True, exist_ok=True)
-    with gzip.open(val, "rt") as f:
-        top = json.load(f)
-    with gzip.open(mini_dir / "val_mini.json.gz", "wt") as f:
-        json.dump(top, f)
-    scenes = sorted(content_dir.glob("*.json.gz"))[:1]
-    mini_content = mini_dir / "content"
-    mini_content.mkdir(exist_ok=True)
-    for s in scenes:
-        (mini_content / s.name).write_bytes(s.read_bytes())
-    print(f"val_mini split created from {scenes[0].name if scenes else 'nothing'}")
+    # The zip's top-level dir is objectnav_hm3d_v2/; configs expect v2/
+    v2 = dest / "v2"
+    if not v2.exists() and (dest / "objectnav_hm3d_v2").exists():
+        v2.symlink_to("objectnav_hm3d_v2")
+    print(f"episodes extracted under {dest} (splits: "
+          f"{sorted(p.name for p in v2.iterdir() if p.is_dir())})")
 
 
 def main() -> None:

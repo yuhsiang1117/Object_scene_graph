@@ -33,10 +33,10 @@ def make_objectnav_config(cfg):
         agent = sim.agents.main_agent
         agent.sim_sensors.rgb_sensor.width = cfg.eval.rgb_width
         agent.sim_sensors.rgb_sensor.height = cfg.eval.rgb_height
-        agent.sim_sensors.rgb_sensor.hfov = cfg.eval.hfov_deg
+        agent.sim_sensors.rgb_sensor.hfov = int(cfg.eval.hfov_deg)  # habitat wants int
         agent.sim_sensors.depth_sensor.width = cfg.eval.rgb_width
         agent.sim_sensors.depth_sensor.height = cfg.eval.rgb_height
-        agent.sim_sensors.depth_sensor.hfov = cfg.eval.hfov_deg
+        agent.sim_sensors.depth_sensor.hfov = int(cfg.eval.hfov_deg)
         agent.sim_sensors.depth_sensor.normalize_depth = False
         agent.height = 1.5
         agent.radius = cfg.agent.agent_radius

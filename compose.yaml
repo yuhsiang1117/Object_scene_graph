@@ -29,9 +29,12 @@ services:
       - OLLAMA_HOST=http://ollama:11434
       - NVIDIA_DRIVER_CAPABILITIES=all
     volumes:
+      # The repo bind mount already covers ./data (gitignored). If your HM3D
+      # data lives outside the repo, add an explicit mount here, e.g.:
+      #   - /path/to/hm3d:/workspace/data/scene_datasets/hm3d:ro
+      # (note: a mount at that path breaks scripts/download_data.py, which
+      # needs to create a symlink there — mount only pre-downloaded data)
       - .:/workspace
-      - ${HM3D_DATA_DIR:-./data/scene_datasets/hm3d}:/workspace/data/scene_datasets/hm3d
-      - ${OBJECTNAV_EPISODES_DIR:-./data/datasets/objectnav/hm3d}:/workspace/data/datasets/objectnav/hm3d
       - weights-cache:/workspace/data/weights
       - ./outputs:/workspace/outputs
     deploy:
