@@ -9,6 +9,7 @@ from typing import List, Optional
 import numpy as np
 from scipy import ndimage
 
+from ..core.geometry import bresenham
 from ..mapping.costmap import FREE, OCCUPIED, Costmap2D
 
 
@@ -41,26 +42,15 @@ class ViewpointPlanner:
 
     @staticmethod
     def _line_of_sight(costmap: Costmap2D, from_xy: np.ndarray, to_xy: np.ndarray) -> bool:
-        """Bresenham ray must not cross occupied cells (cells adjacent to the
+        """The ray must not cross occupied cells (cells adjacent to the
         object itself are excluded — the object is an obstacle)."""
         rc0 = costmap.world_to_grid(from_xy)
         rc1 = costmap.world_to_grid(to_xy)
-        r, c = int(rc0[0]), int(rc0[1])
         r1, c1 = int(rc1[0]), int(rc1[1])
-        dr, dc = abs(r1 - r), abs(c1 - c)
-        sr = 1 if r1 >= r else -1
-        sc = 1 if c1 >= c else -1
-        err = dr - dc
         skip_near = max(2, int(0.3 / costmap.resolution))  # cells near the object
-        while (r, c) != (r1, c1):
-            if np.hypot(r1 - r, c1 - c) > skip_near:
-                if costmap.in_bounds(np.array([r, c])) and costmap.grid[r, c] == OCCUPIED:
-                    return False
-            e2 = 2 * err
-            if e2 > -dc:
-                err -= dc
-                r += sr
-            if e2 < dr:
-                err += dc
-                c += sc
+        for r, c in bresenham(int(rc0[0]), int(rc0[1]), r1, c1):
+            if np.hypot(r1 - r, c1 - c) <= skip_near:
+                continue
+            if costmap.in_bounds(np.array([r, c])) and costmap.grid[r, c] == OCCUPIED:
+                return False
         return True

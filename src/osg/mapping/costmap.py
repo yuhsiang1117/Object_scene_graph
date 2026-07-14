@@ -9,7 +9,7 @@ from typing import Optional, Tuple
 
 import numpy as np
 
-from ..core.geometry import backproject
+from ..core.geometry import backproject, bresenham
 from ..core.types import FrameData
 
 UNKNOWN, FREE, OCCUPIED = -1, 0, 100
@@ -83,16 +83,10 @@ class Costmap2D:
             self.grid[cam_rc[0], cam_rc[1]] = FREE
 
     def _ray_free(self, rc0: np.ndarray, rc1: np.ndarray, mark_end: int) -> None:
-        """Bresenham; marks intermediate unknown/free cells FREE, endpoint mark_end.
+        """Marks intermediate unknown/free cells FREE, endpoint mark_end.
         Occupied intermediate cells stop the ray (don't carve through walls)."""
-        r0, c0 = int(rc0[0]), int(rc0[1])
         r1, c1 = int(rc1[0]), int(rc1[1])
-        dr, dc = abs(r1 - r0), abs(c1 - c0)
-        sr = 1 if r1 >= r0 else -1
-        sc = 1 if c1 >= c0 else -1
-        err = dr - dc
-        r, c = r0, c0
-        while True:
+        for r, c in bresenham(int(rc0[0]), int(rc0[1]), r1, c1):
             if not (0 <= r < self.grid.shape[0] and 0 <= c < self.grid.shape[1]):
                 return
             if (r, c) == (r1, c1):
@@ -102,13 +96,6 @@ class Costmap2D:
                 self.grid[r, c] = FREE
             else:
                 return  # blocked
-            e2 = 2 * err
-            if e2 > -dc:
-                err -= dc
-                r += sr
-            if e2 < dr:
-                err += dc
-                c += sc
 
     # ------------------------------------------------------------------ views
 

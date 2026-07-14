@@ -39,6 +39,12 @@ ENV NVIDIA_DRIVER_CAPABILITIES=all \
     HABITAT_SIM_LOG=quiet \
     __EGL_VENDOR_LIBRARY_FILENAMES=/usr/share/glvnd/egl_vendor.d/10_nvidia.json
 
+# GLVND OpenGL dispatch + GLX, required by habitat-sim bindings. Kept as a
+# late layer so it reuses the (expensive) conda/torch layers above.
+RUN apt-get update && apt-get install -y --no-install-recommends \
+    libopengl0 libglx0 \
+    && rm -rf /var/lib/apt/lists/*
+
 COPY docker/entrypoint.sh /entrypoint.sh
 RUN chmod +x /entrypoint.sh
 

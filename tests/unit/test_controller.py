@@ -16,13 +16,12 @@ def test_forward_when_aligned():
 
 def test_turns_toward_waypoint():
     c = WaypointController()
-    T = make_camera([0.0, 0.88, 0.0], [1.0, 0.88, 0.0])  # facing +x
-    path_left = np.array([[0.0, 0.0], [0.0, 1.0]])  # target 90 deg left (plane axis 1)
-    action = c.act(T, path_left)
-    assert action in (TURN_LEFT, TURN_RIGHT)
-    # Consistency: opposite side gives opposite turn
-    path_right = np.array([[0.0, 0.0], [0.0, -1.0]])
-    assert {c.act(T, path_left), c.act(T, path_right)} == {TURN_LEFT, TURN_RIGHT}
+    T = make_camera([0.0, 0.88, 0.0], [1.0, 0.88, 0.0])  # facing world +x
+    # Facing +x with up +y: right = forward x up = +z (plane axis 1)
+    path_pos_z = np.array([[0.0, 0.0], [0.0, 1.0]])
+    assert c.act(T, path_pos_z) == TURN_RIGHT
+    path_neg_z = np.array([[0.0, 0.0], [0.0, -1.0]])
+    assert c.act(T, path_neg_z) == TURN_LEFT
 
 
 def test_arrival_returns_none():

@@ -14,8 +14,8 @@ def _map_with_opening() -> Costmap2D:
     cm.grid[39, 39:61] = OCCUPIED
     cm.grid[60, 39:61] = OCCUPIED
     cm.grid[39:61, 39] = OCCUPIED
-    cm.grid[40:48, 60] = OCCUPIED   # partial right wall ...
-    cm.grid[52:61, 60] = OCCUPIED   # ... with a gap at rows 48..51
+    cm.grid[40:44, 60] = OCCUPIED   # partial right wall ...
+    cm.grid[52:61, 60] = OCCUPIED   # ... with a gap at rows 44..51
     return cm
 
 
@@ -24,8 +24,8 @@ def test_single_frontier_at_opening():
     frontiers = FrontierExtractor(min_cells=3, dedup_m=0.5).extract(cm)
     assert len(frontiers) == 1
     f = frontiers[0]
-    # The frontier sits at the gap (rows 48-51, col 59)
-    assert 47 <= f.cells[:, 0].mean() <= 52
+    # The frontier sits at the gap (rows 44-51, col 59)
+    assert 43 <= f.cells[:, 0].mean() <= 52
     assert 58 <= f.cells[:, 1].mean() <= 60
 
 

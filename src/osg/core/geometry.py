@@ -127,6 +127,27 @@ def quat_to_matrix(w: float, x: float, y: float, z: float) -> np.ndarray:
     )
 
 
+def bresenham(r0: int, c0: int, r1: int, c1: int):
+    """Canonical integer Bresenham: yields (r, c) from (r0, c0) to (r1, c1)
+    inclusive. Guaranteed to terminate at the endpoint."""
+    dr = abs(r1 - r0)
+    dc = -abs(c1 - c0)
+    sr = 1 if r0 < r1 else -1
+    sc = 1 if c0 < c1 else -1
+    err = dr + dc
+    while True:
+        yield r0, c0
+        if r0 == r1 and c0 == c1:
+            return
+        e2 = 2 * err
+        if e2 >= dc:
+            err += dc
+            r0 += sr
+        if e2 <= dr:
+            err += dr
+            c0 += sc
+
+
 def sqrtm_2x2_spd(M: np.ndarray) -> np.ndarray:
     """Closed-form principal square root of a 2x2 SPD matrix."""
     det = max(M[0, 0] * M[1, 1] - M[0, 1] * M[1, 0], 0.0)

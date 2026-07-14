@@ -59,7 +59,9 @@ class WaypointController:
         desired = np.arctan2(to_wp[1], to_wp[0])
         err = _wrap(desired - agent_heading(T_wc))
         if abs(err) > self.heading_tol:
-            return TURN_LEFT if err > 0 else TURN_RIGHT
+            # habitat turn_left = +rotation about world +y, which *decreases*
+            # atan2(f_z, f_x): positive heading error therefore needs turn_right.
+            return TURN_RIGHT if err > 0 else TURN_LEFT
         return FORWARD
 
     def observe_progress(self, T_wc: np.ndarray, last_action: Optional[str], costmap: Costmap2D) -> None:
