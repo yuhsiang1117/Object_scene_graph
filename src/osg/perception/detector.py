@@ -42,11 +42,27 @@ class YoloeDetector(Detector):
         if vocabulary:
             self.set_vocabulary(vocabulary)
 
+    @staticmethod
+    def _normalize(label: str) -> str:
+        return label.lower().replace("_", " ").strip()
+
     def set_vocabulary(self, classes: List[str]) -> None:
-        classes = list(dict.fromkeys(classes))  # dedupe, keep order
+        """Text embeddings are computed on CPU: the mobileclip encoder is only
+        needed here, and on small GPUs (6 GB) there is no VRAM to spare for it.
+        Labels are normalized so a repeated vocabulary (the common per-episode
+        case: target already in the default list) is a no-op."""
+        classes = list(dict.fromkeys(self._normalize(c) for c in classes))
         if classes == self._classes:
             return
-        self.model.set_classes(classes, self.model.get_text_pe(classes))
+        import torch
+
+        prev_device = next(self.model.model.parameters()).device
+        self.model.model.to("cpu")
+        pe = self.model.get_text_pe(classes)
+        self.model.set_classes(classes, pe)
+        self.model.model.to(prev_device)
+        if prev_device.type == "cuda":
+            torch.cuda.empty_cache()
         self._classes = classes
 
     def detect(self, rgb: np.ndarray) -> List[Detection]:

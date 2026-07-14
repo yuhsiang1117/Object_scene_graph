@@ -19,7 +19,12 @@ def make_objectnav_config(cfg):
     """Build a habitat-lab ObjectNav config from our EvalConfig/AgentConfig."""
     import habitat
     from habitat.config.read_write import read_write
+    from hydra.core.global_hydra import GlobalHydra
 
+    # Our own @hydra.main leaves GlobalHydra initialized; habitat.get_config
+    # needs to initialize its own search path. Our cfg is already resolved to
+    # a plain DictConfig at this point, so clearing is safe.
+    GlobalHydra.instance().clear()
     hab_cfg = habitat.get_config("benchmark/nav/objectnav/objectnav_hm3d.yaml")
     with read_write(hab_cfg):
         task = hab_cfg.habitat.task
