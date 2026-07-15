@@ -8,12 +8,18 @@ from osg.exploration.selector import select_frontier
 from osg.planning.planner import AStarPlanner
 
 
+def _make_frontier(cm, fid, centroid_xy):
+    rc = cm.world_to_grid(np.array(centroid_xy))
+    cells = np.array([rc + [0, k] for k in range(-2, 3)])
+    return Frontier(id=fid, centroid_xy=np.array(centroid_xy), cells=cells, size=5)
+
+
 def _setup():
     cm = Costmap2D(resolution=0.1, size_m=10.0)
     cm.grid[:, :] = FREE
     planner = AStarPlanner(inflate_radius_m=0.05)
-    f_near = Frontier(id=1, centroid_xy=np.array([1.0, 0.0]), cells=np.zeros((5, 2)), size=5)
-    f_far = Frontier(id=2, centroid_xy=np.array([4.0, 0.0]), cells=np.zeros((5, 2)), size=5)
+    f_near = _make_frontier(cm, 1, [1.0, 0.0])
+    f_far = _make_frontier(cm, 2, [4.0, 0.0])
     return cm, planner, f_near, f_far
 
 

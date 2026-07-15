@@ -11,7 +11,7 @@ from typing import List, Optional, Tuple
 
 import numpy as np
 
-from ..mapping.costmap import FREE, UNKNOWN, Costmap2D
+from ..mapping.costmap import OCCUPIED, UNKNOWN, Costmap2D
 
 
 @dataclass
@@ -38,25 +38,34 @@ class AStarPlanner(Planner):
         self,
         inflate_radius_m: float = 0.25,
         unknown_penalty: float = 3.0,
+        inflate_penalty: float = 8.0,
         goal_tolerance_m: float = 0.3,
         max_expansions: int = 60_000,  # caps worst-case spikes (~12 s at 200k)
     ) -> None:
         self.inflate_radius_m = inflate_radius_m
         self.unknown_penalty = unknown_penalty
+        self.inflate_penalty = inflate_penalty
         self.goal_tolerance_m = goal_tolerance_m
         self.max_expansions = max_expansions
+        self.last_failure: str = ""
 
     def plan(self, costmap: Costmap2D, start_xy: np.ndarray, goal_xy: np.ndarray) -> PlanResult:
-        blocked = costmap.inflated(self.inflate_radius_m)
+        # Inflation is a SOFT cost, not a hard block: only truly occupied
+        # cells are impassable. Hard-blocking the inflated band sealed thin
+        # passages of partially-observed maps and disconnected the agent's
+        # local pocket from the rest of the map (total exploration deadlock).
         grid = costmap.grid
+        hard = grid == OCCUPIED
+        soft = costmap.inflated(self.inflate_radius_m) & ~hard
         h, w = grid.shape
         start = tuple(costmap.world_to_grid(start_xy))
         goal = tuple(costmap.world_to_grid(goal_xy))
         if not costmap.in_bounds(np.array(start)):
             return PlanResult(False)
         goal = (min(max(goal[0], 0), h - 1), min(max(goal[1], 0), w - 1))
-        start = self._nudge_free(start, blocked, grid)
+        start = self._nudge_free(start, hard, grid)
         if start is None:
+            self.last_failure = "start_nudge"
             return PlanResult(False)
 
         tol_cells = max(1, int(self.goal_tolerance_m / costmap.resolution))
@@ -81,10 +90,11 @@ class AStarPlanner(Planner):
                 nr, nc = cur[0] + dr, cur[1] + dc
                 if not (0 <= nr < h and 0 <= nc < w):
                     continue
-                if blocked[nr, nc]:
+                if hard[nr, nc]:
                     continue
-                cell = grid[nr, nc]
-                mult = self.unknown_penalty if cell == UNKNOWN else 1.0
+                mult = self.unknown_penalty if grid[nr, nc] == UNKNOWN else 1.0
+                if soft[nr, nc]:
+                    mult = max(mult, self.inflate_penalty)
                 ng = g[cur] + step * mult
                 nxt = (nr, nc)
                 if ng < g.get(nxt, float("inf")):
@@ -94,6 +104,10 @@ class AStarPlanner(Planner):
                     heapq.heappush(pq, (ng + hcost, nxt))
 
         if found is None:
+            self.last_failure = (
+                f"expansions_exhausted({expansions})" if expansions >= self.max_expansions
+                else f"no_path(searched {expansions})"
+            )
             return PlanResult(False)
 
         # Reconstruct and convert to world coords; cost in meters over the
@@ -108,17 +122,16 @@ class AStarPlanner(Planner):
         return PlanResult(True, path=path, cost=max(cost, res))
 
     @staticmethod
-    def _nudge_free(start, blocked, grid, max_r: int = 6):
-        """If the start cell is inside the inflation radius, find the nearest
-        plannable cell within a small window (the agent is never truly stuck
-        in a wall; inflation just swallowed its cell)."""
-        if not blocked[start] and grid[start] == FREE:
+    def _nudge_free(start, hard, grid, max_r: int = 20):
+        """If the start cell is occupied (stale map / phantom obstacle from
+        the stuck detector), find the nearest passable cell within ~1 m."""
+        if not hard[start]:
             return start
         h, w = grid.shape
         best, best_d = None, float("inf")
         for r in range(max(0, start[0] - max_r), min(h, start[0] + max_r + 1)):
             for c in range(max(0, start[1] - max_r), min(w, start[1] + max_r + 1)):
-                if blocked[r, c] or grid[r, c] != FREE:
+                if hard[r, c]:
                     continue
                 d = (r - start[0]) ** 2 + (c - start[1]) ** 2
                 if d < best_d:

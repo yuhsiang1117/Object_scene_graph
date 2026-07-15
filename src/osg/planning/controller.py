@@ -78,8 +78,15 @@ class WaypointController:
                 heading = agent_heading(T_wc)
                 block = pos + np.array([np.cos(heading), np.sin(heading)]) * self.forward_m
                 rc = costmap.world_to_grid(block)
-                if costmap.in_bounds(rc):
-                    costmap.grid[rc[0], rc[1]] = OCCUPIED
+                # Mark a small disk, not one cell: an 8-connected planner
+                # slips diagonally past a single blocked cell and drives the
+                # agent into the same invisible obstacle forever.
+                h, w = costmap.grid.shape
+                for dr in (-2, -1, 0, 1, 2):
+                    for dc in (-2, -1, 0, 1, 2):
+                        r, c = rc[0] + dr, rc[1] + dc
+                        if dr * dr + dc * dc <= 4 and 0 <= r < h and 0 <= c < w:
+                            costmap.grid[r, c] = OCCUPIED
                 self.stuck = True
                 self._no_progress = 0
         self._last_pos = pos.copy()

@@ -18,7 +18,7 @@ import numpy as np
 from ..core.profiler import Profiler
 from ..core.types import FrameData
 from ..exploration.async_scorer import AsyncScorer
-from ..exploration.selector import select_frontier
+from ..exploration.selector import frontier_goal_xy, select_frontier
 from ..graph.scene_graph import SceneGraph
 from ..mapping.costmap import PLANE, Costmap2D
 from ..mapping.frontier import Frontier, FrontierExtractor
@@ -105,12 +105,16 @@ class NavAgent:
         self._room_labels: Optional[np.ndarray] = None
         self._current_path: Optional[np.ndarray] = None
         self._current_frontier: Optional[Frontier] = None
-        self._blocked_frontiers: dict = {}  # frontier_id -> unblock_step
+        # Location-keyed blacklist: frontier ids are reassigned on every
+        # extraction, so blocking must be spatial to persist. [(xy, until)]
+        self._blocked_frontier_pts: list = []
         self._candidate_id: Optional[int] = None
         self._goal_xy: Optional[np.ndarray] = None
         self._last_action: Optional[str] = None
         self._last_select_step = -100
         self._goto_deadline = 10**9
+        self._progress_ref_step = 0
+        self._progress_ref_xy = np.zeros(2)
         self.stats = {"plan_ok": 0, "plan_fail": 0, "select_none": 0, "select_ok": 0}
         self.state_log = []
         self.kf_selector.reset()
@@ -168,6 +172,22 @@ class NavAgent:
                 return TURN_ACTION  # keep looking around; map will grow
 
         if self.state == State.GOTO_FRONTIER:
+            # Give-up net: no displacement for a while means an obstacle the
+            # map cannot see (below the obstacle band, glass, sim collision).
+            # Abandon this frontier instead of pushing against it forever.
+            agent_xy = frame.camera_position[list(PLANE)]
+            if self.step_count - self._progress_ref_step >= 15:
+                if np.linalg.norm(agent_xy - self._progress_ref_xy) < 0.2:
+                    self._block_frontier(self._current_frontier, 100)
+                    self.stats["frontier_give_up"] = self.stats.get("frontier_give_up", 0) + 1
+                    self._current_frontier = None
+                    self._current_path = None
+                    self.state = State.EXPLORE
+                    self._progress_ref_step = self.step_count
+                    self._progress_ref_xy = agent_xy.copy()
+                    return self._act_inner_post_transition(frame)
+                self._progress_ref_step = self.step_count
+                self._progress_ref_xy = agent_xy.copy()
             action = self._follow_path(frame)
             if action is not None:
                 return action
@@ -235,6 +255,21 @@ class NavAgent:
 
     # ------------------------------------------------------------ exploration
 
+    def _block_frontier(self, f: Optional[Frontier], duration: int) -> None:
+        if f is not None:
+            self._blocked_frontier_pts.append((f.centroid_xy.copy(), self.step_count + duration))
+
+    def _blocked_ids(self, frontiers) -> set:
+        active = [xy for xy, until in self._blocked_frontier_pts if until > self.step_count]
+        self._blocked_frontier_pts = [
+            (xy, until) for xy, until in self._blocked_frontier_pts if until > self.step_count
+        ]
+        return {
+            f.id
+            for f in frontiers
+            if any(np.linalg.norm(f.centroid_xy - xy) < 0.6 for xy in active)
+        }
+
     def _select_new_frontier(self, frame: FrameData) -> None:
         # Extraction + top-N path planning is expensive; while waiting the
         # agent turns in place, which grows the map anyway.
@@ -247,8 +282,9 @@ class NavAgent:
             return
         # Async scoring request (never blocks); use whatever scores exist now
         self.scorer.request(frontiers, self.scene_graph, self.target, self.keyframes)
-        blocked = {fid for fid, until in self._blocked_frontiers.items() if until > self.step_count}
+        blocked = self._blocked_ids(frontiers)
         agent_xy = frame.camera_position[list(PLANE)]
+        failed: set = set()
         with self.profiler.timeit("frontier_select"):
             best = select_frontier(
                 frontiers,
@@ -260,19 +296,21 @@ class NavAgent:
                 min_path_cost_m=self.cfg.exploration.min_path_cost_m,
                 top_n=self.cfg.exploration.top_n_frontiers,
                 blocked=blocked,
+                failed_out=failed,
             )
+        by_id = {f.id: f for f in frontiers}
+        for fid in failed:  # block only the candidates that actually failed
+            self._block_frontier(by_id.get(fid), 50)
         if best is None or best.path_cost is None:
             self.stats["select_none"] += 1
-            for f in frontiers:  # nothing reachable: block them briefly
-                self._blocked_frontiers[f.id] = self.step_count + 50
             return
         self.stats["select_ok"] += 1
         self._current_frontier = best
-        self._plan_to(frame, best.centroid_xy)
+        self._plan_to(frame, frontier_goal_xy(best, self.costmap))
         if self._current_path is not None:
             self.state = State.GOTO_FRONTIER
         else:
-            self._blocked_frontiers[best.id] = self.step_count + 50
+            self._block_frontier(best, 50)
 
     # ------------------------------------------------------------- candidates
 
@@ -346,7 +384,7 @@ class NavAgent:
 
     def _follow_path(self, frame: FrameData) -> Optional[str]:
         goal = (
-            self._current_frontier.centroid_xy
+            frontier_goal_xy(self._current_frontier, self.costmap)
             if self.state == State.GOTO_FRONTIER and self._current_frontier is not None
             else self._goal_xy
         )
@@ -355,8 +393,8 @@ class NavAgent:
         if self._current_path is None:
             self._plan_to(frame, goal)
             if self._current_path is None:
-                if self.state == State.GOTO_FRONTIER and self._current_frontier is not None:
-                    self._blocked_frontiers[self._current_frontier.id] = self.step_count + 50
+                if self.state == State.GOTO_FRONTIER:
+                    self._block_frontier(self._current_frontier, 50)
                 return None
         action = self.controller.act(frame.T_wc, self._current_path)
         if action is None:
