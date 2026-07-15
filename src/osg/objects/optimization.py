@@ -55,8 +55,8 @@ class WassersteinRefiner:
     def __init__(self, max_nfev: int = 50) -> None:
         self.max_nfev = max_nfev
 
-    def refine(self, track: ObjectTrack) -> Optional[Ellipsoid]:
-        obs = track.observations
+    def refine(self, track: ObjectTrack, max_obs: int = 10) -> Optional[Ellipsoid]:
+        obs = track.observations[-max_obs:]  # bound the residual count
         if len(obs) < 3:
             return None
         x0 = _params_from(track.ellipsoid)

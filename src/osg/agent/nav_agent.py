@@ -109,6 +109,7 @@ class NavAgent:
         self._candidate_id: Optional[int] = None
         self._goal_xy: Optional[np.ndarray] = None
         self._last_action: Optional[str] = None
+        self._last_select_step = -100
         self.kf_selector.reset()
         self.controller.reset()
         self.detector.set_vocabulary(
@@ -221,6 +222,11 @@ class NavAgent:
     # ------------------------------------------------------------ exploration
 
     def _select_new_frontier(self, frame: FrameData) -> None:
+        # Extraction + top-N path planning is expensive; while waiting the
+        # agent turns in place, which grows the map anyway.
+        if self.step_count - self._last_select_step < 5:
+            return
+        self._last_select_step = self.step_count
         with self.profiler.timeit("frontier_extract"):
             frontiers = self.frontier_extractor.extract(self.costmap)
         if not frontiers:
@@ -266,7 +272,7 @@ class NavAgent:
 
         if self.verifier is None:
             # Verification disabled (paper baseline): head straight for it
-            self._goal_xy = obj_xy
+            self._goal_xy = self._nearest_free_xy(obj_xy)
             self.state = State.GOTO_TARGET
             self._current_path = None
             return
@@ -286,7 +292,9 @@ class NavAgent:
         with self.profiler.timeit("verification"):
             accepted = self.verifier.verify(track, self.target, live_view=frame.rgb)
         if accepted:
-            self._goal_xy = self.object_layer.center_of(track)[list(PLANE)]
+            self._goal_xy = self._nearest_free_xy(
+                self.object_layer.center_of(track)[list(PLANE)]
+            )
             self.state = State.GOTO_TARGET
             self._current_path = None
             if self._arrived_at_goal(frame):
@@ -326,12 +334,28 @@ class NavAgent:
             self._current_path = None
         return action
 
+    def _nearest_free_xy(self, xy: np.ndarray) -> np.ndarray:
+        """Nearest FREE cell to a (possibly occupied) object position — the
+        closest pose the agent can actually stand at."""
+        from ..mapping.costmap import FREE
+
+        rc = self.costmap.world_to_grid(xy)
+        h, w = self.costmap.grid.shape
+        best, best_d = xy, np.inf
+        rad = int(1.5 / self.costmap.resolution)
+        r0, r1 = max(0, rc[0] - rad), min(h, rc[0] + rad + 1)
+        c0, c1 = max(0, rc[1] - rad), min(w, rc[1] + rad + 1)
+        free = np.argwhere(self.costmap.grid[r0:r1, c0:c1] == FREE)
+        if free.shape[0] == 0:
+            return xy
+        free_world = self.costmap.grid_to_world(free + np.array([r0, c0]))
+        d = np.linalg.norm(free_world - xy, axis=1)
+        return free_world[int(np.argmin(d))]
+
     def _arrived_at_goal(self, frame: FrameData) -> bool:
         if self._goal_xy is None:
             return False
         agent_xy = frame.camera_position[list(PLANE)]
-        # Stop just outside the object so the success-distance check passes
-        return bool(
-            np.linalg.norm(agent_xy - self._goal_xy)
-            < max(self.cfg.agent.success_distance * 0.9, 0.35)
-        )
+        # Success distance is tight (0.1 m geodesic to a goal viewpoint):
+        # drive onto the free cell nearest the object before stopping.
+        return bool(np.linalg.norm(agent_xy - self._goal_xy) < 0.2)

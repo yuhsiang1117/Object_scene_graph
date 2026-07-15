@@ -5,7 +5,7 @@ services:
     environment:
       - OLLAMA_KEEP_ALIVE=30m
       - OLLAMA_MAX_LOADED_MODELS=1
-      - OLLAMA_CONTEXT_LENGTH=4096
+      - OLLAMA_CONTEXT_LENGTH=16384  # 4 images @512px alone are ~6k tokens
     volumes:
       - ollama-models:/root/.ollama
     ports:
@@ -29,10 +29,15 @@ services:
       - ollama
     stdin_open: true
     tty: true
+    # Run as the host user so files written into the bind mount (outputs/,
+    # data/) are not root-owned on the host.
+    user: "1000:1000"
     environment:
       - OLLAMA_HOST=http://ollama:11434
       - NVIDIA_DRIVER_CAPABILITIES=all
       - PYTORCH_CUDA_ALLOC_CONF=expandable_segments:True
+      - HOME=/tmp
+      - YOLO_CONFIG_DIR=/tmp/Ultralytics
     volumes:
       # The repo bind mount already covers ./data (gitignored). If your HM3D
       # data lives outside the repo, add an explicit mount here, e.g.:

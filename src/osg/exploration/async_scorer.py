@@ -17,13 +17,16 @@ from .scorer import FrontierScorer
 
 
 class AsyncScorer:
-    def __init__(self, scorer: FrontierScorer) -> None:
+    def __init__(self, scorer: FrontierScorer, error_backoff_s: float = 30.0) -> None:
         self.scorer = scorer
+        self.error_backoff_s = error_backoff_s
         self._executor = ThreadPoolExecutor(max_workers=1)
         self._lock = threading.Lock()
         self._latest: Dict[int, float] = {}
         self._in_flight = False
+        self._retry_after = 0.0
         self.last_latency_s: Optional[float] = None
+        self.last_error: Optional[str] = None
         self.n_calls = 0
         self.n_errors = 0
 
@@ -34,9 +37,10 @@ class AsyncScorer:
         target: str,
         keyframes: Optional[KeyframeStore] = None,
     ) -> bool:
-        """Submit a scoring request; returns False if one is already running."""
+        """Submit a scoring request; returns False if one is already running
+        or the scorer is in error backoff."""
         with self._lock:
-            if self._in_flight:
+            if self._in_flight or time.monotonic() < self._retry_after:
                 return False
             self._in_flight = True
         self._executor.submit(self._run, list(frontiers), sg, target, keyframes)
@@ -48,9 +52,12 @@ class AsyncScorer:
             scores = self.scorer.score(frontiers, sg, target, keyframes)
             with self._lock:
                 self._latest.update(scores)
-        except Exception:
+                self.last_error = None
+        except Exception as e:
             with self._lock:
                 self.n_errors += 1
+                self.last_error = f"{type(e).__name__}: {e}"[:300]
+                self._retry_after = time.monotonic() + self.error_backoff_s
         finally:
             with self._lock:
                 self._in_flight = False

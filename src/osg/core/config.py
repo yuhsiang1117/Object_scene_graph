@@ -65,7 +65,7 @@ class ExplorationConfig:
     frontier_dedup_m: float = 1.0
     frontier_min_cells: int = 8
     subgraph_radius_m: float = 3.0
-    images_per_frontier: int = 2
+    images_per_frontier: int = 1  # each image costs ~1-2k ctx tokens
     max_frontiers_per_call: int = 4
     unscored_prior: float = 0.3
     min_path_cost_m: float = 0.5

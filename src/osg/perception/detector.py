@@ -51,18 +51,18 @@ class YoloeDetector(Detector):
         return label.lower().replace("_", " ").strip()
 
     def set_vocabulary(self, classes: List[str]) -> None:
-        """Labels are normalized so a repeated vocabulary (the common
-        per-episode case: target already in the default list) is a no-op.
-        The mobileclip text encoder is fp16 torchscript (CUDA-only); it is
-        evicted from VRAM right after encoding — with a fixed vocabulary it
-        is never needed again."""
-        classes = list(dict.fromkeys(self._normalize(c) for c in classes))
+        """Normalized + sorted so the per-episode call (target already in the
+        default list) compares equal and is a no-op. A genuine vocabulary
+        change must undo predict()'s in-place fp16 cast before re-encoding
+        (the text head is fp32-only) and rebuild the cached predictor."""
+        classes = sorted({self._normalize(c) for c in classes})
         if classes == self._classes:
             return
         import torch
 
-        self.model.model.to(self.device)
+        self.model.model.float().to(self.device)
         self.model.set_classes(classes, self.model.get_text_pe(classes))
+        self.model.predictor = None  # AutoBackend cached the fp16 view
         if hasattr(self.model.model, "clip_model"):
             del self.model.model.clip_model  # free the 572MB encoder
         if str(self.device).startswith("cuda"):

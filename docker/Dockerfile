@@ -37,7 +37,8 @@ RUN pip install --no-cache-dir torch==2.4.1 torchvision==0.19.1 \
 ENV NVIDIA_DRIVER_CAPABILITIES=all \
     MAGNUM_LOG=quiet \
     HABITAT_SIM_LOG=quiet \
-    __EGL_VENDOR_LIBRARY_FILENAMES=/usr/share/glvnd/egl_vendor.d/10_nvidia.json
+    __EGL_VENDOR_LIBRARY_FILENAMES=/usr/share/glvnd/egl_vendor.d/10_nvidia.json \
+    PYTHONPATH=/workspace/src
 
 # GLVND OpenGL dispatch + GLX, required by habitat-sim bindings. Kept as a
 # late layer so it reuses the (expensive) conda/torch layers above.

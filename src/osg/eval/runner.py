@@ -73,7 +73,9 @@ def build_verifier(cfg) -> Optional[TargetVerifier]:
         return None
     vlm = ChatClient(
         cfg.llm.base_url, cfg.llm.vlm_model, cfg.llm.api_key,
-        cfg.llm.timeout_s, cfg.llm.max_image_px,
+        # Verification is the one blocking VLM call: use a longer timeout
+        # (CPU backends) and small images.
+        max(cfg.llm.timeout_s, 240.0), min(cfg.llm.max_image_px, 256),
     )
     return TargetVerifier(vlm, cfg.verification.accept_confidence)
 
@@ -133,6 +135,7 @@ def run_eval(cfg) -> dict:
             "control_fps": round(profiler.fps("control_loop"), 2),
             "llm_calls": scorer.n_calls,
             "llm_errors": scorer.n_errors,
+            "llm_last_error": scorer.last_error,
         }
         if verifier is not None:
             rec["verify_calls"] = verifier.n_calls
