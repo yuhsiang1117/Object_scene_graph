@@ -373,7 +373,7 @@ class NavAgent:
             self.state = State.GOTO_TARGET
             self._current_path = None
             self._goto_deadline = self.step_count + 100
-            self._final_nudges = 5
+            self._final_nudges = 0  # stop at ring range (see verification path)
             return
 
         view_xy = self.viewpoint_planner.approach_viewpoint(obj_xy, self.costmap)
@@ -402,16 +402,22 @@ class NavAgent:
         with self.profiler.timeit("verification"):
             accepted = self.verifier.verify(track, self.target, live_view=frame.rgb)
         if accepted:
+            # HM3D success is measured against the goal's view points — a
+            # ~1 m ring around the object where it is visible. The verify
+            # viewpoint IS such a pose: if we are already in ring range,
+            # stop right here (walking into the object overshoots the ring:
+            # three contact-stop attempts all ended at dtg 0.11-0.12 m).
             obj_xy = self.object_layer.center_of(track)[list(PLANE)]
+            agent_xy = frame.camera_position[list(PLANE)]
+            if np.linalg.norm(agent_xy - obj_xy) < 1.6:
+                self.state = State.DONE
+                return STOP_ACTION
             self._goal_xy = self._nearest_free_xy(obj_xy)
             self._target_obj_xy = obj_xy.copy()
             self.state = State.GOTO_TARGET
             self._current_path = None
             self._goto_deadline = self.step_count + 100
-            self._final_nudges = 5
-            if self._arrived_at_goal(frame):
-                self.state = State.DONE
-                return STOP_ACTION
+            self._final_nudges = 0  # stop at ring range, not at contact
             action = self._follow_path(frame)
             return action if action is not None else STOP_ACTION
         self.object_layer.blacklist(track.id)
