@@ -45,3 +45,10 @@ def test_stuck_detection_marks_cell():
     assert c.stuck
     ahead_rc = cm.world_to_grid(np.array([0.25, 0.0]))
     assert cm.grid[ahead_rc[0], ahead_rc[1]] == OCCUPIED
+    # P1b: a single ~0.1 m point left doorway-width bottlenecks bypassable
+    # (an agent was observed frozen at one spot for 45 steps across 3
+    # give-up cycles). The mark must now be a wider halo, not one point.
+    farther_rc = cm.world_to_grid(np.array([0.6, 0.0]))
+    assert cm.grid[farther_rc[0], farther_rc[1]] == OCCUPIED
+    off_axis_rc = cm.world_to_grid(np.array([0.25, 0.3]))  # outside the old 0.2 m radius
+    assert cm.grid[off_axis_rc[0], off_axis_rc[1]] == OCCUPIED

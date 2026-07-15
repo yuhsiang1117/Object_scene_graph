@@ -1,13 +1,22 @@
-"""Unit tests for NavAgent's terminal APPROACH phase — the state that
-replaced three earlier distance-based stopping strategies (all of which
-stalled at dtg 0.107-0.147 m; see docs/DESIGN_AND_ROADMAP.md P0->P1
-history). Tests call `_do_approach` directly rather than driving the full
-`act()` loop: APPROACH's decision logic only depends on the detector, the
-costmap/planner, and a handful of `_approach_*` fields, so exercising it in
-isolation keeps this hermetic (no Hydra/habitat) and fast.
+"""Unit tests for NavAgent.
+
+Two areas covered so far:
+1. The terminal APPROACH phase (P1a) — replaced three earlier distance-based
+   stopping strategies, all of which stalled at dtg 0.107-0.147 m; see
+   docs/DESIGN_AND_ROADMAP.md P0->P1 history. Tests call `_do_approach`
+   directly rather than driving the full `act()` loop: its decision logic
+   only depends on the detector, the costmap/planner, and a handful of
+   `_approach_*` fields, so exercising it in isolation keeps this hermetic
+   (no Hydra/habitat) and fast.
+2. The frontier give-up progress timer (P1b) — `_select_new_frontier` must
+   reset `_progress_ref_step`/`_progress_ref_xy` to the current step/pose
+   whenever it starts pursuing a (new or re-selected) frontier; otherwise a
+   stale reference from a prior pursuit can trigger a spurious give-up
+   within the first step of the new one.
 
 Uses a lightweight SimpleNamespace in place of a real Hydra config: only
-the fields NavAgent.__init__/reset()/_do_approach actually read are set.
+the fields NavAgent.__init__/reset()/the methods under test actually read
+are set.
 """
 from __future__ import annotations
 
@@ -19,7 +28,7 @@ from osg.agent.nav_agent import STOP_ACTION, NavAgent, State
 from osg.core.types import CameraIntrinsics, Detection
 from osg.exploration.async_scorer import AsyncScorer
 from osg.exploration.scorer import NearestScorer
-from osg.mapping.costmap import FREE, OCCUPIED
+from osg.mapping.costmap import FREE, OCCUPIED, UNKNOWN
 from osg.perception.detector import StubDetector
 
 from .conftest import make_camera, make_frame
@@ -30,7 +39,10 @@ _INTRINSICS = CameraIntrinsics(fx=320.0, fy=320.0, cx=320.0, cy=240.0, width=640
 
 def make_cfg(**agent_overrides) -> types.SimpleNamespace:
     cfg = types.SimpleNamespace(
-        mapping=types.SimpleNamespace(resolution_m=0.05, inflate_margin_m=0.07),
+        mapping=types.SimpleNamespace(
+            resolution_m=0.05, inflate_margin_m=0.07,
+            obstacle_low_m=0.1, obstacle_high_m=1.5, max_range_m=5.0, depth_stride=4,
+        ),
         exploration=types.SimpleNamespace(
             frontier_min_cells=8, frontier_dedup_m=1.0,
             unscored_prior=0.3, min_path_cost_m=0.5, top_n_frontiers=5,
@@ -72,11 +84,11 @@ def _det(label: str, bbox_wh: tuple, score: float = 0.8) -> Detection:
 
 
 def _frame(xy, frame_id=0):
-    """xy is a ground-plane (x, z) position; APPROACH only reads
-    frame.camera_position, so the depth image content is irrelevant here
-    (_do_approach never calls costmap.update)."""
+    """xy is a ground-plane (x, z) position. depth_value is set beyond
+    mapping.max_range_m (5.0) so a real `_act_inner` call's costmap.update()
+    is a no-op on any grid a test carved by hand ahead of time."""
     T = make_camera([xy[0], 0.88, xy[1]], [xy[0] + 1.0, 0.88, xy[1]])
-    return make_frame(_INTRINSICS, T, depth_value=3.0, frame_id=frame_id)
+    return make_frame(_INTRINSICS, T, depth_value=100.0, frame_id=frame_id)
 
 
 def test_stops_when_bbox_large_enough():
@@ -195,3 +207,58 @@ def test_stops_when_goal_unreachable():
 
     assert action == STOP_ACTION
     assert agent.state == State.DONE
+
+
+def _carve_free_square(agent, half_width_cells=20):
+    """UNKNOWN everywhere except a FREE square centered on the grid origin,
+    so FrontierExtractor finds real frontiers along its border."""
+    agent.costmap.grid[:, :] = UNKNOWN
+    h, w = agent.costmap.grid.shape
+    cy, cx = h // 2, w // 2
+    agent.costmap.grid[
+        cy - half_width_cells : cy + half_width_cells,
+        cx - half_width_cells : cx + half_width_cells,
+    ] = FREE
+
+
+def test_progress_ref_resets_on_new_frontier_selection():
+    """P1b regression: a stale progress-reference (left over from whatever
+    pursuit preceded this selection) must not survive into a freshly
+    started one — otherwise the 15-step give-up window can already be
+    "expired" on step one of the new pursuit, judged against a position
+    from an unrelated earlier pursuit."""
+    agent = make_agent()
+    _carve_free_square(agent)
+    agent.state = State.EXPLORE
+    agent.step_count = 50
+    agent._last_select_step = -100  # bypass the 5-step selection throttle
+    # Stale reference from a much earlier, unrelated pursuit.
+    agent._progress_ref_step = 10
+    agent._progress_ref_xy = np.array([-999.0, -999.0])
+
+    agent._select_new_frontier(_frame([0.0, 0.0], frame_id=agent.step_count))
+
+    assert agent.state == State.GOTO_FRONTIER
+    assert agent._progress_ref_step == agent.step_count
+    assert np.allclose(agent._progress_ref_xy, [0.0, 0.0])
+
+
+def test_giveup_logged_with_frontier_and_agent_position():
+    agent = make_agent()
+    _carve_free_square(agent)
+    agent.state = State.GOTO_FRONTIER
+    agent._current_frontier = types.SimpleNamespace(centroid_xy=np.array([3.0, 4.0]), id=0)
+    agent.step_count = 100
+    agent._progress_ref_step = 80  # 20 steps ago, past the 15-step check window
+    agent._progress_ref_xy = np.array([0.0, 0.0])  # same as current -> "no progress"
+    agent._goal_xy = np.array([3.0, 4.0])
+    agent._current_path = None
+
+    agent._act_inner(_frame([0.0, 0.0], frame_id=agent.step_count))
+
+    assert agent.stats["frontier_give_up"] == 1
+    assert len(agent.giveup_log) == 1
+    step, frontier_xy, agent_xy = agent.giveup_log[0]
+    assert step == 100
+    assert frontier_xy == [3.0, 4.0]
+    assert agent_xy == [0.0, 0.0]

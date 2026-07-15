@@ -127,6 +127,15 @@ def run_eval(cfg) -> dict:
             continue
         target = env.target_category()
 
+        # scorer/verifier are built once and shared across every episode in
+        # this run, so their call/error counters are cumulative — snapshot
+        # before and report deltas below, or every episode after the first
+        # would show the whole run's running total instead of its own.
+        llm_calls_before, llm_errors_before = scorer.n_calls, scorer.n_errors
+        llm_last_error_before = scorer.last_error
+        verify_calls_before = verifier.n_calls if verifier is not None else 0
+        verify_rej_before = verifier.n_rejections if verifier is not None else 0
+
         profiler = Profiler()
         agent = NavAgent(
             cfg, detector, scorer, verifier, target,
@@ -154,16 +163,17 @@ def run_eval(cfg) -> dict:
             "steps": steps,
             "wall_time_s": round(time.time() - t0, 1),
             "control_fps": round(profiler.fps("control_loop"), 2),
-            "llm_calls": scorer.n_calls,
-            "llm_errors": scorer.n_errors,
-            "llm_last_error": scorer.last_error,
+            "llm_calls": scorer.n_calls - llm_calls_before,
+            "llm_errors": scorer.n_errors - llm_errors_before,
+            "llm_last_error": scorer.last_error if scorer.last_error != llm_last_error_before else None,
             "agent_stats": agent.stats,
             "state_log": agent.state_log[:40],
+            "giveup_log": agent.giveup_log[:50],
             "final_xy": [float(x) for x in trajectory[-1]],
         }
         if verifier is not None:
-            rec["verify_calls"] = verifier.n_calls
-            rec["verify_rejections"] = verifier.n_rejections
+            rec["verify_calls"] = verifier.n_calls - verify_calls_before
+            rec["verify_rejections"] = verifier.n_rejections - verify_rej_before
         results.append(rec)
         with open(episodes_file, "a") as f:
             f.write(json.dumps(rec) + "\n")

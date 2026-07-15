@@ -139,6 +139,7 @@ class NavAgent:
         self._approach_steps_left = 0
         self.stats = {"plan_ok": 0, "plan_fail": 0, "select_none": 0, "select_ok": 0}
         self.state_log = []
+        self.giveup_log: list = []
         self.kf_selector.reset()
         self.controller.reset()
         self.detector.set_vocabulary(
@@ -200,6 +201,12 @@ class NavAgent:
             agent_xy = frame.camera_position[list(PLANE)]
             if self.step_count - self._progress_ref_step >= 15:
                 if np.linalg.norm(agent_xy - self._progress_ref_xy) < 0.2:
+                    self.giveup_log.append((
+                        self.step_count,
+                        [round(float(x), 2) for x in self._current_frontier.centroid_xy]
+                        if self._current_frontier is not None else None,
+                        [round(float(x), 2) for x in agent_xy],
+                    ))
                     self._block_frontier(self._current_frontier, 100)
                     self.stats["frontier_give_up"] = self.stats.get("frontier_give_up", 0) + 1
                     self._current_frontier = None
@@ -371,6 +378,12 @@ class NavAgent:
         self._plan_to(frame, frontier_goal_xy(best, self.costmap))
         if self._current_path is not None:
             self.state = State.GOTO_FRONTIER
+            # A fresh pursuit starts its own 15-step progress window; without
+            # this the give-up timer carried over from whatever frontier was
+            # pursued (or given up on) before, and could fire on the very
+            # first step of the new pursuit based on stale position data.
+            self._progress_ref_step = self.step_count
+            self._progress_ref_xy = agent_xy.copy()
         else:
             self._block_frontier(best, 50)
 
