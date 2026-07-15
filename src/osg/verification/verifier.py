@@ -71,25 +71,34 @@ class TargetVerifier:
             return False  # nothing to verify against — do not stop blindly
 
         target_text = target.replace("_", " ")
-        try:
-            resp = self.vlm.chat(
-                prompts.VERIFY_SYSTEM,
-                prompts.VERIFY_USER.format(target=target_text),
-                images=images,
-            )
-        except Exception:
-            # VLM unavailable: fail open (paper behavior = no verification)
-            return True
-        finally:
+        # Borderline crops flip between runs (sampling variance at the
+        # model's decision boundary). Quality gates already filter garbage
+        # candidates, and a false rejection blacklists the true target and
+        # usually ends the episode — so ask twice and accept if either
+        # attempt accepts.
+        accepted = False
+        for attempt in range(2):
+            try:
+                resp = self.vlm.chat(
+                    prompts.VERIFY_SYSTEM,
+                    prompts.VERIFY_USER.format(target=target_text),
+                    images=images,
+                    temperature=0.3 if attempt else 0.0,
+                )
+            except Exception:
+                # VLM unavailable: fail open (paper behavior = no verification)
+                self.n_calls += 1
+                return True
             self.n_calls += 1
-
-        self._dump(images, target, resp)
-        is_target = bool(resp.get("is_target", False))
-        try:
-            conf = float(resp.get("confidence", 0.6))
-        except (TypeError, ValueError):
-            conf = 0.6  # describe-then-decide sometimes omits confidence
-        accepted = is_target and conf >= self.accept_confidence
+            self._dump(images, target, resp)
+            is_target = bool(resp.get("is_target", False))
+            try:
+                conf = float(resp.get("confidence", 0.6))
+            except (TypeError, ValueError):
+                conf = 0.6  # describe-then-decide sometimes omits confidence
+            if is_target and conf >= self.accept_confidence:
+                accepted = True
+                break
         if not accepted:
             self.n_rejections += 1
         return accepted
