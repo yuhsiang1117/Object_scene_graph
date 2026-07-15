@@ -117,6 +117,7 @@ class NavAgent:
         self._progress_ref_xy = np.zeros(2)
         self._final_nudges = 0
         self._target_obj_xy: Optional[np.ndarray] = None
+        self._tried_viewpoints: list = []
         self.stats = {"plan_ok": 0, "plan_fail": 0, "select_none": 0, "select_ok": 0}
         self.state_log = []
         self.kf_selector.reset()
@@ -399,6 +400,21 @@ class NavAgent:
             err = _wrap(float(np.arctan2(to_obj[1], to_obj[0])) - agent_heading(frame.T_wc))
             if abs(err) > np.radians(20.0):
                 return TURN_RIGHT if err > 0 else TURN_LEFT
+        # HM3D success viewpoints require the object to actually be VISIBLE
+        # from the stop pose; 2D line-of-sight misses desk-height occluders
+        # (we stopped 0.12 m outside the viewpoint set). If the detector
+        # cannot see the target from here, reposition to another ring pose.
+        if not self._target_visible(frame) and len(self._tried_viewpoints) < 3:
+            self._tried_viewpoints.append(agent_xy.copy())
+            alt = self.viewpoint_planner.approach_viewpoint(
+                obj_xy, self.costmap, exclude=self._tried_viewpoints
+            )
+            if alt is not None:
+                self._goal_xy = alt
+                self.state = State.GOTO_VERIFY_VIEW
+                self._current_path = None
+                self._goto_deadline = self.step_count + 60
+                return self._follow_path(frame) or TURN_ACTION
         with self.profiler.timeit("verification"):
             accepted = self.verifier.verify(track, self.target, live_view=frame.rgb)
         if accepted:
@@ -426,6 +442,16 @@ class NavAgent:
         return TURN_ACTION
 
     # ---------------------------------------------------------------- helpers
+
+    def _target_visible(self, frame: FrameData) -> bool:
+        """Does the detector see the target category in the current view?"""
+        target = self.target.lower().replace("_", " ").strip()
+        with self.profiler.timeit("detector"):
+            dets = self.detector.detect(frame.rgb)
+        return any(
+            d.label.lower().replace("_", " ").strip() == target and d.score > 0.25
+            for d in dets
+        )
 
     def _plan_to(self, frame: FrameData, goal_xy: np.ndarray) -> None:
         agent_xy = frame.camera_position[list(PLANE)]

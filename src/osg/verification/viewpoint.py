@@ -4,7 +4,7 @@ declare) the candidate target.
 """
 from __future__ import annotations
 
-from typing import List, Optional
+from typing import List, Optional  # noqa: F401
 
 import numpy as np
 from scipy import ndimage
@@ -18,15 +18,26 @@ class ViewpointPlanner:
         self.ring_radii = ring_radii_m or [0.8, 1.2, 1.5, 2.0]
         self.n_samples = n_samples
 
-    def approach_viewpoint(self, obj_xy: np.ndarray, costmap: Costmap2D) -> Optional[np.ndarray]:
+    def approach_viewpoint(
+        self,
+        obj_xy: np.ndarray,
+        costmap: Costmap2D,
+        exclude: Optional[List[np.ndarray]] = None,
+        exclude_radius_m: float = 0.5,
+    ) -> Optional[np.ndarray]:
         """Best world-xy pose to observe the object from, or None if the
-        object is not yet observable from mapped free space."""
+        object is not yet observable from mapped free space. `exclude` lists
+        previously tried viewpoints (e.g., where the detector could not see
+        the object due to 3D occlusion the 2D map misses)."""
+        exclude = exclude or []
         clearance = ndimage.distance_transform_edt(costmap.grid != OCCUPIED) * costmap.resolution
         best, best_score = None, -1.0
         for radius in self.ring_radii:
             for k in range(self.n_samples):
                 ang = 2.0 * np.pi * k / self.n_samples
                 cand = obj_xy + radius * np.array([np.cos(ang), np.sin(ang)])
+                if any(np.linalg.norm(cand - e) < exclude_radius_m for e in exclude):
+                    continue
                 rc = costmap.world_to_grid(cand)
                 if not costmap.in_bounds(rc) or costmap.grid[rc[0], rc[1]] != FREE:
                     continue
