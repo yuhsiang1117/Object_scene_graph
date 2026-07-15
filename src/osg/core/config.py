@@ -84,7 +84,11 @@ class LLMConfig:
 @dataclass
 class VerificationConfig:
     enabled: bool = True
-    min_obs: int = 2
+    min_obs: int = 3
+    # Candidate quality gates: sliver/fragment detections (a chair edge seen
+    # through furniture) must not trigger the expensive approach+verify loop.
+    min_score: float = 0.45
+    min_bbox_px: int = 3000
     ring_radii_m: List[float] = field(default_factory=lambda: [0.8, 1.2, 1.5, 2.0])
     accept_confidence: float = 0.5
 

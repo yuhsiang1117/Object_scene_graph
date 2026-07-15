@@ -77,7 +77,8 @@ def build_verifier(cfg) -> Optional[TargetVerifier]:
         # (CPU backends) and small images.
         max(cfg.llm.timeout_s, 240.0), min(cfg.llm.max_image_px, 256),
     )
-    return TargetVerifier(vlm, cfg.verification.accept_confidence)
+    debug_dir = str(Path(cfg.output_dir) / "verify_debug")
+    return TargetVerifier(vlm, cfg.verification.accept_confidence, debug_dir=debug_dir)
 
 
 def _unload_ollama_models(cfg) -> None:

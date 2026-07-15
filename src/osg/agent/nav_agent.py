@@ -196,10 +196,21 @@ class NavAgent:
             return self._act_inner_post_transition(frame)
 
         if self.state == State.GOTO_VERIFY_VIEW:
-            action = self._follow_path(frame)
-            if action is not None:
-                return action
-            self.state = State.VERIFYING
+            # Same terminal semantics as GOTO_TARGET: with discrete actions
+            # the agent rarely lands exactly on the viewpoint — verify once
+            # we are near it, the path is consumed, or the deadline passes.
+            agent_xy = frame.camera_position[list(PLANE)]
+            near_view = (
+                self._goal_xy is not None
+                and np.linalg.norm(agent_xy - self._goal_xy) < 0.35
+            )
+            if near_view or self.step_count > self._goto_deadline:
+                self.state = State.VERIFYING
+            else:
+                action = self._follow_path(frame)
+                if action is not None:
+                    return action
+                self.state = State.VERIFYING
 
         if self.state == State.VERIFYING:
             return self._do_verification(frame)
@@ -316,7 +327,10 @@ class NavAgent:
 
     def _check_candidates(self) -> None:
         candidates = self.object_layer.candidates(
-            self.target, min_obs=self.cfg.verification.min_obs
+            self.target,
+            min_obs=self.cfg.verification.min_obs,
+            min_score=self.cfg.verification.min_score,
+            min_bbox_px=self.cfg.verification.min_bbox_px,
         )
         if not candidates:
             return
@@ -338,6 +352,7 @@ class NavAgent:
         self._goal_xy = view_xy
         self.state = State.GOTO_VERIFY_VIEW
         self._current_path = None
+        self._goto_deadline = self.step_count + 80
 
     def _do_verification(self, frame: FrameData) -> str:
         track = self.object_layer.get(self._candidate_id) if self._candidate_id is not None else None

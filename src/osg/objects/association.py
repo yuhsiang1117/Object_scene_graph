@@ -36,6 +36,7 @@ class ObjectTrack:
     observations: List[Observation] = field(default_factory=list)
     best_crop: Optional[np.ndarray] = None
     best_score: float = 0.0
+    best_bbox_px: float = 0.0  # bbox area of the best detection, px^2
     blacklisted: bool = False
     linked_ids: set = field(default_factory=set)
     refined_at_obs: int = 0

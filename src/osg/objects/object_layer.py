@@ -61,6 +61,8 @@ class ObjectLayer:
             if det.score > track.best_score:
                 track.best_score = det.score
                 track.best_crop = det.crop if det.crop is not None else det.crop_from(frame.rgb)
+                x1, y1, x2, y2 = det.bbox_xyxy
+                track.best_bbox_px = float(max(0.0, x2 - x1) * max(0.0, y2 - y1))
 
             due = (
                 track.n_obs >= self.min_obs_for_refine
@@ -84,12 +86,21 @@ class ObjectLayer:
     def get(self, track_id: int) -> Optional[ObjectTrack]:
         return self._tracks.get(track_id)
 
-    def candidates(self, target_label: str, min_obs: int = 2) -> List[ObjectTrack]:
-        """Non-blacklisted tracks matching the target with enough support."""
+    def candidates(
+        self,
+        target_label: str,
+        min_obs: int = 2,
+        min_score: float = 0.0,
+        min_bbox_px: float = 0.0,
+    ) -> List[ObjectTrack]:
+        """Non-blacklisted tracks matching the target with enough support and
+        detection quality (fragment detections make useless candidates)."""
         target = target_label.lower().replace(" ", "_")
         out = []
         for t in self._tracks.values():
             if t.blacklisted or t.n_obs < min_obs:
+                continue
+            if t.best_score < min_score or t.best_bbox_px < min_bbox_px:
                 continue
             if t.label.lower().replace(" ", "_") == target:
                 out.append(t)
