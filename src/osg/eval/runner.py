@@ -80,12 +80,32 @@ def build_verifier(cfg) -> Optional[TargetVerifier]:
     return TargetVerifier(vlm, cfg.verification.accept_confidence)
 
 
+def _unload_ollama_models(cfg) -> None:
+    """Ask ollama to release VRAM (keep_alive=0) so the one-time YOLOE text
+    encoding can run on the GPU; ollama reloads lazily on the next call."""
+    import json as _json
+    import urllib.request
+
+    host = str(cfg.llm.base_url).rsplit("/v1", 1)[0]
+    for model in {cfg.llm.text_model, cfg.llm.vlm_model}:
+        try:
+            req = urllib.request.Request(
+                host + "/api/generate",
+                data=_json.dumps({"model": model, "keep_alive": 0}).encode(),
+                headers={"Content-Type": "application/json"},
+            )
+            urllib.request.urlopen(req, timeout=10).read()
+        except Exception:
+            pass  # best-effort; ollama may be down in no-LLM ablations
+
+
 def run_eval(cfg) -> dict:
     from ..sim.habitat_env import HabitatObjectNavEnv
 
     out_dir = Path(cfg.output_dir)
     out_dir.mkdir(parents=True, exist_ok=True)
 
+    _unload_ollama_models(cfg)
     env = HabitatObjectNavEnv(cfg)
     detector = build_detector(cfg)
     scorer = build_scorer(cfg)
@@ -136,6 +156,8 @@ def run_eval(cfg) -> dict:
             "llm_calls": scorer.n_calls,
             "llm_errors": scorer.n_errors,
             "llm_last_error": scorer.last_error,
+            "agent_stats": agent.stats,
+            "state_log": agent.state_log[:40],
         }
         if verifier is not None:
             rec["verify_calls"] = verifier.n_calls

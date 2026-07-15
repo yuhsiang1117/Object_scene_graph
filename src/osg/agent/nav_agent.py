@@ -111,6 +111,8 @@ class NavAgent:
         self._last_action: Optional[str] = None
         self._last_select_step = -100
         self._goto_deadline = 10**9
+        self.stats = {"plan_ok": 0, "plan_fail": 0, "select_none": 0, "select_ok": 0}
+        self.state_log = []
         self.kf_selector.reset()
         self.controller.reset()
         self.detector.set_vocabulary(
@@ -121,8 +123,11 @@ class NavAgent:
 
     def act(self, frame: FrameData) -> str:
         self.step_count += 1
+        prev_state = self.state
         with self.profiler.timeit("control_loop"):
             action = self._act_inner(frame)
+        if self.state != prev_state:
+            self.state_log.append((self.step_count, self.state.value))
         self._last_action = action
         return action
 
@@ -257,9 +262,11 @@ class NavAgent:
                 blocked=blocked,
             )
         if best is None or best.path_cost is None:
+            self.stats["select_none"] += 1
             for f in frontiers:  # nothing reachable: block them briefly
                 self._blocked_frontiers[f.id] = self.step_count + 50
             return
+        self.stats["select_ok"] += 1
         self._current_frontier = best
         self._plan_to(frame, best.centroid_xy)
         if self._current_path is not None:
@@ -335,6 +342,7 @@ class NavAgent:
         with self.profiler.timeit("planner"):
             result: PlanResult = self.planner.plan(self.costmap, agent_xy, goal_xy)
         self._current_path = result.path if result.success else None
+        self.stats["plan_ok" if result.success else "plan_fail"] += 1
 
     def _follow_path(self, frame: FrameData) -> Optional[str]:
         goal = (
