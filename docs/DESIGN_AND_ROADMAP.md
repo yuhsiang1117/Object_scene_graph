@@ -102,9 +102,9 @@ INIT(360°掃描) → EXPLORE ⇄ GOTO_FRONTIER
 | Ollama 文字+視覺往返 | ✅ |
 | HM3D minival（10 場景+semantic configs）+ ObjectNav v2 episodes | ✅ 已下載 |
 | Sim 整合測試（stub detector 全 pipeline 1 episode） | ✅ |
-| 端到端 eval（YOLOE+VLM 3 episodes 跑完、產出 summary/timing/viz） | ✅ 管線通、**SR 尚為 0** |
+| 端到端 eval（YOLOE+VLM 3 episodes 跑完、產出 summary/timing/viz） | ✅ |
 | VLM frontier 評分實際運作 | ✅（GPU 後 0 錯誤） |
-| **SR > 0** | ❌ 進行中（見 §5） |
+| **SR > 0** | ✅ eval25：bed success=1 / SPL 0.295（paper mode 0.13m）；嚴格 0.1m 差 1-5cm（見 §6 P1） |
 
 ## 4. Eval 迭代記錄（除錯史與教訓）
 
@@ -117,41 +117,47 @@ INIT(360°掃描) → EXPLORE ⇄ GOTO_FRONTIER
 | 11–12 | verifier 面向物件+live view+寬容 prompt；啟動時卸載 ollama | 揭露**當前主問題**：agent 幾乎不移動（見 §5） |
 | 13 | 加入 stats/state_log 儀表化 | 單 episode 診斷 run 被中止（使用者要求停止），**儀表化程式碼已就位** |
 
-## 5. 當前未解問題（下一步的起點）
+## 5. P0 已解決（2026-07-15）：movement deadlock 的四層根因
 
-**主 blocker：agent 在 500 步內幾乎不移動。**
+**首個 success 達成**：eval25（paper mode success_distance=0.13）
+ep11 bed success=1 / SPL 0.295。探索→偵測→驗證→接近→停止全鏈貫通。
 
-- 證據：ep4 軌跡圖（`outputs/20260715_010000/viz/ep4.png`）路徑只是起點
-  旁一小坨；地圖呈細條輻射狀（單一視角的 line-of-sight）；物件偵測正常
-  （掃描到 30+ 物件）。
-- 主要假設（未驗證）：細窄 free space + 0.25m 障礙膨脹 → A* 起點
-  nudge 失敗或 frontier 路徑全數規劃失敗 → 所有 frontier 進入 50 步
-  blacklist → EXPLORE 原地打轉循環。
-- **驗證手段已備好**：`NavAgent.stats`（plan_ok/plan_fail/select_none/
-  select_ok）與 `state_log`（狀態轉換序列）已寫入 episodes.jsonl，跑
-  `eval.num_episodes=1` 即可確診。
-- 次要疑點：verifier 對 chair 的 2/2 拒絕在 live-view 修正後尚未重新驗證
-  （eval 11/12 都死在更早的環節）。
+P0 的「agent 不移動」實際上是四個疊加 bug（`scripts/diag_movement.py`
+以 stub detector + nearest scorer 隔離確診）：
+
+1. **硬性膨脹斷開連通性**：agent 走到牆邊後，0.25m 膨脹把它所在的小
+   口袋與地圖隔離（A* `no_path searched 300`）→ 膨脹改為軟性成本
+   （inflate_penalty 8x），只有 occupied 不可通行。
+2. **連坐封鎖**：一輪選擇失敗就把全部 frontier blacklist 50 步 → 只封
+   鎖實際規劃失敗的候選。
+3. **frontier id 不穩定**：每次抽取重新編號，id-keyed blacklist 無效
+   → 改空間位置封鎖（0.6m 半徑）。
+4. **看不見的低矮障礙**：agent 對著障礙帶以下的家具空推 → stuck 標記
+   改 5x5 圓盤（單格會被 8-連通繞過）+ GOTO_FRONTIER 15 步無進展放棄網。
+
+後續 debug 鏈（每輪一個 bug，均已修復並 commit）：GOTO_VERIFY_VIEW /
+GOTO_TARGET 繞圈（加抵達判定+deadline）、候選品質閘門（碎片偵測觸發
+80 步白跑）、3B 驗證器誤拒真目標（升 7B + 小圖放大 + describe-then-
+decide + 拒絕時重問一次）、停止位姿（best-cam 回歸：回到最佳偵測的
+相機位置——被證明可達且看得見物件）。
+
+**診斷方法論**（比結論更值錢）：`prompt_lab.py` 用存檔影像離線迭代
+VLM prompt；`verify_debug/` 存驗證證據影像；`state_log`+`agent_stats`
+進 episodes.jsonl；`diag_movement.py` 隔離導航棧。
 
 ## 6. 改進規劃（優先順序）
 
-### P0 — 讓 SR > 0（movement bug）
-1. 跑單 episode 看 stats：確認 plan_fail / select_none 比例。
-2. 若確認規劃失敗：
-   - 縮小膨脹半徑（0.25→0.15m）或改用「膨脹後不可行才退回未膨脹」的
-     兩段式規劃；
-   - `_nudge_free` 搜尋窗從 0.3m 放大到 1m；
-   - frontier 目標點改取「frontier 質心最近的可規劃 free 格」。
-3. 檢查 costmap free space 是否過細：目視 raycast 覆蓋、必要時調
-   `depth_stride`（4→2）或障礙帶高度參數。
-4. 重驗 verifier（live view 版本）對 chair/bed 的接受率。
-
-### P1 — SR 調參與魯棒性（P0 解除後）
-- 逐 episode 檢查 viz + state_log，分類失敗型態（探索不足/誤偵測/停止誤差）。
-- 停止距離策略再校準（habitat success 是「到 goal viewpoint 的測地距離
-  < 0.1m」，非物件中心歐氏距離）。
-- 調 `assoc_score_thresh`、`accept_confidence`、`unscored_prior`。
-- 8–10 episodes 的 minival 小規模掃參。
+### P1 — 嚴格 0.1m 門檻下的 SR（目前差 1-5cm）
+現況：chair 穩定停在 dtg 0.107–0.147（成功圈邊緣）；bed 在 0.13 門檻
+下已成功。HM3D 的 dtg 量到 view_points（物件可見的 navmesh 位姿集，
+每物件 100–500 個）的測地距離。
+- 「approach while visible」終端策略：驗證通過後朝物件前進、每步用偵
+  測器確認仍可見，不可見或 bbox 夠大即停——直接走進 viewpoint 集合內部。
+- ep7（toilet）型失敗＝探索效率：500 步走不到浴室。frontier give-up
+  的 15 步成本 × 10 次很傷；調 give-up 參數與 LLM 評分的房間先驗。
+- 驗證器單獨評測集：把 verify_debug 影像整理成 20-30 張標注測試集，
+  參數改動先過離線測試再進 eval。
+- 8–10 episodes 掃參；同時報告 0.1（標準）與 0.13（paper mode）兩組數字。
 
 ### P2 — 效能（real-time 主張）
 - 目前控制迴圈中位數 ~400ms（2.5 FPS）；目標 ≥5 FPS（優於論文的 RTX
