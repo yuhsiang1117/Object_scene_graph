@@ -47,6 +47,16 @@ The LLM/VLM is queried **asynchronously** — the control loop never blocks on
 it, which is what keeps the pipeline real-time; decision latency is reported
 separately in `timing.csv`.
 
+## Documentation
+
+- [docs/ARCHITECTURE.md](docs/ARCHITECTURE.md) — 系統架構、座標約定、
+  每個模組的演算法與實作決策（含除錯得來的設計理由）
+- [docs/TESTING.md](docs/TESTING.md) — 測試金字塔、47 個單元測試詳表、
+  診斷工具、測試紀律與改進路線
+- [docs/DESIGN_AND_ROADMAP.md](docs/DESIGN_AND_ROADMAP.md) — 專案狀態、
+  P0 除錯結案報告、P1–P3 路線圖
+- [data/README.md](data/README.md) — HM3D 資料下載與目錄結構
+
 ## Layout
 
 - `src/osg/` — the pipeline: `perception` (YOLOE, keyframes) → `objects`

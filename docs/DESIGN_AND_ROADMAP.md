@@ -1,5 +1,8 @@
 # Object Scene Graph ObjectNav — 設計文件與改進路線圖
 
+> 深入的模組實作細節見 [ARCHITECTURE.md](ARCHITECTURE.md)；
+> 測試策略與詳表見 [TESTING.md](TESTING.md)。本文件聚焦狀態與路線。
+
 > 更新日期：2026-07-15。本文件記錄系統目前的設計、已驗證狀態、eval 除錯歷程、
 > 已知問題，以及接下來的改進與測試規劃。
 
