@@ -102,6 +102,8 @@ def test_stops_when_bbox_large_enough():
 
     assert action == STOP_ACTION
     assert agent.state == State.DONE
+    assert agent.approach_stop_reason == "bbox"
+    assert agent.approach_bbox_log == [(0, 90000.0)]  # calibration data for P1c
 
 
 def test_advances_when_visible_but_small():
@@ -148,6 +150,7 @@ def test_retreats_when_visibility_lost():
     assert action != STOP_ACTION  # heads back toward the good pose
     assert agent.state == State.APPROACH
     assert agent._approach_steps_left == steps_before  # retreat doesn't spend the advance budget
+    assert agent.approach_stop_reason is None  # hasn't stopped yet
 
 
 def test_falls_through_to_advance_when_never_visible():
@@ -177,6 +180,7 @@ def test_stops_at_step_budget():
 
     assert action == STOP_ACTION
     assert agent.state == State.DONE
+    assert agent.approach_stop_reason == "deadline"
 
 
 def test_stops_at_deadline():
@@ -191,6 +195,7 @@ def test_stops_at_deadline():
 
     assert action == STOP_ACTION
     assert agent.state == State.DONE
+    assert agent.approach_stop_reason == "deadline"
 
 
 def test_stops_when_goal_unreachable():
@@ -207,6 +212,7 @@ def test_stops_when_goal_unreachable():
 
     assert action == STOP_ACTION
     assert agent.state == State.DONE
+    assert agent.approach_stop_reason == "path_consumed"
 
 
 def _carve_free_square(agent, half_width_cells=20):

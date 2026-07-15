@@ -178,6 +178,8 @@ def run_eval(cfg) -> dict:
             "agent_stats": agent.stats,
             "state_log": agent.state_log[:40],
             "giveup_log": agent.giveup_log[:50],
+            "approach_bbox_log": agent.approach_bbox_log,
+            "approach_stop_reason": agent.approach_stop_reason,
             "final_xy": [float(x) for x in trajectory[-1]],
         }
         if verifier is not None:

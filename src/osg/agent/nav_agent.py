@@ -140,6 +140,10 @@ class NavAgent:
         self.stats = {"plan_ok": 0, "plan_fail": 0, "select_none": 0, "select_ok": 0}
         self.state_log = []
         self.giveup_log: list = []
+        # Calibration data for approach_stop_bbox_px (P1c): every bbox_px
+        # observed during APPROACH, plus why the episode's approach ended.
+        self.approach_bbox_log: list = []
+        self.approach_stop_reason: Optional[str] = None
         self.kf_selector.reset()
         self.controller.reset()
         self.detector.set_vocabulary(
@@ -270,8 +274,16 @@ class NavAgent:
             self._approach_last_good_xy = agent_xy.copy()
             x1, y1, x2, y2 = det.bbox_xyxy
             bbox_px = max(0.0, x2 - x1) * max(0.0, y2 - y1)
+            # Calibration data (P1c): approach_stop_bbox_px is one global
+            # threshold, but "close enough" bbox area plausibly differs a
+            # lot by object scale (sofa vs plant). Log every observed value
+            # so per-category thresholds can be derived from real episodes
+            # instead of guessed -- the project's repeated lesson this
+            # session is that guessed thresholds get corrected anyway.
+            self.approach_bbox_log.append((self.step_count, round(float(bbox_px), 1)))
             if bbox_px >= self.cfg.agent.approach_stop_bbox_px:
                 self.state = State.DONE
+                self.approach_stop_reason = "bbox"
                 return STOP_ACTION
         elif (
             self._approach_last_good_xy is not None
@@ -281,15 +293,18 @@ class NavAgent:
             if action is not None:
                 return action
             self.state = State.DONE  # retreat path consumed/unreachable: stop here
+            self.approach_stop_reason = "retreat"
             return STOP_ACTION
 
         if self.step_count > self._goto_deadline or self._approach_steps_left <= 0:
             self.state = State.DONE
+            self.approach_stop_reason = "deadline"
             return STOP_ACTION
         self._approach_steps_left -= 1
         action = self._follow_to(frame, self._goal_xy)
         if action is None:  # path consumed or unreachable: as close as it gets
             self.state = State.DONE
+            self.approach_stop_reason = "path_consumed"
             return STOP_ACTION
         return action
 
