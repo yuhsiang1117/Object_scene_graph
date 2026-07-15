@@ -77,6 +77,7 @@ class YoloeDetector(Detector):
             half=self.half,
             device=self.device,
             verbose=False,
+            project="/tmp/yolo_runs",  # keep ultralytics' save_dir out of the repo
         )
         out: List[Detection] = []
         r = results[0]

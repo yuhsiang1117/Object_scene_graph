@@ -77,7 +77,7 @@ class LLMConfig:
     api_key: str = "ollama"
     text_model: str = "qwen2.5vl:3b"
     vlm_model: str = "qwen2.5vl:3b"
-    timeout_s: float = 60.0
+    timeout_s: float = 120.0
     max_image_px: int = 512
 
 

@@ -39,7 +39,7 @@ class AStarPlanner(Planner):
         inflate_radius_m: float = 0.25,
         unknown_penalty: float = 3.0,
         goal_tolerance_m: float = 0.3,
-        max_expansions: int = 200_000,
+        max_expansions: int = 60_000,  # caps worst-case spikes (~12 s at 200k)
     ) -> None:
         self.inflate_radius_m = inflate_radius_m
         self.unknown_penalty = unknown_penalty

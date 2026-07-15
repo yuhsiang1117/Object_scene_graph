@@ -5,21 +5,22 @@ services:
     environment:
       - OLLAMA_KEEP_ALIVE=30m
       - OLLAMA_MAX_LOADED_MODELS=1
-      - OLLAMA_CONTEXT_LENGTH=16384  # 4 images @512px alone are ~6k tokens
+      - OLLAMA_CONTEXT_LENGTH=8192  # bounds the KV cache; 4 images @512px ~ 6k tokens
     volumes:
       - ollama-models:/root/.ollama
     ports:
       - "11434:11434"
-    # CPU inference by default: on a 6 GB GPU, habitat EGL + YOLOE need the
-    # whole card (qwen2.5vl:3b alone takes ~4 GB). LLM scoring is async and
-    # tolerates CPU latency. On >=12 GB GPUs, uncomment for GPU inference:
-    # deploy:
-    #   resources:
-    #     reservations:
-    #       devices:
-    #         - driver: nvidia
-    #           count: 1
-    #           capabilities: [gpu]
+    # GPU inference. On the 6 GB card this coexists with habitat+YOLOE
+    # (~1.4 GB) because the detector evicts its text encoder after startup;
+    # under VRAM pressure ollama partial-offloads to CPU instead of failing.
+    # (CPU-only inference was measured at >200 s per vision call — unusable.)
+    deploy:
+      resources:
+        reservations:
+          devices:
+            - driver: nvidia
+              count: 1
+              capabilities: [gpu]
 
   nav:
     build:

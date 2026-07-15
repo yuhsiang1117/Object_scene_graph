@@ -110,6 +110,7 @@ class NavAgent:
         self._goal_xy: Optional[np.ndarray] = None
         self._last_action: Optional[str] = None
         self._last_select_step = -100
+        self._goto_deadline = 10**9
         self.kf_selector.reset()
         self.controller.reset()
         self.detector.set_vocabulary(
@@ -179,14 +180,22 @@ class NavAgent:
             return self._do_verification(frame)
 
         if self.state == State.GOTO_TARGET:
-            if self._arrived_at_goal(frame):
+            # Terminal approach: one planned path, followed to its end. No
+            # replanning here — with a 0.25 m step and 30 deg turns the agent
+            # otherwise orbits the goal until the budget runs out.
+            if self._arrived_at_goal(frame) or self.step_count > self._goto_deadline:
                 self.state = State.DONE
                 return STOP_ACTION
-            action = self._follow_path(frame)
-            if action is not None:
-                return action
-            self.state = State.DONE
-            return STOP_ACTION
+            if self._current_path is None:
+                self._plan_to(frame, self._goal_xy)
+                if self._current_path is None:
+                    self.state = State.DONE
+                    return STOP_ACTION
+            action = self.controller.act(frame.T_wc, self._current_path)
+            if action is None:  # path consumed: as close as the map allows
+                self.state = State.DONE
+                return STOP_ACTION
+            return action
 
         return STOP_ACTION
 
@@ -275,6 +284,7 @@ class NavAgent:
             self._goal_xy = self._nearest_free_xy(obj_xy)
             self.state = State.GOTO_TARGET
             self._current_path = None
+            self._goto_deadline = self.step_count + 100
             return
 
         view_xy = self.viewpoint_planner.approach_viewpoint(obj_xy, self.costmap)
@@ -297,6 +307,7 @@ class NavAgent:
             )
             self.state = State.GOTO_TARGET
             self._current_path = None
+            self._goto_deadline = self.step_count + 100
             if self._arrived_at_goal(frame):
                 self.state = State.DONE
                 return STOP_ACTION
