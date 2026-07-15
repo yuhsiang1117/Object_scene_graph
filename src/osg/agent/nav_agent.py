@@ -171,7 +171,7 @@ class NavAgent:
                 max_range=self.cfg.mapping.max_range_m,
                 stride=self.cfg.mapping.depth_stride,
             )
-        self.controller.observe_progress(frame.T_wc, self._last_action, self.costmap)
+        self.controller.observe_progress(frame.T_wc, self._last_action, self.costmap, self.step_count)
         if self.controller.stuck:
             self.controller.stuck = False
             self._current_path = None  # force replan
