@@ -110,6 +110,7 @@ INIT(360°掃描) → EXPLORE ⇄ GOTO_FRONTIER
 | VLM frontier 評分實際運作 | ✅（GPU 後 0 錯誤） |
 | SR > 0 | ✅ eval25：bed success=1 / SPL 0.295（paper mode 0.13m） |
 | **嚴格 0.1m 門檻下的 SR** | ✅ P1a：bed dtg 0.015m（見 §6 P1a），首次通過嚴格門檻；chair/toilet 仍待 §6 P1b/P1c |
+| **30-episode 全量（val_mini 全部）** | ✅ 已跑，SR=6.67%（2/30）、SPL=0.0205（見 §6 P1d）——**遠低於** 3-episode pilot 的 33.3%，證實先前反覆用同 3 個 episode 調參已隱性 overfit |
 
 ## 4. Eval 迭代記錄（除錯史與教訓）
 
@@ -257,9 +258,59 @@ frontier，值得一併檢查是否為房間已探索完但目標視角一直沒
   （見上）不是常態，多數時候機制運作正常。
 
 **待辦**（尚未執行）：
-- `approach_stop_bbox_px` 目前只有 2 個場景的樣本點，8–10 episodes 後
-  應重新校準（不同物體類別的「夠近」bbox 差異可能很大——沙發 vs 馬桶）。
-- 8–10 episodes 掃參；同時報告 0.1（標準）與 0.13（paper mode）兩組數字。
+- `approach_stop_bbox_px` 依物件類別重新校準（見 P1d 的近失敗發現，
+  優先度已提高）。
+
+### P1d — 30-episode 全量結果（2026-07-15）：發現隱性 overfitting + 卡住標記迴歸
+
+**動機**：3-episode pilot（chair/bed/toilet）在 P0–P1c 反覆被拿來調參
+超過 25 輪，數字（SR 33.3%）很可能是對這 3 個特定 episode 過擬合，
+不能代表真實泛化能力。擴大到 val_mini 全部 30 個 episode（不需新下載，
+涵蓋 6 類：chair/bed/sofa/plant/tv_monitor/toilet）驗證。
+
+**過程中發現的迴歸 bug（已修正）**：擴大樣本後第一輪跑到 7/30 時，
+`ep10`（chair）的軌跡圖顯示 agent 在一個約 3m 的房間裡困了整整 500 步、
+從未離開（`select_none=66/69`）。根因：`WaypointController` 的卡住
+標記直接寫入 `costmap.grid` 且**沒有到期機制**，而一旦標記 OCCUPIED
+就會擋住未來的 raycast、永遠無法被新的深度觀測自然消除——自我強化
+的鎖死。P1b 把標記範圍從 0.1m 擴大到 0.35m×3 點後，這個鎖死效應被
+放大到足以永久封死整個門。修正：每個標記帶上到期步數（60 步），過期
+釋放回 UNKNOWN（不是 FREE，因為沒有新證據，讓 A* 用 penalty 重新嘗試）。
+2 個回歸測試、59 單元測試 + sim 整合測試全過。**修正前後對照**（同一
+episode）：`select_none` 66→21、`select_ok` 3→6、agent 從困死原地
+變成能移動超過 1.3m 突破房間邊界。
+
+**修正後的完整 30-episode 結果**（paper mode 0.13m，`configs/eval/hm3d_val_mini.yaml`）：
+
+| 指標 | 數值 |
+|---|---|
+| SR | **6.67%**（2/30） |
+| SPL | **0.0205** |
+| mean dtg | 3.10m |
+| mean steps | 330.6 |
+| pipeline FPS | 1.41 |
+
+按類別：chair 28.6%（2/7 成功，SPL 0.088，mean dtg 0.78m——明顯是我們
+反覆調參最多的類別）；bed/plant/sofa/tv_monitor 全部 **0%**（5, 5, 5, 7
+個 episode）；toilet 0%（僅 1 個，已知樓層限制）。
+
+**關鍵訊號——「近失敗」比例遠高於成功率**：dtg < 0.5m 的 episode 有
+**6 個（20%）**，但嚴格門檻下只算 2 個成功：
+`sofa(dtg=0.16)`、`bed(dtg=0.16)`、`plant(dtg=0.20)`、`plant(dtg=0.43)`
+都差一點點就過門檻。這代表 `approach_stop_bbox_px` 校準（P1c 原本列
+為「待辦」）投報率可能很高——不需要新能力，只是停止時機/bbox 閾值沒
+抓準，光是這項調整就有機會讓 SR 顯著提升。
+
+**其他訊號**：
+- `verification` 計時異常慢（mean 35.2s、max 44.6s）——遠比先前隔離
+  測試時慢，懷疑是長時間連續跑（~4-5 小時）造成 VRAM/ollama 競爭累積
+  （模型反覆換入換出），需要在 P2 效能項目一併排查。
+- 同一個 episode（bed/ep11）在這次全量跑中**失敗**（41 步），但在 P1a
+  單獨測試時曾達到 dtg=0.015 的完美結果——證實 LLM/VLM 溫度 + 探索
+  隨機性造成的 run-to-run 變異很大，單次「成功」不能當成穩定能力的
+  證明，這也是為什麼要擴大樣本數的原因。
+- `select_none` 修正後在全部 30 個 episode 中沒有再出現病態比例
+  （最糟 48:9≈5.3:1，遠不到修正前 66:3、86:1 的鎖死程度）。
 
 ### P2 — 效能（real-time 主張）
 - 目前控制迴圈中位數 ~400ms（2.5 FPS）；目標 ≥5 FPS（優於論文的 RTX
