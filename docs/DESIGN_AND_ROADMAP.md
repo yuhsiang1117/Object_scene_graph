@@ -257,9 +257,9 @@ frontier，值得一併檢查是否為房間已探索完但目標視角一直沒
   1 張因取樣誤判被接受——確認 P1b 除錯時發現的「拒絕重問」雙面性
   （見上）不是常態，多數時候機制運作正常。
 
-**待辦**（尚未執行）：
-- `approach_stop_bbox_px` 依物件類別重新校準（見 P1d 的近失敗發現，
-  優先度已提高）。
+**待辦**：
+- ~~`approach_stop_bbox_px` 依物件類別重新校準~~ ——**已用真實數據檢驗，
+  結論是不該做**，見 P1e。
 
 ### P1d — 30-episode 全量結果（2026-07-15）：發現隱性 overfitting + 卡住標記迴歸
 
@@ -312,12 +312,55 @@ episode）：`select_none` 66→21、`select_ok` 3→6、agent 從困死原地
 - `select_none` 修正後在全部 30 個 episode 中沒有再出現病態比例
   （最糟 48:9≈5.3:1，遠不到修正前 66:3、86:1 的鎖死程度）。
 
+### P1e — bbox 校準資料收集結果（2026-07-15）：假設被真實數據推翻
+
+**動機**：P1d 發現 20% 的 episode 是「近失敗」，假設是
+`approach_stop_bbox_px`（全域單一門檻 40000px²）沒有依物件類別校準。
+在動手改之前，先替 `_do_approach` 加上 `approach_bbox_log`（記錄每次
+偵測到的 bbox 面積）與 `approach_stop_reason`（bbox/retreat/deadline/
+path_consumed），跑一次 30-episode 收集真實數據再下結論——本次 session
+反覆學到「先猜測門檻、後被數據打臉」的教訓（`approach_stop_bbox_px`
+本身、驗證器準確率都曾經歷這個過程），這次先驗證再動手。
+
+**結果：假設不成立，不建議實作 per-category 門檻**。逐一比對全部 30 筆
+`approach_bbox_log` + `approach_stop_reason` 後：
+
+1. **chair 與 plant 全程從未觸發 `bbox` 停止**（0/12 個 episode）——
+   bbox 最大值只到 8000–27000px²，遠低於 40000，不論成功或失敗皆然。
+   對這兩類物件，門檻在實務上等同不存在，調整它不會改變任何行為。
+2. **sofa/bed/tv_monitor 觸發 `bbox` 時一律是第一次檢查就爆表**
+   （42325–116760px²，`bbox_log` 常常只有 1 筆），從未出現「卡在門檻
+   邊緣」的情況——代表門檻同樣不是這些類別停止時機的決定因素。
+3. **決定性反證**：bed 的一次成功（dtg=0.11, bbox=116760）與一次近
+   失敗（dtg=0.16, bbox=115790）**bbox 數值幾乎相同**。若門檻是決定
+   因素，這兩者不該一成一敗。真正的差異必然在別處——最可能是視點
+   選擇（`ViewpointPlanner`）或物件橢球中心估計的幾何精度，而非
+   bbox 視覺確認門檻。
+
+**結論**：機械化實作 per-category `approach_stop_bbox_px` 會是沒有數據
+支持的改動，不執行。真正值得投入的下一步（未開始）：直接比對我們的
+停止位置與 habitat 該 episode 的 view_points 幾何邊界（P0 時期用過的
+方法），確認近失敗的 0.15–0.2m 落差來源——物件位置估計偏差、視點
+規劃器取樣半徑、還是格線/到達容差堆疊——這是全新的調查方向，範圍
+不同於「校準 bbox」，留待下次決定是否進行。
+
+實作：`src/osg/agent/nav_agent.py`（`approach_bbox_log`/
+`approach_stop_reason` 儀表化）、10 個 nav_agent 測試更新驗證新欄位，
+59 單元測試 + sim 整合測試全過。
+
 ### P2 — 效能（real-time 主張）
-- 目前控制迴圈中位數 ~400ms（2.5 FPS）；目標 ≥5 FPS（優於論文的 RTX
-  3060 9.86 FPS 需在 12GB 機器驗證）。
-- 剩餘熱點：frontier_select 789ms（A*×5，已節流）、object_layer 尖峰
-  （優化觸發時機）、detector 66ms。
-- 候選：A* 改 scipy/C 實作或 FMM；frontier 評分快取；房間分割增量化。
+- 30-episode 全量兩次獨立測得 pipeline FPS 1.41–1.47，控制迴圈中位數
+  ~480–710ms；目標 ≥5 FPS（優於論文的 RTX 3060 9.86 FPS 需在 12GB
+  機器驗證）。
+- **`verification` 計時異常且已兩次獨立確認**：mean 33.7–35.2s、max
+  44.6–47.5s（P1d/P1e 兩次跑都測到，數字幾乎一致，排除單次偶發）。
+  遠比先前隔離測試時慢，懷疑是長時間連續跑（4–8 小時）造成 VRAM/
+  ollama 競爭累積（3B/7B 模型反覆換入換出，partial CPU/GPU offload
+  比例可能隨時間惡化）。這是目前最大的單一效能瓶頸，優先度應提高。
+- 剩餘熱點：object_layer mean 364ms（尖峰 3.4s，優化觸發時機）、
+  frontier_extract/select 各 mean ~1000ms（已節流）、detector mean 82ms。
+- 候選：A* 改 scipy/C 實作或 FMM；frontier 評分快取；房間分割增量化；
+  ollama 常駐策略調整（避免長跑期間的模型換入換出，或定期重啟釋放）。
 
 ### P3 — 實驗與論文素材
 - `--multirun +ablation=full,no_verify,paper_baseline,no_llm`（機制已就绪）。
