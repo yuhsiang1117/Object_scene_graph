@@ -221,7 +221,16 @@ class NavAgent:
             # Terminal approach: one planned path, followed to its end. No
             # replanning here — with a 0.25 m step and 30 deg turns the agent
             # otherwise orbits the goal until the budget runs out.
-            if self._arrived_at_goal(frame) or self.step_count > self._goto_deadline:
+            agent_xy = frame.camera_position[list(PLANE)]
+            beside_object = (
+                self._target_obj_xy is not None
+                and np.linalg.norm(agent_xy - self._target_obj_xy) < 0.7
+            )
+            if (
+                beside_object
+                or self._arrived_at_goal(frame)
+                or self.step_count > self._goto_deadline
+            ):
                 return self._final_nudge_or_stop(frame)
             if self._current_path is None:
                 self._plan_to(frame, self._goal_xy)
@@ -364,7 +373,7 @@ class NavAgent:
             self.state = State.GOTO_TARGET
             self._current_path = None
             self._goto_deadline = self.step_count + 100
-            self._final_nudges = 3
+            self._final_nudges = 5
             return
 
         view_xy = self.viewpoint_planner.approach_viewpoint(obj_xy, self.costmap)
@@ -399,7 +408,7 @@ class NavAgent:
             self.state = State.GOTO_TARGET
             self._current_path = None
             self._goto_deadline = self.step_count + 100
-            self._final_nudges = 3
+            self._final_nudges = 5
             if self._arrived_at_goal(frame):
                 self.state = State.DONE
                 return STOP_ACTION
