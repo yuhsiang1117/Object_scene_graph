@@ -14,6 +14,18 @@ from ..llm.client import ChatClient
 from ..objects.association import ObjectTrack
 
 
+def _upscale_small(img: np.ndarray, min_side: float = 320.0) -> np.ndarray:
+    """Small crops sit below the VLM's reliable resolution: a 156px chair
+    crop was rejected while its 3x upscale was accepted (prompt-lab)."""
+    import cv2
+
+    h, w = img.shape[:2]
+    scale = min_side / max(h, w)
+    if scale <= 1.0:
+        return img
+    return cv2.resize(img, (int(w * scale), int(h * scale)), interpolation=cv2.INTER_CUBIC)
+
+
 class TargetVerifier:
     def __init__(
         self,
@@ -52,7 +64,7 @@ class TargetVerifier:
         # with candidate quality gates the crop is meaningful evidence.
         images = []
         if track.best_crop is not None:
-            images.append(track.best_crop)
+            images.append(_upscale_small(track.best_crop))
         elif live_view is not None:
             images.append(live_view)
         if not images:
@@ -73,7 +85,10 @@ class TargetVerifier:
 
         self._dump(images, target, resp)
         is_target = bool(resp.get("is_target", False))
-        conf = float(resp.get("confidence", 0.0))
+        try:
+            conf = float(resp.get("confidence", 0.6))
+        except (TypeError, ValueError):
+            conf = 0.6  # describe-then-decide sometimes omits confidence
         accepted = is_target and conf >= self.accept_confidence
         if not accepted:
             self.n_rejections += 1
