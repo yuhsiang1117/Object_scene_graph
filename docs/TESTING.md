@@ -7,7 +7,8 @@
 
 | 層級 | 依賴 | 耗時 | 指令 | 使用時機 |
 |---|---|---|---|---|
-| 單元（55 tests / 15 檔） | 無 GPU、無資料、合成輸入 | ~8s | `make test` | 每次改動 |
+| 單元（57 tests / 16 檔） | 無 GPU、無資料、合成輸入 | ~8s | `make test` | 每次改動 |
+| 驗證器離線基準 | GPU + ollama，免 sim | ~5min | `pytest tests/integration/test_verify_bench.py -m gpu` | verifier prompt/model/門檻改動 |
 | 元件隔離 | GPU + 權重 / ollama | 秒~分 | 見 §4 | 模型相關改動 |
 | Sim 整合 | habitat + HM3D minival | ~4min | `make test-sim` | pipeline 改動 |
 | 端到端 eval | 全部 | 30–60min | `make eval-mini` | 每輪修正驗收 |
@@ -100,9 +101,19 @@
 | VLM 驗證 | `scripts/prompt_lab.py <img> <target> ...`：存檔影像 × 多種 prompt 離線比較 | 3B 誤拒真目標、小圖解析度懸崖、describe-then-decide 有效性 |
 | 導航棧 | `scripts/diag_movement.py`：stub detector + nearest scorer 200 步，輸出逐步狀態/動作分布/plan 統計/plan probe（逐 frontier 失敗原因）/costmap+膨脹視覺化/`diag_costmap.npz` | P0 全部四個 bug、give-up 網有效性 |
 
-**建議固化**（P1）：把 heredoc 寫成 `tests/integration/test_detector.py
-(@gpu)`；把 `verify_debug/` 累積的影像整理成 20–30 張標注集 +
-`tests/offline/test_verifier_bench.py`（驗證器參數改動先過離線集）。
+**建議固化**（P1 剩餘）：把 YoloeDetector heredoc 寫成
+`tests/integration/test_detector.py`（`@gpu`）。
+
+驗證器離線基準已固化（P1c，2026-07-15）：
+[tests/fixtures/verify_bench/](../tests/fixtures/verify_bench/)（24 張
+真實 verify_debug 影像、人工標註 ground truth，涵蓋 6 類、含硬負例/
+偵測器誤標/取樣噪音等真實案例）+ `scripts/verify_bench.py`（離線重跑
+出逐圖報告，~5 分鐘）+ `tests/integration/test_verify_bench.py`
+（`@pytest.mark.gpu`，回歸閘門）。實測 qwen2.5vl:7b
+**accuracy=0.700、precision=0.846、recall=0.733**——明顯低於先前用 3 張
+精選圖做 spot check 的印象，證實了「小樣本測試會高估可靠度」，也把
+取樣噪音（同一物件的近乎相同裁切，接受/拒絕會反覆橫跳）量化成可追蹤
+的數字。細節見 [DESIGN_AND_ROADMAP.md](DESIGN_AND_ROADMAP.md) P1c。
 
 ## 5. 執行期診斷工具
 
