@@ -118,6 +118,7 @@ class NavAgent:
         self._final_nudges = 0
         self._target_obj_xy: Optional[np.ndarray] = None
         self._tried_viewpoints: list = []
+        self._went_to_best_cam = False
         self.stats = {"plan_ok": 0, "plan_fail": 0, "select_none": 0, "select_ok": 0}
         self.state_log = []
         self.kf_selector.reset()
@@ -403,18 +404,21 @@ class NavAgent:
         # HM3D success viewpoints require the object to actually be VISIBLE
         # from the stop pose; 2D line-of-sight misses desk-height occluders
         # (we stopped 0.12 m outside the viewpoint set). If the detector
-        # cannot see the target from here, reposition to another ring pose.
-        if not self._target_visible(frame) and len(self._tried_viewpoints) < 3:
-            self._tried_viewpoints.append(agent_xy.copy())
-            alt = self.viewpoint_planner.approach_viewpoint(
-                obj_xy, self.costmap, exclude=self._tried_viewpoints
-            )
-            if alt is not None:
-                self._goal_xy = alt
-                self.state = State.GOTO_VERIFY_VIEW
-                self._current_path = None
-                self._goto_deadline = self.step_count + 60
-                return self._follow_path(frame) or TURN_ACTION
+        # cannot see the target from here, return to the pose the best
+        # detection was made from — proven reachable AND proven visible
+        # (ring alternatives proved unreachable and thrashed the deadline).
+        if (
+            not self._target_visible(frame)
+            and not self._went_to_best_cam
+            and track.best_cam_xy is not None
+            and np.linalg.norm(track.best_cam_xy - agent_xy) > 0.35
+        ):
+            self._went_to_best_cam = True
+            self._goal_xy = track.best_cam_xy.copy()
+            self.state = State.GOTO_VERIFY_VIEW
+            self._current_path = None
+            self._goto_deadline = self.step_count + 60
+            return self._follow_path(frame) or TURN_ACTION
         with self.profiler.timeit("verification"):
             accepted = self.verifier.verify(track, self.target, live_view=frame.rgb)
         if accepted:

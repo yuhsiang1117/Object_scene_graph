@@ -63,6 +63,11 @@ class ObjectLayer:
                 track.best_crop = det.crop if det.crop is not None else det.crop_from(frame.rgb)
                 x1, y1, x2, y2 = det.bbox_xyxy
                 track.best_bbox_px = float(max(0.0, x2 - x1) * max(0.0, y2 - y1))
+                # The pose this detection was made from is a proven
+                # "object visible from here" pose — the terminal stop target.
+                from ..mapping.costmap import PLANE
+
+                track.best_cam_xy = frame.camera_position[list(PLANE)].copy()
 
             due = (
                 track.n_obs >= self.min_obs_for_refine

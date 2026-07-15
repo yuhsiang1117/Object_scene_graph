@@ -37,6 +37,7 @@ class ObjectTrack:
     best_crop: Optional[np.ndarray] = None
     best_score: float = 0.0
     best_bbox_px: float = 0.0  # bbox area of the best detection, px^2
+    best_cam_xy: Optional[np.ndarray] = None  # camera ground-plane pose of the best detection
     blacklisted: bool = False
     linked_ids: set = field(default_factory=set)
     refined_at_obs: int = 0
