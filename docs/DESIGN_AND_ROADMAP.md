@@ -3,7 +3,7 @@
 > 深入的模組實作細節見 [ARCHITECTURE.md](ARCHITECTURE.md)；
 > 測試策略與詳表見 [TESTING.md](TESTING.md)。本文件聚焦狀態與路線。
 
-> 更新日期：2026-07-15。本文件記錄系統目前的設計、已驗證狀態、eval 除錯歷程、
+> 更新日期：2026-07-16。本文件記錄系統目前的設計、已驗證狀態、eval 除錯歷程、
 > 已知問題，以及接下來的改進與測試規劃。
 
 ## 1. 專案目標與定位
@@ -48,7 +48,7 @@ Habitat sim ──> FrameData(rgb, depth, T_wc[OpenCV 慣例], intrinsics)   ←
 INIT(360°掃描) → EXPLORE ⇄ GOTO_FRONTIER
                     │ 發現候選目標
                     ▼
-        GOTO_VERIFY_VIEW → VERIFYING ──accept──> GOTO_TARGET → STOP
+        GOTO_VERIFY_VIEW → VERIFYING ──accept──> APPROACH → STOP
                               │reject: blacklist → EXPLORE
 ```
 
@@ -61,10 +61,11 @@ INIT(360°掃描) → EXPLORE ⇄ GOTO_FRONTIER
 - **選擇**：argmax Pᵢ/dᵢ，dᵢ 為 A* 真實路徑成本（top-5），未評分 frontier
   先驗 P=0.3。
 - **驗證（改進 C）**：物件周圍 0.8–2.0m 環取樣視點 + Bresenham LOS 檢查 →
-  走到視點 → 轉向面對物件 → VLM 以 live view（主）+ best crop（輔）判斷
+  走到視點 → 轉向面對物件 → VLM 以 best crop（主）+ live view（輔）判斷
   `{is_target, confidence}` → 拒絕即 blacklist。
-- **終端接近**：目標 = 距物件中心最近的 FREE 格；單次規劃、路徑走完即
-  STOP、100 步 deadline（防繞圈）。
+- **終端接近（APPROACH，P1a）**：驗證通過後朝物件前進，每步用偵測器
+  複查——可見且 bbox 夠大即停、可見但還小則續走一步、看不見則退回最後
+  可見位姿停止。直接命中 HM3D 的 view_points 可見性定義，見 §6 P1a。
 
 ### 2.3 模組地圖（`src/osg/`）
 
@@ -101,13 +102,14 @@ INIT(360°掃描) → EXPLORE ⇄ GOTO_FRONTIER
 | 項目 | 狀態 |
 |---|---|
 | Docker build + headless EGL 渲染（真 HM3D 場景） | ✅ |
-| 單元測試（47 個，合成資料免 GPU） | ✅ 3.3s 全過 |
+| 單元測試（55 個，合成資料免 GPU，含 nav_agent APPROACH 8 個） | ✅ <8s 全過 |
 | Ollama 文字+視覺往返 | ✅ |
 | HM3D minival（10 場景+semantic configs）+ ObjectNav v2 episodes | ✅ 已下載 |
 | Sim 整合測試（stub detector 全 pipeline 1 episode） | ✅ |
 | 端到端 eval（YOLOE+VLM 3 episodes 跑完、產出 summary/timing/viz） | ✅ |
 | VLM frontier 評分實際運作 | ✅（GPU 後 0 錯誤） |
-| **SR > 0** | ✅ eval25：bed success=1 / SPL 0.295（paper mode 0.13m）；嚴格 0.1m 差 1-5cm（見 §6 P1） |
+| SR > 0 | ✅ eval25：bed success=1 / SPL 0.295（paper mode 0.13m） |
+| **嚴格 0.1m 門檻下的 SR** | ✅ P1a：bed dtg 0.015m（見 §6 P1a），首次通過嚴格門檻；chair/toilet 仍待 §6 P1b/P1c |
 
 ## 4. Eval 迭代記錄（除錯史與教訓）
 
@@ -150,16 +152,53 @@ VLM prompt；`verify_debug/` 存驗證證據影像；`state_log`+`agent_stats`
 
 ## 6. 改進規劃（優先順序）
 
-### P1 — 嚴格 0.1m 門檻下的 SR（目前差 1-5cm）
-現況：chair 穩定停在 dtg 0.107–0.147（成功圈邊緣）；bed 在 0.13 門檻
-下已成功。HM3D 的 dtg 量到 view_points（物件可見的 navmesh 位姿集，
-每物件 100–500 個）的測地距離。
-- 「approach while visible」終端策略：驗證通過後朝物件前進、每步用偵
-  測器確認仍可見，不可見或 bbox 夠大即停——直接走進 viewpoint 集合內部。
-- ep7（toilet）型失敗＝探索效率：500 步走不到浴室。frontier give-up
-  的 15 步成本 × 10 次很傷；調 give-up 參數與 LLM 評分的房間先驗。
+### P1a — 「approach while visible」終端策略（已完成，2026-07-15）
+
+**做了什麼**：終端接近從「走到固定距離/ring 就停」換成
+`State.APPROACH`——驗證通過後朝物件前進，**每步用偵測器複查**：
+- 可見且 bbox ≥ `agent.approach_stop_bbox_px`（預設 40000px²）→ 停
+  （夠近、夠清楚，等同已站進 viewpoint 集合內部）；
+- 可見但 bbox 還小 → 記錄此位姿為 `_approach_last_good_xy`、再前進一步；
+- 看不見 → 若曾有 last_good_xy，**退回**該處停止（一步之遙的 3D 遮擋，
+  2D costmap LOS 抓不到）；否則（從未看過）繼續朝物件前進到 deadline。
+
+三個舊策略（追目標格、抵達判定、接觸式 nudge）全部卡在 dtg
+0.107–0.147m 的成功圈邊緣——因為 HM3D 的 dtg 是量到 **view_points 集合**
+（可見性定義的位姿）的測地距離，貼著物件反而衝出集合。bbox-可見性驅動
+的停止條件直接命中這個定義。
+
+**驗證數字**（eval-mini，paper mode 0.13m，與改動前同三個 episode 對照）：
+
+| episode | 改動前 dtg | 改動後 dtg | 備註 |
+|---|---|---|---|
+| bed (ep11) | 0.107（success, SPL 0.295） | **0.015**（success, SPL 0.345） | **嚴格 0.1m 門檻下也會過**——本專案首次 |
+| chair (ep4) | 0.121–0.147（一直失敗） | 0.153（失敗） | 噪音範圍內，兩種策略下都從未成功過 |
+| toilet (ep7) | 500 步走不到（失敗） | 500 步走不到（失敗） | 不受影響，符合預期（探索效率問題，見 P1b） |
+
+整體 SR 持平 1/3、**SPL 0.098→0.115**。淨效益明確。
+
+實作：`src/osg/agent/nav_agent.py`（`State.APPROACH` 取代
+`State.GOTO_TARGET`；`_do_approach`/`_follow_to`/`_best_target_detection`；
+移除死碼 `_final_nudge_or_stop`/`_arrived_at_goal`/`_tried_viewpoints`）、
+`core/config.py`（`approach_stop_bbox_px`/`approach_max_steps`）。
+新增 [tests/unit/test_nav_agent.py](../tests/unit/test_nav_agent.py)
+（8 個測試，直接呼叫 `_do_approach` 覆蓋四個分支：bbox 達標停止、可見
+續走、視野遺失退回、從未可見時退避到前進、step/deadline/不可達邊界）
+——這是專案第一份 `nav_agent.py` 單元測試，補上 TESTING.md 點名的空缺。
+
+### P1b — 探索效率（ep7 型失敗）
+toilet 500 步走不到浴室，`state_log` 顯示全程卡在第一個
+`goto_frontier`（探索從未真正推進到目標房間）。
+- frontier give-up 的 15 步成本 × 多次很傷；調 give-up 參數與 LLM 評分
+  的房間先驗（廁所通常在特定相對位置，可加房型共現先驗）。
+- 檢查 room_seg 是否把浴室誤併入其他房間、或該場景浴室根本在地圖增長
+  範圍之外（此時需要更積極的探索策略而非調參）。
+
+### P1c — 剩餘掃參與測試集
 - 驗證器單獨評測集：把 verify_debug 影像整理成 20-30 張標注測試集，
   參數改動先過離線測試再進 eval。
+- `approach_stop_bbox_px` 目前只有 2 個場景的樣本點，8–10 episodes 後
+  應重新校準（不同物體類別的「夠近」bbox 差異可能很大——沙發 vs 馬桶）。
 - 8–10 episodes 掃參；同時報告 0.1（標準）與 0.13（paper mode）兩組數字。
 
 ### P2 — 效能（real-time 主張）

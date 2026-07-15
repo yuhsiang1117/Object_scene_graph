@@ -1,6 +1,6 @@
 # 系統架構與實作細節
 
-> 對應版本：2026-07-15（commit `a250fd4`）。本文件說明每個模組的職責、
+> 對應版本：2026-07-16。本文件說明每個模組的職責、
 > 演算法與實作決策的緣由。專案狀態與路線圖見
 > [DESIGN_AND_ROADMAP.md](DESIGN_AND_ROADMAP.md)；測試見 [TESTING.md](TESTING.md)。
 
@@ -377,7 +377,7 @@ free 且 4-鄰接 unknown 的格 → 8-連通元件（`scipy.ndimage.label`）�
 INIT(360°掃描, 12×turn) ─> EXPLORE ⇄ GOTO_FRONTIER
                               │ 候選通過品質閘門
                               ▼
-                    GOTO_VERIFY_VIEW ─> VERIFYING ─accept→ GOTO_TARGET → DONE(stop)
+                    GOTO_VERIFY_VIEW ─> VERIFYING ─accept→ APPROACH → DONE(stop)
                               ↑            │reject: blacklist track → EXPLORE
                               └────(偵測器看不到目標→回 best-cam 位姿)
 ```
@@ -394,19 +394,35 @@ INIT/EXPLORE/GOTO_FRONTIER 狀態）。
   - *放棄網*：15 步位移 <0.2m → 空間 blacklist 該 frontier 100 步
     →重選（隱形障礙/模擬碰撞的保險）。
   - frontier blacklist 以 **位置 (0.6m 半徑)** 為鍵（id 不穩定）。
-- **GOTO_VERIFY_VIEW**：與 GOTO_TARGET 同款終端語意 —— 0.35m 內、
-  路徑耗盡、或 80 步 deadline 任一到達即進 VERIFYING
-  （離散動作幾乎不會精確落點，曾繞視點 486 步）。
+- **GOTO_VERIFY_VIEW**：終端接近語意 —— 0.35m 內、路徑耗盡、或 80 步
+  deadline 任一到達即進 VERIFYING（離散動作幾乎不會精確落點，
+  曾繞視點 486 步）。
 - **VERIFYING**：先轉身面向物件（誤差 ≤20°）；若偵測器**看不到**
   目標（`_target_visible`：當前畫面跑 YOLOE 找同類別 >0.25）且未
   試過 → 走回 `best_cam_xy`（該 track 最佳偵測的相機位姿 ——
   實證可達且可見）再驗證。之後交給 TargetVerifier。
   拒絕 → blacklist track → EXPLORE。
-- **GOTO_TARGET**：單次規劃、無重規劃（會繞圈到預算耗盡）；
-  接受時若已在物件 1.6m 內**就地停止**（HM3D 的 success 量到
-  「可見性 viewpoint 環」的測地距離 —— 貼著物件反而超出環，
-  三種接觸式策略都停在 dtg 0.11–0.12）；否則走向最近 free 格，
-  0.7m 內 / 抵達 / 100 步 deadline → `_final_nudge_or_stop`。
+- **APPROACH**（P1a 終端策略）：驗證通過（或 verifier off 時直接）
+  進入，`_do_approach` 逐步邏輯：
+  1. 用偵測器複查目前這一步是否看得見目標（`_best_target_detection`）；
+  2. **可見**：記錄此位姿為 `_approach_last_good_xy`；bbox ≥
+     `agent.approach_stop_bbox_px`（預設 40000px²）→ **停**（夠近夠
+     清楚 = 已在 viewpoint 集合內部）；否則往物件方向再走一步；
+  3. **不可見**：若曾有 last_good_xy 且離現在 >0.1m → **退回**該處停止
+     （這一步跨過了 2D LOS 看不到的 3D 遮擋邊界，如桌緣）；若從未
+     可見 → 沒有更好的退路，繼續往物件前進直到 deadline；
+  4. 步數上限 `agent.approach_max_steps`（預設 12）或 100 步全域
+     deadline 到 → 停在當下。
+  - 為何不是固定距離規則：HM3D 的 dtg 量到 **view_points**
+    （可見性定義的位姿集合，每物件 100–500 個)的測地距離，貼著物件
+    反而衝出集合——三個舊策略（追目標格/抵達判定/接觸式 nudge）都
+    卡在 dtg 0.107–0.147m。bbox-可見性驅動的停止條件直接命中這個
+    定義：實測 bed 從 dtg 0.107（成功, SPL 0.295）改善到
+    **dtg 0.015**（成功, SPL 0.345），首次通過嚴格 0.1m 門檻。
+  - `_follow_to(frame, goal_xy)`：與 `_follow_path` 平行的路徑跟隨
+    輔助，差別是**顯式接受 goal 參數**並在 goal 改變時重規劃——
+    APPROACH 在「前進」與「退回」兩個目標間切換，不像其他終端狀態
+    整段只有一個固定目標。
 - 儀表：`stats`（plan_ok/fail、select_ok/none、frontier_give_up）與
   `state_log`（狀態轉換序列）隨 episode 落盤。
 
@@ -475,7 +491,7 @@ ultralytics 8.3 + `numpy<2` + CLIP tokenizer（預裝，否則 AutoUpdate
 
 | group | 檔案 | 關鍵欄位（預設） |
 |---|---|---|
-| agent | default | max_steps 500 / forward 0.25 / turn 30 / success_distance 0.1（paper mode 0.13）/ initial_scan / camera_height 0.88 |
+| agent | default | max_steps 500 / forward 0.25 / turn 30 / success_distance 0.1（paper mode 0.13）/ initial_scan / camera_height 0.88 / approach_stop_bbox_px 40000 / approach_max_steps 12 |
 | detector | yoloe_small（6GB）/ yoloe（12GB） | weights / conf 0.3 / imgsz 512↔640 / half |
 | scene_graph | default | keyframe 0.25m/30° / refine ≥3 每 3 / link 1.0m / assoc 0.4 / depth gate 0.5m / room_seg 每 10 kf |
 | exploration | vlm / llm_text / nearest / random | top_n 5 / dedup 1m / min_cells 8 / subgraph 3m / 1 img/frontier / ≤4 frontier/call / prior 0.3 |

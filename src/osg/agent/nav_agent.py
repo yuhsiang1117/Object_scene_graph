@@ -4,9 +4,22 @@ State machine:
     INIT (360 scan) -> EXPLORE <-> GOTO_FRONTIER
                            |  candidate found
                            v
-                  GOTO_VERIFY_VIEW -> VERIFYING --accept--> GOTO_TARGET -> STOP
-                           ^                |
+                  GOTO_VERIFY_VIEW -> VERIFYING --accept--> APPROACH -> STOP
+                           ^                |                  |
                            |                +--reject--> blacklist, EXPLORE
+                           +---------------------(retreat if visibility lost)
+
+APPROACH walks toward the verified object one step at a time, checking with
+the detector on every step: stop when the detection's bbox is large enough
+(close and clearly visible) or, if a step carries the agent out of view,
+retreat to the last pose that was confirmed visible and stop there. This
+targets HM3D's success metric directly — distance-to-goal is measured
+against the episode's view_points set (poses from which the object is
+actually visible), not against the object's raw 3D position, so a
+distance-only stopping rule can land just outside that set even when the
+agent is standing right next to the object (see docs/DESIGN_AND_ROADMAP.md
+P0->P1 history: three distance-based strategies all stalled at dtg
+0.107-0.147 m).
 """
 from __future__ import annotations
 
@@ -16,7 +29,7 @@ from typing import Optional
 import numpy as np
 
 from ..core.profiler import Profiler
-from ..core.types import FrameData
+from ..core.types import Detection, FrameData
 from ..exploration.async_scorer import AsyncScorer
 from ..exploration.selector import frontier_goal_xy, select_frontier
 from ..graph.scene_graph import SceneGraph
@@ -41,7 +54,7 @@ class State(Enum):
     GOTO_FRONTIER = "goto_frontier"
     GOTO_VERIFY_VIEW = "goto_verify_view"
     VERIFYING = "verifying"
-    GOTO_TARGET = "goto_target"
+    APPROACH = "approach"
     DONE = "done"
 
 
@@ -115,10 +128,15 @@ class NavAgent:
         self._goto_deadline = 10**9
         self._progress_ref_step = 0
         self._progress_ref_xy = np.zeros(2)
-        self._final_nudges = 0
         self._target_obj_xy: Optional[np.ndarray] = None
-        self._tried_viewpoints: list = []
         self._went_to_best_cam = False
+        # APPROACH state: path-goal cache is separate from _goal_xy/_current_path
+        # used by GOTO_FRONTIER/GOTO_VERIFY_VIEW because APPROACH switches
+        # between an "advance toward the object" goal and a "retreat to the
+        # last visible pose" goal within the same episode phase.
+        self._path_goal: Optional[np.ndarray] = None
+        self._approach_last_good_xy: Optional[np.ndarray] = None
+        self._approach_steps_left = 0
         self.stats = {"plan_ok": 0, "plan_fail": 0, "select_none": 0, "select_ok": 0}
         self.state_log = []
         self.kf_selector.reset()
@@ -219,51 +237,54 @@ class NavAgent:
         if self.state == State.VERIFYING:
             return self._do_verification(frame)
 
-        if self.state == State.GOTO_TARGET:
-            # Terminal approach: one planned path, followed to its end. No
-            # replanning here — with a 0.25 m step and 30 deg turns the agent
-            # otherwise orbits the goal until the budget runs out.
-            agent_xy = frame.camera_position[list(PLANE)]
-            beside_object = (
-                self._target_obj_xy is not None
-                and np.linalg.norm(agent_xy - self._target_obj_xy) < 0.7
-            )
-            if (
-                beside_object
-                or self._arrived_at_goal(frame)
-                or self.step_count > self._goto_deadline
-            ):
-                return self._final_nudge_or_stop(frame)
-            if self._current_path is None:
-                self._plan_to(frame, self._goal_xy)
-                if self._current_path is None:
-                    return self._final_nudge_or_stop(frame)
-            action = self.controller.act(frame.T_wc, self._current_path)
-            if action is None:  # path consumed: as close as the map allows
-                return self._final_nudge_or_stop(frame)
-            return action
+        if self.state == State.APPROACH:
+            return self._do_approach(frame)
 
         return STOP_ACTION
 
-    def _final_nudge_or_stop(self, frame: FrameData) -> str:
-        """Close the last centimeters: face the object center and take a few
-        forward steps until we bump it (success distance is a tight 0.1 m
-        geodesic; stopping a whole grid cell early loses episodes)."""
-        from ..planning.controller import FORWARD, TURN_LEFT, TURN_RIGHT, _wrap, agent_heading
+    def _do_approach(self, frame: FrameData) -> str:
+        """Walk toward the verified object while it stays visible.
 
-        if self._final_nudges <= 0 or self.controller.stuck or self._target_obj_xy is None:
-            self.state = State.DONE
-            return STOP_ACTION
+        Every step re-runs the detector on the current pose:
+        - visible with a large-enough bbox -> close and in clear view, stop.
+        - visible but still small -> record this pose as good, advance one
+          more step toward the object.
+        - not visible -> if a previous pose was confirmed visible, retreat
+          there (a step just carried us behind an occluder the 2D costmap
+          LOS check cannot see, e.g. a desk edge) and stop; otherwise the
+          object was never visible from this approach at all, so keep
+          advancing toward it (there is nothing better to retreat to) until
+          the deadline.
+        """
         agent_xy = frame.camera_position[list(PLANE)]
-        to_obj = self._target_obj_xy - agent_xy
-        if np.linalg.norm(to_obj) < 0.05:
+        det = self._best_target_detection(frame)
+
+        if det is not None:
+            self._approach_last_good_xy = agent_xy.copy()
+            x1, y1, x2, y2 = det.bbox_xyxy
+            bbox_px = max(0.0, x2 - x1) * max(0.0, y2 - y1)
+            if bbox_px >= self.cfg.agent.approach_stop_bbox_px:
+                self.state = State.DONE
+                return STOP_ACTION
+        elif (
+            self._approach_last_good_xy is not None
+            and np.linalg.norm(agent_xy - self._approach_last_good_xy) > 0.1
+        ):
+            action = self._follow_to(frame, self._approach_last_good_xy)
+            if action is not None:
+                return action
+            self.state = State.DONE  # retreat path consumed/unreachable: stop here
+            return STOP_ACTION
+
+        if self.step_count > self._goto_deadline or self._approach_steps_left <= 0:
             self.state = State.DONE
             return STOP_ACTION
-        err = _wrap(float(np.arctan2(to_obj[1], to_obj[0])) - agent_heading(frame.T_wc))
-        if abs(err) > np.radians(30.0):
-            return TURN_RIGHT if err > 0 else TURN_LEFT
-        self._final_nudges -= 1
-        return FORWARD
+        self._approach_steps_left -= 1
+        action = self._follow_to(frame, self._goal_xy)
+        if action is None:  # path consumed or unreachable: as close as it gets
+            self.state = State.DONE
+            return STOP_ACTION
+        return action
 
     def _act_inner_post_transition(self, frame: FrameData) -> str:
         """Re-enter EXPLORE logic once after a state transition (no recursion
@@ -369,13 +390,9 @@ class NavAgent:
         obj_xy = self.object_layer.center_of(track)[list(PLANE)]
 
         if self.verifier is None:
-            # Verification disabled (paper baseline): head straight for it
-            self._goal_xy = self._nearest_free_xy(obj_xy)
-            self._target_obj_xy = obj_xy.copy()
-            self.state = State.GOTO_TARGET
-            self._current_path = None
-            self._goto_deadline = self.step_count + 100
-            self._final_nudges = 0  # stop at ring range (see verification path)
+            # Verification disabled (paper baseline): head straight for it,
+            # using the same visibility-driven stop as the verified path.
+            self._start_approach(obj_xy)
             return
 
         view_xy = self.viewpoint_planner.approach_viewpoint(obj_xy, self.costmap)
@@ -422,24 +439,9 @@ class NavAgent:
         with self.profiler.timeit("verification"):
             accepted = self.verifier.verify(track, self.target, live_view=frame.rgb)
         if accepted:
-            # HM3D success is measured against the goal's view points — a
-            # ~1 m ring around the object where it is visible. The verify
-            # viewpoint IS such a pose: if we are already in ring range,
-            # stop right here (walking into the object overshoots the ring:
-            # three contact-stop attempts all ended at dtg 0.11-0.12 m).
             obj_xy = self.object_layer.center_of(track)[list(PLANE)]
-            agent_xy = frame.camera_position[list(PLANE)]
-            if np.linalg.norm(agent_xy - obj_xy) < 1.6:
-                self.state = State.DONE
-                return STOP_ACTION
-            self._goal_xy = self._nearest_free_xy(obj_xy)
-            self._target_obj_xy = obj_xy.copy()
-            self.state = State.GOTO_TARGET
-            self._current_path = None
-            self._goto_deadline = self.step_count + 100
-            self._final_nudges = 0  # stop at ring range, not at contact
-            action = self._follow_path(frame)
-            return action if action is not None else STOP_ACTION
+            self._start_approach(obj_xy)
+            return self._do_approach(frame)
         self.object_layer.blacklist(track.id)
         self._candidate_id = None
         self.state = State.EXPLORE
@@ -447,15 +449,31 @@ class NavAgent:
 
     # ---------------------------------------------------------------- helpers
 
-    def _target_visible(self, frame: FrameData) -> bool:
-        """Does the detector see the target category in the current view?"""
+    def _start_approach(self, obj_xy: np.ndarray) -> None:
+        self._goal_xy = self._nearest_free_xy(obj_xy)
+        self._target_obj_xy = obj_xy.copy()
+        self.state = State.APPROACH
+        self._current_path = None
+        self._path_goal = None
+        self._goto_deadline = self.step_count + 100
+        self._approach_steps_left = self.cfg.agent.approach_max_steps
+        self._approach_last_good_xy = None
+
+    def _best_target_detection(self, frame: FrameData) -> Optional[Detection]:
+        """Runs the detector on the current frame and returns its highest-
+        confidence detection matching the target category, or None."""
         target = self.target.lower().replace("_", " ").strip()
         with self.profiler.timeit("detector"):
             dets = self.detector.detect(frame.rgb)
-        return any(
-            d.label.lower().replace("_", " ").strip() == target and d.score > 0.25
-            for d in dets
-        )
+        matches = [
+            d for d in dets
+            if d.label.lower().replace("_", " ").strip() == target and d.score > 0.25
+        ]
+        return max(matches, key=lambda d: d.score) if matches else None
+
+    def _target_visible(self, frame: FrameData) -> bool:
+        """Does the detector see the target category in the current view?"""
+        return self._best_target_detection(frame) is not None
 
     def _plan_to(self, frame: FrameData, goal_xy: np.ndarray) -> None:
         agent_xy = frame.camera_position[list(PLANE)]
@@ -483,6 +501,27 @@ class NavAgent:
             self._current_path = None
         return action
 
+    def _follow_to(self, frame: FrameData, goal_xy: np.ndarray) -> Optional[str]:
+        """Follow a path to an explicit goal, replanning when the goal
+        changes (APPROACH alternates between an advance goal and a retreat
+        goal within the same state, unlike the other terminal states which
+        have one fixed goal for their whole visit)."""
+        need_replan = (
+            self._current_path is None
+            or self._path_goal is None
+            or np.linalg.norm(self._path_goal - goal_xy) > 0.05
+        )
+        if need_replan:
+            self._plan_to(frame, goal_xy)
+            self._path_goal = goal_xy.copy() if self._current_path is not None else None
+            if self._current_path is None:
+                return None
+        action = self.controller.act(frame.T_wc, self._current_path)
+        if action is None:
+            self._current_path = None
+            self._path_goal = None
+        return action
+
     def _nearest_free_xy(self, xy: np.ndarray) -> np.ndarray:
         """Nearest FREE cell to a (possibly occupied) object position — the
         closest pose the agent can actually stand at."""
@@ -500,11 +539,3 @@ class NavAgent:
         free_world = self.costmap.grid_to_world(free + np.array([r0, c0]))
         d = np.linalg.norm(free_world - xy, axis=1)
         return free_world[int(np.argmin(d))]
-
-    def _arrived_at_goal(self, frame: FrameData) -> bool:
-        if self._goal_xy is None:
-            return False
-        agent_xy = frame.camera_position[list(PLANE)]
-        # Success distance is tight (0.1 m geodesic to a goal viewpoint):
-        # drive onto the free cell nearest the object before stopping.
-        return bool(np.linalg.norm(agent_xy - self._goal_xy) < 0.2)

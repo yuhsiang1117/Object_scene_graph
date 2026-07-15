@@ -1,13 +1,13 @@
 # 測試策略、現況與改進
 
-> 對應版本：2026-07-15（commit `a250fd4`）。架構背景見
+> 對應版本：2026-07-16。架構背景見
 > [ARCHITECTURE.md](ARCHITECTURE.md)。
 
 ## 1. 測試金字塔
 
 | 層級 | 依賴 | 耗時 | 指令 | 使用時機 |
 |---|---|---|---|---|
-| 單元（47 tests / 14 檔） | 無 GPU、無資料、合成輸入 | ~3s | `make test` | 每次改動 |
+| 單元（55 tests / 15 檔） | 無 GPU、無資料、合成輸入 | ~8s | `make test` | 每次改動 |
 | 元件隔離 | GPU + 權重 / ollama | 秒~分 | 見 §4 | 模型相關改動 |
 | Sim 整合 | habitat + HM3D minival | ~4min | `make test-sim` | pipeline 改動 |
 | 端到端 eval | 全部 | 30–60min | `make eval-mini` | 每輪修正驗收 |
@@ -81,6 +81,7 @@
 | | JSON round-trip | to_json 可序列化、欄位齊全 |
 | test_llm_parsing.py（5） | `extract_json` | 純 JSON / 夾雜文字 / 無 JSON 拋錯 |
 | | `_parse_scores` | 分數 clamp 到 [0,1] + 過濾未知 id / 無 "scores" wrapper 也可解析 |
+| test_nav_agent.py（8） | `_do_approach` 四分支（P1a） | bbox 達標即停 / 可見未達標則續走+記錄 last_good_xy / 忽略非目標類別偵測 / 視野遺失後退回 last_good_xy（不佔用前進步數）/ 從未可見時退避前進（steps_left 遞減）/ step 預算耗盡即停 / deadline 到即停 / 目標被 OCCUPIED 包圍無法規劃即停 |
 
 ## 3. Sim 整合測試（tests/integration/）
 

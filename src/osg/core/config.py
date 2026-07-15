@@ -30,6 +30,13 @@ class AgentConfig:
     initial_scan: bool = True  # 360 deg spin at episode start to seed the map
     camera_height: float = 0.88
     agent_radius: float = 0.18
+    # Terminal APPROACH phase: walk toward the verified object while a
+    # detection stays visible, stopping once its bbox is large enough (a
+    # borderline "object recognizable but distant" crop measured ~25k px^2
+    # in verify_debug samples; this threshold asks for a noticeably closer
+    # view than that before considering the approach complete).
+    approach_stop_bbox_px: float = 40_000.0
+    approach_max_steps: int = 12  # ~3 m of travel at forward_m=0.25
 
 
 @dataclass
