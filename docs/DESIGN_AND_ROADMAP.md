@@ -186,13 +186,49 @@ VLM prompt；`verify_debug/` 存驗證證據影像；`state_log`+`agent_stats`
 續走、視野遺失退回、從未可見時退避到前進、step/deadline/不可達邊界）
 ——這是專案第一份 `nav_agent.py` 單元測試，補上 TESTING.md 點名的空缺。
 
-### P1b — 探索效率（ep7 型失敗）
-toilet 500 步走不到浴室，`state_log` 顯示全程卡在第一個
-`goto_frontier`（探索從未真正推進到目標房間）。
-- frontier give-up 的 15 步成本 × 多次很傷；調 give-up 參數與 LLM 評分
-  的房間先驗（廁所通常在特定相對位置，可加房型共現先驗）。
-- 檢查 room_seg 是否把浴室誤併入其他房間、或該場景浴室根本在地圖增長
-  範圍之外（此時需要更積極的探索策略而非調參）。
+### P1b — 探索效率（ep7 型失敗，已解決導航部分，2026-07-15）
+
+**診斷**：toilet episode（`agent_stats.frontier_give_up=11 / select_ok=12`）
+用 `giveup_log`（新增，記錄每次放棄的 frontier 座標+agent 位置）抓到
+根因——三個不同 frontier 的追逐全部死在**同一個座標**，45 步內完全沒有
+移動。`WaypointController` 卡住偵測只標記前方一個 0.1m 半徑的小圓盤，
+A* 仍能規劃「擦邊繞過」這個小標記、實際上還是穿過同一個門檻寬度瓶頸
+的路徑，agent 換方向重試多次都撞在同一個物理瓶頸上。
+
+同時查 habitat ground truth 發現：該 episode 3 個 toilet 實例中 2 個
+明顯在不同樓層（y≈2.8–3.0 vs agent 起始 y≈0），是專案排除範圍內的
+multi-floor 限制；只有 1 個同樓層實例（goal#2）理論可達。
+
+**修正**：
+1. `_select_new_frontier` 選到新 frontier 時沒有重置 give-up 計時器的
+   參考點——真實 bug，已修，但**不是這裡的主因**（修正後 give-up 次數
+   不變，`giveup_log` 顯示大部分放棄都發生在合理追逐之後、非選擇當下
+   誤判）。
+2. `WaypointController` 卡住標記從「前方一點、半徑 0.1m」擴大為「沿
+   前進方向 3 個距離點（0.5×/1×/1.8× forward_m）、半徑 0.35m」，形成
+   真正擋住門檻寬度瓶頸的一段障礙帶。
+
+**結果**（同一 episode 重跑對照）：
+
+| 指標 | 修正前 | 修正後 |
+|---|---|---|
+| `frontier_give_up` | 11 | **2** |
+| `distance_to_goal` | 2.58 / 9.67（兩次不同噪音） | **0.24** |
+| `final_xy` 位置 | 遠離同樓層 toilet | 幾乎貼上同樓層 toilet（goal#2）視點集合邊緣 |
+
+探索/卡死問題基本解決。**新瓶頸**：`verify_calls: 0`——即使幾何上已
+極度接近（dtg 0.24m），偵測器全程未曾產生一個通過品質閘門
+（score≥0.45、bbox≥3000px²、obs≥3）的「toilet」候選。同時
+`select_none: 30`（遠高於 `select_ok: 4`）顯示後段大量時間找不到可選
+frontier，值得一併檢查是否為房間已探索完但目標視角一直沒對上。
+
+**下一步**（P1b-2，待辦）：
+- 檢查該 episode 是否有留存的 toilet 偵測但分數/bbox 不足以通過閘門
+  （可能是浴室小、易遮擋物件的通性問題，非此 episode 特例）。
+- 若確認是普遍問題，考慮依物件類別調整品質閘門（toilet/bathtub 等小型
+  固定物件 vs chair/bed 等大型家具，用同一閾值可能不公平）。
+- 也一併排查 `select_none=30` 高企的原因（frontier 真的枯竭，還是
+  blacklist/give-up 累積過度保守）。
 
 ### P1c — 剩餘掃參與測試集
 - 驗證器單獨評測集：把 verify_debug 影像整理成 20-30 張標注測試集，
