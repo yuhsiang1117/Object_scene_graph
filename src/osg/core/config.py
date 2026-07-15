@@ -96,7 +96,7 @@ class VerificationConfig:
 @dataclass
 class MappingConfig:
     resolution_m: float = 0.05
-    obstacle_low_m: float = 0.2
+    obstacle_low_m: float = 0.1  # sim depth is noise-free; catch low furniture bases
     obstacle_high_m: float = 1.5
     max_range_m: float = 5.0
     depth_stride: int = 4

@@ -115,6 +115,8 @@ class NavAgent:
         self._goto_deadline = 10**9
         self._progress_ref_step = 0
         self._progress_ref_xy = np.zeros(2)
+        self._final_nudges = 0
+        self._target_obj_xy: Optional[np.ndarray] = None
         self.stats = {"plan_ok": 0, "plan_fail": 0, "select_none": 0, "select_ok": 0}
         self.state_log = []
         self.kf_selector.reset()
@@ -220,20 +222,37 @@ class NavAgent:
             # replanning here — with a 0.25 m step and 30 deg turns the agent
             # otherwise orbits the goal until the budget runs out.
             if self._arrived_at_goal(frame) or self.step_count > self._goto_deadline:
-                self.state = State.DONE
-                return STOP_ACTION
+                return self._final_nudge_or_stop(frame)
             if self._current_path is None:
                 self._plan_to(frame, self._goal_xy)
                 if self._current_path is None:
-                    self.state = State.DONE
-                    return STOP_ACTION
+                    return self._final_nudge_or_stop(frame)
             action = self.controller.act(frame.T_wc, self._current_path)
             if action is None:  # path consumed: as close as the map allows
-                self.state = State.DONE
-                return STOP_ACTION
+                return self._final_nudge_or_stop(frame)
             return action
 
         return STOP_ACTION
+
+    def _final_nudge_or_stop(self, frame: FrameData) -> str:
+        """Close the last centimeters: face the object center and take a few
+        forward steps until we bump it (success distance is a tight 0.1 m
+        geodesic; stopping a whole grid cell early loses episodes)."""
+        from ..planning.controller import FORWARD, TURN_LEFT, TURN_RIGHT, _wrap, agent_heading
+
+        if self._final_nudges <= 0 or self.controller.stuck or self._target_obj_xy is None:
+            self.state = State.DONE
+            return STOP_ACTION
+        agent_xy = frame.camera_position[list(PLANE)]
+        to_obj = self._target_obj_xy - agent_xy
+        if np.linalg.norm(to_obj) < 0.05:
+            self.state = State.DONE
+            return STOP_ACTION
+        err = _wrap(float(np.arctan2(to_obj[1], to_obj[0])) - agent_heading(frame.T_wc))
+        if abs(err) > np.radians(30.0):
+            return TURN_RIGHT if err > 0 else TURN_LEFT
+        self._final_nudges -= 1
+        return FORWARD
 
     def _act_inner_post_transition(self, frame: FrameData) -> str:
         """Re-enter EXPLORE logic once after a state transition (no recursion
@@ -341,9 +360,11 @@ class NavAgent:
         if self.verifier is None:
             # Verification disabled (paper baseline): head straight for it
             self._goal_xy = self._nearest_free_xy(obj_xy)
+            self._target_obj_xy = obj_xy.copy()
             self.state = State.GOTO_TARGET
             self._current_path = None
             self._goto_deadline = self.step_count + 100
+            self._final_nudges = 3
             return
 
         view_xy = self.viewpoint_planner.approach_viewpoint(obj_xy, self.costmap)
@@ -372,12 +393,13 @@ class NavAgent:
         with self.profiler.timeit("verification"):
             accepted = self.verifier.verify(track, self.target, live_view=frame.rgb)
         if accepted:
-            self._goal_xy = self._nearest_free_xy(
-                self.object_layer.center_of(track)[list(PLANE)]
-            )
+            obj_xy = self.object_layer.center_of(track)[list(PLANE)]
+            self._goal_xy = self._nearest_free_xy(obj_xy)
+            self._target_obj_xy = obj_xy.copy()
             self.state = State.GOTO_TARGET
             self._current_path = None
             self._goto_deadline = self.step_count + 100
+            self._final_nudges = 3
             if self._arrived_at_goal(frame):
                 self.state = State.DONE
                 return STOP_ACTION

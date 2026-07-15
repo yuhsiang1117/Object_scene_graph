@@ -46,13 +46,15 @@ class TargetVerifier:
         target: str,
         live_view: Optional[np.ndarray] = None,
     ) -> bool:
-        # The live view (agent at the approach viewpoint, facing the object)
-        # is the primary evidence; the stored crop is supporting context.
+        # Verify the detector's own evidence: the best crop. The live view
+        # from the approach viewpoint often misses the object (a chair tucked
+        # under a desk) and biases small VLMs into rejecting real targets;
+        # with candidate quality gates the crop is meaningful evidence.
         images = []
-        if live_view is not None:
-            images.append(live_view)
         if track.best_crop is not None:
             images.append(track.best_crop)
+        elif live_view is not None:
+            images.append(live_view)
         if not images:
             return False  # nothing to verify against — do not stop blindly
 
