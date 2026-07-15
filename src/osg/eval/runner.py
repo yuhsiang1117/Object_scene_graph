@@ -159,6 +159,7 @@ def run_eval(cfg) -> dict:
             "llm_last_error": scorer.last_error,
             "agent_stats": agent.stats,
             "state_log": agent.state_log[:40],
+            "final_xy": [float(x) for x in trajectory[-1]],
         }
         if verifier is not None:
             rec["verify_calls"] = verifier.n_calls
