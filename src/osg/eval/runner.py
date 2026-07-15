@@ -83,12 +83,21 @@ def build_verifier(cfg) -> Optional[TargetVerifier]:
 
 def _unload_ollama_models(cfg) -> None:
     """Ask ollama to release VRAM (keep_alive=0) so the one-time YOLOE text
-    encoding can run on the GPU; ollama reloads lazily on the next call."""
+    encoding can run on the GPU; ollama reloads lazily on the next call.
+
+    Must cover every model ollama might be holding: exploration scoring
+    (cfg.llm.*) AND the separate, larger verification model
+    (cfg.verification.vlm_model) — omitting the latter left a 7B model
+    resident from a prior run/benchmark and starved YOLOE's fp32 load of
+    VRAM (CUDA OOM observed here on a 6 GB card)."""
     import json as _json
     import urllib.request
 
     host = str(cfg.llm.base_url).rsplit("/v1", 1)[0]
-    for model in {cfg.llm.text_model, cfg.llm.vlm_model}:
+    models = {cfg.llm.text_model, cfg.llm.vlm_model}
+    if cfg.verification.enabled:
+        models.add(cfg.verification.vlm_model)
+    for model in models:
         try:
             req = urllib.request.Request(
                 host + "/api/generate",
