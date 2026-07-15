@@ -4,7 +4,7 @@ services:
     restart: unless-stopped
     environment:
       - OLLAMA_KEEP_ALIVE=30m
-      - OLLAMA_MAX_LOADED_MODELS=1
+      - OLLAMA_MAX_LOADED_MODELS=2  # 3b scoring + 7b verification coexist
       - OLLAMA_CONTEXT_LENGTH=8192  # bounds the KV cache; 4 images @512px ~ 6k tokens
     volumes:
       - ollama-models:/root/.ollama

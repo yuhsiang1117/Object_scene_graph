@@ -91,6 +91,9 @@ class VerificationConfig:
     min_bbox_px: int = 3000
     ring_radii_m: List[float] = field(default_factory=lambda: [0.8, 1.2, 1.5, 2.0])
     accept_confidence: float = 0.5
+    # Verification is rare (1-3 calls/episode) and precision-critical: the 3B
+    # VLM rejected clear true positives in prompt-lab tests; 7B passed all.
+    vlm_model: str = "qwen2.5vl:7b"
 
 
 @dataclass

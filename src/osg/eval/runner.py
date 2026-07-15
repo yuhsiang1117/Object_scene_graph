@@ -72,9 +72,9 @@ def build_verifier(cfg) -> Optional[TargetVerifier]:
     if not cfg.verification.enabled:
         return None
     vlm = ChatClient(
-        cfg.llm.base_url, cfg.llm.vlm_model, cfg.llm.api_key,
+        cfg.llm.base_url, cfg.verification.vlm_model, cfg.llm.api_key,
         # Verification is the one blocking VLM call: use a longer timeout
-        # (CPU backends) and small images.
+        # (partial CPU offload) and small images.
         max(cfg.llm.timeout_s, 240.0), min(cfg.llm.max_image_px, 256),
     )
     debug_dir = str(Path(cfg.output_dir) / "verify_debug")
