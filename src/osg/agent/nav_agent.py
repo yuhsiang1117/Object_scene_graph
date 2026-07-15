@@ -299,6 +299,16 @@ class NavAgent:
         if track is None:
             self.state = State.EXPLORE
             return TURN_ACTION
+        # Face the object first so the live view actually shows it.
+        from ..planning.controller import TURN_LEFT, TURN_RIGHT, _wrap, agent_heading
+
+        obj_xy = self.object_layer.center_of(track)[list(PLANE)]
+        agent_xy = frame.camera_position[list(PLANE)]
+        to_obj = obj_xy - agent_xy
+        if np.linalg.norm(to_obj) > 0.05:
+            err = _wrap(float(np.arctan2(to_obj[1], to_obj[0])) - agent_heading(frame.T_wc))
+            if abs(err) > np.radians(20.0):
+                return TURN_RIGHT if err > 0 else TURN_LEFT
         with self.profiler.timeit("verification"):
             accepted = self.verifier.verify(track, self.target, live_view=frame.rgb)
         if accepted:

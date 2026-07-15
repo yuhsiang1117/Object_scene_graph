@@ -27,14 +27,13 @@ class TargetVerifier:
         target: str,
         live_view: Optional[np.ndarray] = None,
     ) -> bool:
-        # One image only: on CPU VLM backends every extra image costs tens of
-        # seconds. The best crop is the strongest evidence; the live view is
-        # the fallback when no crop was stored.
+        # The live view (agent at the approach viewpoint, facing the object)
+        # is the primary evidence; the stored crop is supporting context.
         images = []
+        if live_view is not None:
+            images.append(live_view)
         if track.best_crop is not None:
             images.append(track.best_crop)
-        elif live_view is not None:
-            images.append(live_view)
         if not images:
             return False  # nothing to verify against — do not stop blindly
 

@@ -42,10 +42,12 @@ FRONTIER_IMAGE_NOTE = (
 
 
 VERIFY_SYSTEM = (
-    "You verify object detections for a robot. Be strict: reject unclear or "
-    "mislabeled objects. Answer with JSON only."
+    "You verify object detections for a robot. Reject only clearly mislabeled "
+    "objects; partial views or unusual angles of the right category count as "
+    "correct. Answer with JSON only."
 )
 
-VERIFY_USER = """The robot believes the attached image(s) show a {target}.
-Is the main object in the image really a {target}?
+VERIFY_USER = """The robot is looking for a {target}. The attached image(s) show the
+candidate object (possibly from a distance or partially occluded).
+Is there a {target} in the image(s)?
 Respond as JSON: {{"is_target": true/false, "confidence": <0-1>}}"""
