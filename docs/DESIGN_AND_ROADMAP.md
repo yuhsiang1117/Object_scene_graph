@@ -445,6 +445,14 @@ episode 結束當下直接量測 agent 自己的即時 costmap：`final_xy`／AP
 上：`occ_from_final = occ_from_goal = 0.050m`——剛好等於 grid resolution，
 agent **緊貼著 sensed 障礙物表面**，離 0.25m 的膨脹半徑還很遠。
 
+補測 `ep11/bed`（原本因 script 的 dict-key 覆寫 bug 漏測，修正後補跑）
+同樣**精確重現**（dtg=1.970，跟 P1e/P1f 兩次原始跑的數字完全一致），
+`occ_from_final` 再次落在 **0.050m**——兩個逐位元組可重現的乾淨樣本，
+兩個都顯示 agent 貼到 grid resolution 的距離，進一步坐實膨脹半徑不是
+瓶頸的結論（這個 episode 本身是路徑耗盡的大範圍失敗，`occ_from_goal
+=0.292` 顯示原始目標點離障礙物較遠，但 agent 耗盡路徑後仍能停在只
+剩 0.05m 的位置，而非卡在 0.25m 邊界）。
+
 **這推翻了 P1f 結尾寫的「costmap 膨脹卡住站立距離」假設**：`planner.py`
 的膨脹本來就只是 A* 的 soft cost（8x 懲罰，見 `planner.py:65-71`
 的既有註解），從未 hard-block，agent 實際上可以、也確實走到只剩一個
