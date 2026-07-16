@@ -348,6 +348,40 @@ path_consumed），跑一次 30-episode 收集真實數據再下結論——本�
 `approach_stop_reason` 儀表化）、10 個 nav_agent 測試更新驗證新欄位，
 59 單元測試 + sim 整合測試全過。
 
+### P1f — 收尾容差修正（2026-07-15）：找到並修正真正的落差來源
+
+**方法**：`scripts/viewpoint_geometry_check.py` 直接查詢 habitat 該
+episode 的實際 `view_points` 座標，跟我們的 `final_xy` 算歐氏（直線）
+距離，對照 habitat 回報的（測地線）`distance_to_goal`。
+
+**發現**：sofa(dtg=0.158/0.169)、bed(dtg=0.158)、plant(dtg=0.157) 這幾個
+近失敗案例，我們的實際停止位置離最近 view_point 只有 **4.6–7.8 公分
+（直線距離）**——幾乎就站在上面了，但 habitat 回報的測地線距離卻是
+0.157–0.169m，剛好卡在 0.13m 門檻外。**落差穩定落在 0.09–0.11m**，
+代表測地線路徑必須繞過附近的薄障礙物（牆角、家具邊緣）才能真正走到
+那個視點格。
+
+**這也推翻了 P1a 的假設**：「貼近物件會衝出視點集合」。bed 那次成功
+（dtg=0.106）的直線落差（0.035）反而是這批案例裡最小的——代表**越
+接近越可能成功**，不是越遠。P1a 移除的三個舊終端策略失敗的真正原因
+應該是「瞄準錯的點」（物件粗估中心），不是「太近」本身。
+
+**根因**：`AStarPlanner` 的預設 `goal_tolerance_m=0.3` 與
+`WaypointController` 寫死的 0.2m 抵達判定，是為 frontier/verify-view
+移動調校的（多走幾公分不影響效率），沿用到 APPROACH 的最終收尾段時，
+就留下了足夠的餘裕讓測地線繞路吃掉成功半徑。
+
+**修正**：`AStarPlanner.plan()` 與 `WaypointController.act()` 都加上
+可選的逐次呼叫覆寫參數（`goal_tolerance_m` / `arrival_tol_m`，預設值
+維持原本的建構時數值，frontier/verify-view 行為不變）。`NavAgent.
+_follow_to`（只有 APPROACH 用）改用新設定
+`agent.approach_goal_tolerance_m=0.12`、`agent.approach_arrival_tol_m=0.1`
+——比預設 0.3/0.2 更緊，但仍高於 0.05m 的 costmap 解析度以維持穩健。
+
+3 個新測試（planner/controller 逐次覆寫、nav_agent 用 spy 確認真的把
+設定值傳到底層元件），62 單元測試 + sim 整合測試全過。**驗證評估
+（同一批 30 episode）進行中**，結果待補。
+
 ### P2 — 效能（real-time 主張）
 - 30-episode 全量兩次獨立測得 pipeline FPS 1.41–1.47，控制迴圈中位數
   ~480–710ms；目標 ≥5 FPS（優於論文的 RTX 3060 9.86 FPS 需在 12GB
