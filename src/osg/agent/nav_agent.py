@@ -503,10 +503,12 @@ class NavAgent:
         """Does the detector see the target category in the current view?"""
         return self._best_target_detection(frame) is not None
 
-    def _plan_to(self, frame: FrameData, goal_xy: np.ndarray) -> None:
+    def _plan_to(
+        self, frame: FrameData, goal_xy: np.ndarray, goal_tolerance_m: Optional[float] = None
+    ) -> None:
         agent_xy = frame.camera_position[list(PLANE)]
         with self.profiler.timeit("planner"):
-            result: PlanResult = self.planner.plan(self.costmap, agent_xy, goal_xy)
+            result: PlanResult = self.planner.plan(self.costmap, agent_xy, goal_xy, goal_tolerance_m)
         self._current_path = result.path if result.success else None
         self.stats["plan_ok" if result.success else "plan_fail"] += 1
 
@@ -533,18 +535,31 @@ class NavAgent:
         """Follow a path to an explicit goal, replanning when the goal
         changes (APPROACH alternates between an advance goal and a retreat
         goal within the same state, unlike the other terminal states which
-        have one fixed goal for their whole visit)."""
+        have one fixed goal for their whole visit).
+
+        Used only by APPROACH, so tightens both the planner's and the
+        controller's stopping tolerance beyond the loose defaults used for
+        frontier/verify-view travel (P1f): geometry analysis against
+        HM3D's actual view_points showed several near-miss episodes
+        stopped within 5-8 cm (straight-line) of a real view_point, yet
+        habitat's geodesic distance_to_goal still read 0.15-0.17 m --
+        the default 0.2-0.3 m tolerances left slack for a short geodesic
+        detour around a nearby thin obstacle to blow the 0.13 m success
+        radius even when we were geometrically almost there.
+        """
         need_replan = (
             self._current_path is None
             or self._path_goal is None
             or np.linalg.norm(self._path_goal - goal_xy) > 0.05
         )
         if need_replan:
-            self._plan_to(frame, goal_xy)
+            self._plan_to(frame, goal_xy, goal_tolerance_m=self.cfg.agent.approach_goal_tolerance_m)
             self._path_goal = goal_xy.copy() if self._current_path is not None else None
             if self._current_path is None:
                 return None
-        action = self.controller.act(frame.T_wc, self._current_path)
+        action = self.controller.act(
+            frame.T_wc, self._current_path, arrival_tol_m=self.cfg.agent.approach_arrival_tol_m
+        )
         if action is None:
             self._current_path = None
             self._path_goal = None

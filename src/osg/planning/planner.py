@@ -23,7 +23,13 @@ class PlanResult:
 
 class Planner(ABC):
     @abstractmethod
-    def plan(self, costmap: Costmap2D, start_xy: np.ndarray, goal_xy: np.ndarray) -> PlanResult: ...
+    def plan(
+        self,
+        costmap: Costmap2D,
+        start_xy: np.ndarray,
+        goal_xy: np.ndarray,
+        goal_tolerance_m: Optional[float] = None,
+    ) -> PlanResult: ...
 
 
 _SQRT2 = float(np.sqrt(2.0))
@@ -49,7 +55,13 @@ class AStarPlanner(Planner):
         self.max_expansions = max_expansions
         self.last_failure: str = ""
 
-    def plan(self, costmap: Costmap2D, start_xy: np.ndarray, goal_xy: np.ndarray) -> PlanResult:
+    def plan(
+        self,
+        costmap: Costmap2D,
+        start_xy: np.ndarray,
+        goal_xy: np.ndarray,
+        goal_tolerance_m: Optional[float] = None,
+    ) -> PlanResult:
         # Inflation is a SOFT cost, not a hard block: only truly occupied
         # cells are impassable. Hard-blocking the inflated band sealed thin
         # passages of partially-observed maps and disconnected the agent's
@@ -68,7 +80,8 @@ class AStarPlanner(Planner):
             self.last_failure = "start_nudge"
             return PlanResult(False)
 
-        tol_cells = max(1, int(self.goal_tolerance_m / costmap.resolution))
+        tol_m = self.goal_tolerance_m if goal_tolerance_m is None else goal_tolerance_m
+        tol_cells = max(1, int(tol_m / costmap.resolution))
         res = costmap.resolution
 
         g = {start: 0.0}

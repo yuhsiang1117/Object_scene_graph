@@ -37,6 +37,17 @@ class AgentConfig:
     # view than that before considering the approach complete).
     approach_stop_bbox_px: float = 40_000.0
     approach_max_steps: int = 12  # ~3 m of travel at forward_m=0.25
+    # Tighter-than-default planner/controller stopping precision for the
+    # final APPROACH segment only (P1f). HM3D success is a geodesic
+    # distance to a view_point; the general 0.3 m (planner) / 0.2 m
+    # (controller) tolerances used for frontier/verify-view travel left
+    # enough slack that a short geodesic detour around a nearby thin
+    # obstacle (wall corner, furniture edge) blew the 0.13 m success
+    # radius on episodes where we were already 5-8 cm away in a straight
+    # line. Kept above the 0.05 m costmap resolution to stay robust to
+    # grid discretization.
+    approach_goal_tolerance_m: float = 0.12
+    approach_arrival_tol_m: float = 0.1
 
 
 @dataclass

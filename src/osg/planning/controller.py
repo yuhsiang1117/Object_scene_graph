@@ -45,8 +45,19 @@ class WaypointController:
         self.stuck = False
         self._stuck_cells = []
 
-    def act(self, T_wc: np.ndarray, path: np.ndarray) -> Optional[str]:
-        """Next discrete action toward the path, None when path is consumed."""
+    def act(self, T_wc: np.ndarray, path: np.ndarray, arrival_tol_m: float = 0.2) -> Optional[str]:
+        """Next discrete action toward the path, None when path is consumed.
+
+        `arrival_tol_m` is loose (0.2 m) by default for frontier/verify-view
+        travel, where a few extra cm doesn't matter and tightening it would
+        just burn steps. APPROACH's final approach passes a tighter value
+        (see nav_agent._follow_to) -- see docs/DESIGN_AND_ROADMAP.md P1f for
+        why: HM3D success is measured via geodesic distance to a view_point,
+        and stopping "close enough" by this default left a ~0.09-0.11 m gap
+        on episodes where we were already within centimeters of a view_point
+        in a straight line, because the geodesic path around a nearby thin
+        obstacle (a wall corner, furniture edge) is longer than that.
+        """
         pos = T_wc[:3, 3][list(PLANE)]
         if path.shape[0] == 0:
             return None
@@ -54,7 +65,7 @@ class WaypointController:
         dists = np.linalg.norm(path - pos, axis=1)
         beyond = np.nonzero(dists > self.lookahead)[0]
         if beyond.size == 0:
-            if dists[-1] < 0.2:
+            if dists[-1] < arrival_tol_m:
                 return None  # arrived
             wp = path[-1]
         else:

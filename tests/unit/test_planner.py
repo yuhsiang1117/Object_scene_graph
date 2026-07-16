@@ -52,3 +52,21 @@ def test_unknown_traversable_with_penalty():
     start = cm.grid_to_world(np.array([50, 10]))
     res = planner.plan(cm, start, goal)
     assert res.success
+
+
+def test_per_call_goal_tolerance_overrides_default():
+    """P1f: APPROACH needs a tighter stopping precision than frontier/
+    verify-view travel without constructing a second planner instance."""
+    cm = _open_map()
+    planner = AStarPlanner(inflate_radius_m=0.05, goal_tolerance_m=0.3)
+    goal = np.array([2.0, 0.0])
+    start = np.array([0.0, 0.0])
+
+    loose = planner.plan(cm, start, goal)  # uses the 0.3 m constructor default
+    tight = planner.plan(cm, start, goal, goal_tolerance_m=0.05)
+
+    assert loose.success and tight.success
+    loose_final_gap = float(np.linalg.norm(loose.path[-1] - goal))
+    tight_final_gap = float(np.linalg.norm(tight.path[-1] - goal))
+    assert tight_final_gap < loose_final_gap
+    assert tight_final_gap <= 0.15  # within ~1-2 cells of the 0.1 m grid

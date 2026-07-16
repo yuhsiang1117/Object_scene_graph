@@ -57,6 +57,7 @@ def make_cfg(**agent_overrides) -> types.SimpleNamespace:
             agent_radius=0.18, forward_m=0.25, turn_deg=30.0, initial_scan=False,
             camera_height=0.88, approach_stop_bbox_px=APPROACH_BBOX_THRESHOLD,
             approach_max_steps=12,
+            approach_goal_tolerance_m=0.12, approach_arrival_tol_m=0.1,
         ),
         verification=types.SimpleNamespace(
             ring_radii_m=[0.8, 1.2, 1.5, 2.0], min_obs=3, min_score=0.45, min_bbox_px=3000.0,
@@ -268,3 +269,36 @@ def test_giveup_logged_with_frontier_and_agent_position():
     assert step == 100
     assert frontier_xy == [3.0, 4.0]
     assert agent_xy == [0.0, 0.0]
+
+
+def test_follow_to_threads_configured_tolerances_to_planner_and_controller():
+    """P1f: `_follow_to` (APPROACH-only) must pass agent.approach_goal_
+    tolerance_m / approach_arrival_tol_m through to the planner and
+    controller, not fall back to their loose frontier/verify-view
+    defaults -- confirmed via spies rather than re-deriving the tolerance
+    math already covered in test_planner.py / test_controller.py."""
+    cfg = make_cfg(approach_goal_tolerance_m=0.12, approach_arrival_tol_m=0.1)
+    agent = make_agent(cfg)
+    _carve_free_square(agent)
+
+    plan_calls = []
+    orig_plan = agent.planner.plan
+
+    def spy_plan(costmap, start_xy, goal_xy, goal_tolerance_m=None):
+        plan_calls.append(goal_tolerance_m)
+        return orig_plan(costmap, start_xy, goal_xy, goal_tolerance_m)
+
+    act_calls = []
+    orig_act = agent.controller.act
+
+    def spy_act(T_wc, path, arrival_tol_m=0.2):
+        act_calls.append(arrival_tol_m)
+        return orig_act(T_wc, path, arrival_tol_m)
+
+    agent.planner.plan = spy_plan
+    agent.controller.act = spy_act
+
+    agent._follow_to(_frame([0.0, 0.0]), np.array([1.0, 0.0]))
+
+    assert plan_calls == [0.12]
+    assert act_calls == [0.1]

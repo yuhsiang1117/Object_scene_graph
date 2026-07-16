@@ -31,6 +31,18 @@ def test_arrival_returns_none():
     assert c.act(T, path) is None
 
 
+def test_arrival_tolerance_is_overridable_per_call():
+    """P1f: APPROACH's final segment passes a tighter arrival_tol_m than
+    the 0.2 m default used for frontier/verify-view travel, so it keeps
+    walking instead of declaring "close enough" prematurely."""
+    c = WaypointController()
+    T = make_camera([2.0, 0.88, 0.0], [3.0, 0.88, 0.0])  # facing +x
+    path = np.array([[2.15, 0.0]])  # 0.15 m straight ahead: inside 0.2 m, outside 0.1 m
+
+    assert c.act(T, path, arrival_tol_m=0.2) is None  # default: arrived
+    assert c.act(T, path, arrival_tol_m=0.1) == FORWARD  # tighter: keep going
+
+
 def test_stuck_detection_marks_cell():
     from osg.mapping.costmap import FREE, OCCUPIED, Costmap2D
 
