@@ -430,6 +430,42 @@ agent 多走幾步）在 ep4 這個唯一的直接證據上沒有改善最終距
 episode 的前後對比說服力有限，只有「即時 bbox 觸發」這種在 APPROACH
 之前完全走同一條路徑的案例才具備逐位元組可重現性。
 
+### P1g — 站立距離量測（2026-07-16）：膨脹半徑假設也被推翻
+
+**方法**：新增 `scripts/standoff_check.py`，重跑追蹤的近失敗 episode，在
+episode 結束當下直接量測 agent 自己的即時 costmap：`final_xy`／APPROACH
+目標點（`_nearest_free_xy`）到最近一個 sensed-OCCUPIED 格的距離
+（`scipy.ndimage.distance_transform_edt`），對照
+`inflate_radius_m = agent_radius(0.18) + inflate_margin_m(0.07) = 0.25m`
+與 costmap resolution 0.05m。
+
+**發現**：6 個追蹤 episode 中 5 個這次重跑探索路徑整個走岔（dtg 從原本
+0.15–0.26 暴增到 1.1–7.5，再次印證 P1f 已記錄的探索階段隨機性），只有
+**ep4/plant 精確重現**（dtg=0.158 vs 原本 0.157）。在這個唯一乾淨的樣本
+上：`occ_from_final = occ_from_goal = 0.050m`——剛好等於 grid resolution，
+agent **緊貼著 sensed 障礙物表面**，離 0.25m 的膨脹半徑還很遠。
+
+**這推翻了 P1f 結尾寫的「costmap 膨脹卡住站立距離」假設**：`planner.py`
+的膨脹本來就只是 A* 的 soft cost（8x 懲罰，見 `planner.py:65-71`
+的既有註解），從未 hard-block，agent 實際上可以、也確實走到只剩一個
+grid cell 的距離。（另外 5 個走岔樣本中有 2 個落在 0.25–0.29m，但那些
+軌跡本身已不可信，无法歸因於膨脹半徑本身。）
+
+**結論**：容差／膨脹半徑這條調查線到此為止——agent 已經逼近 grid
+resolution 的物理極限，沒有更多空間可以透過調整這些參數擠出來。
+P1f/P1g 加起來看，剩餘 ~0.09–0.11m 的測地線落差最可能來自兩個更難處理
+的來源，而非任何容差/膨脹旋鈕：
+1. 我們用深度感測到的「障礙物表面」跟 HM3D 用 ground-truth mesh 定義的
+   `view_point` 本來就不是同一個參考基準；
+2. 我們對目標物件位置的估計（ellipsoid centroid，來自帶雜訊的偵測+
+   深度）本身可能偏離真實表面幾公分，導致 `_nearest_free_xy` 是繞著
+   一個略微偏移的估計點在找最近格。
+
+**後續方向建議**：不再往 APPROACH 容差/膨脹半徑調參數；優先順序應該是
+(a) 解決探索階段的執行間隨機性（固定 RNG/ollama 取樣種子）以取得可信的
+前後對比，或 (b) 轉去做 P2（效能，尤其驗證計時異常已兩次獨立確認
+mean 33–35s）這種證據更扎實的項目。
+
 ### P2 — 效能（real-time 主張）
 - 30-episode 全量兩次獨立測得 pipeline FPS 1.41–1.47，控制迴圈中位數
   ~480–710ms；目標 ≥5 FPS（優於論文的 RTX 3060 9.86 FPS 需在 12GB
