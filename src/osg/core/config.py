@@ -12,7 +12,7 @@ from omegaconf import MISSING
 # ~40 common indoor categories used as the fixed detector vocabulary in
 # addition to the episode target. HM3D ObjectNav v2 targets are a subset.
 DEFAULT_VOCABULARY: List[str] = [
-    "chair", "sofa", "plant", "bed", "toilet", "tv_monitor",
+    "chair", "sofa", "armchair", "plant", "bed", "toilet", "tv_monitor",
     "table", "desk", "cabinet", "shelf", "dresser", "wardrobe", "nightstand",
     "lamp", "pillow", "cushion", "picture", "mirror", "window", "door",
     "sink", "bathtub", "shower", "towel", "counter", "stool", "bench",

@@ -555,6 +555,38 @@ episode 裡從不同角度經過它時每次都被叫成 sofa（score 0.63–0.8
    力可能本來就弱，值得比照 sofa 的做法把 crop dump 出來看，但屬於
    不同的後續調查（本次未做）。
 
+**修正驗證（2026-07-17）：假設被推翻，`armchair` 加進詞彙表沒用**——把
+`armchair` 加進 `DEFAULT_VOCABULARY`（`core/config.py`）後，用完全相同的
+3 個 sofa episode（ep3/ep13/ep10）重跑：**TP/FN/FP-halluc/TN/IoU/offset
+全部逐位元組跟修正前一模一樣**（TP=38 FN=2 FP-halluc=25 TN=130
+recall=0.950 IoU=0.326 offset=52.1px）。Dump 出來的 25 張幻覺 crop 檔名
+也完全相同（同一批 step、同一批 "actual-armchair" 標籤）。
+
+直接把其中一張已知被誤判的 armchair crop
+（`ep3_step57_actual-armchair_score0.83.png`）丟給只帶 7 個類別
+（含 "sofa"、"armchair"）的獨立 YOLOE 呼叫做最小可重現測試：模型依然
+回報 **"sofa" 0.496 分，"armchair" 完全沒有出現在候選輸出裡**。
+
+**這推翻了「單純詞彙表缺口」的假設**：問題不是模型沒有 "armchair" 這個
+選項可選，而是這件家具（大尺寸、深座、無明顯扶手分隔線的豹紋貴妃椅）
+在 YOLOE 的 CLIP-based 視覺-文字嵌入空間裡，本來就跟 "sofa" 的文字
+embedding 距離比跟 "armchair" 更近——就算兩個類別同時當選項，模型還是
+選 "sofa"。這是比詞彙表設計更深一層的問題：具體物件的視覺特徵跟類別
+prototype 的語意對齊本身不夠精細，屬於 YOLOE/CLIP 這類開放詞彙偵測器
+的能力邊界，不是配置層面能低成本解決的。
+
+`armchair` 這個詞條本身無害（不影響其他情況，也可能幫到其他更典型的
+單人扶手椅實例），故予以保留，但**不能宣稱這解決了 sofa 幻覺問題**。
+真正值得嘗試的後續方向（本次未做，供下次參考）：
+- 更具描述性的 prompt（例如把 "sofa" 換成 "multi-seat sofa couch"、
+  "armchair" 換成 "single-seat armchair chair"，用更長的描述性片語
+  增加語意區分度，這是 CLIP-based 開放詞彙模型常見的 prompt engineering
+  手法）；
+- 接受這是偵測器本身的天花板，改成在下游（verifier 的 VLM 驗證）多加
+  一道「這真的是沙發還是單人椅」的檢查，而不是指望偵測階段解決；
+- 不再對這個特定類別繼續砸資源，優先做 P1h 開頭提到的 plant 根因調查
+  或 P2 效能項目，證據報酬可能更高。
+
 ### P2 — 效能（real-time 主張）
 - 30-episode 全量兩次獨立測得 pipeline FPS 1.41–1.47，控制迴圈中位數
   ~480–710ms；目標 ≥5 FPS（優於論文的 RTX 3060 9.86 FPS 需在 12GB
