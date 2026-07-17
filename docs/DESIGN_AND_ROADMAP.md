@@ -474,6 +474,87 @@ P1f/P1g 加起來看，剩餘 ~0.09–0.11m 的測地線落差最可能來自兩
 前後對比，或 (b) 轉去做 P2（效能，尤其驗證計時異常已兩次獨立確認
 mean 33–35s）這種證據更扎實的項目。
 
+### P1h — 偵測器 vs Ground Truth 比對（2026-07-16/17）：找出雜訊的真正來源
+
+**動機**：懷疑「semantic segmentation 雜訊太大」是不是 SR 低的主因，且
+可能是 P1g 剩餘測地線落差的另一個來源（物件位置估計偏移）。
+
+**方法**：新增 `scripts/detector_gt_check.py`。啟用 habitat-sim 的
+semantic sensor（`HabitatSimSemanticSensorConfig`）+ HM3D 的 annotated
+scene dataset（`hm3d_annotated_basis.scene_dataset_config.json`，
+HM3D-semantics v0.2 標註本來就存在，只是主 eval pipeline 沒開這個
+sensor），跟 rgb/depth 用同解析度/hfov 對齊。關鍵發現：episode
+`goals[i].object_id` **直接等於** semantic sensor 逐像素回傳的
+`semantic_id`（實測驗證：`object_id=32` -> `category.name()="chair"`
+一致），所以可以用 goal 的 object_id 集合直接切出「這個 episode 真正
+算成功的目標實例」的 pixel-perfect mask，不需要自己猜測類別字串對應
+關係。對每個取樣 frame，比對 YOLOE 的偵測（mask 由 `-seg` checkpoint
+直接提供）跟這個 GT mask，分類成 TP / FN / FP-wrong-instance（偵測到
+同類別但不是目標實例）/ FP-hallucination（偵測到的東西跟該類別完全
+不重疊，純粹認錯）。
+
+**踩到的資料集細節**：HM3D 的 raw 語意類別字串是 ObjectNav 類別的同義詞
+集合，不是字面字串——例如 "plant" 這個 episode 類別，底層 goal 實例的
+`category.name()` 其實是 `flowerpot`/`flower vase`/`decorative plant`，
+不是 "plant" 本身。這代表任何直接拿 `episode.object_category` 字串去比
+對 `sem_scene.objects` 類別名稱的做法（我一開始就是這樣寫，之後修正）
+在 "chair" 這種類別上恰好對得上，但在 "plant" 上會完全比對失敗——已在
+腳本裡改用「先查 goal 實例自己的 raw 類別字串，再用這組字串去找同類別
+的其他實例」，避免這個陷阱。
+
+**六類別小規模結果**（每類別 2–3 episodes，最多 300 步，每 3 步取樣一次）：
+
+| category | recall | FP-halluc | mean IoU | mean offset(px) | @1.5m 換算 |
+|---|---|---|---|---|---|
+| chair | 83.3% | 2/111 (~2%) | 0.162 | 61.7 | ~20cm |
+| bed | 62.5% | 0/30 (0%) | 0.246 | 51.2 | ~17cm |
+| tv_monitor | 44.0% | 4/113 (~3.5%) | 0.306 | 51.9 | ~17cm |
+| sofa（第一次跑，2 episodes） | 0% (n=1) | 38/76 (~50%) | – | – | – |
+| sofa（第二次跑，3 episodes，多跑一集 ep10） | 95.0% (n=40) | 25/195 (~13%) | 0.326 | 52.1 | ~17cm |
+| plant | 0% (n=8) | 8/200 (4%) | – | – | – |
+| toilet | 無有效樣本（GT 全程未進入視野） | 0/100 | – | – | – |
+
+**重要警示：recall/FP-halluc 的絕對數字本身不穩定**。同一組 sofa
+episode（ep3+ep13）在兩次獨立跑中，recall 從 0% 跳到 95%、FP-halluc 比例
+從 ~50% 跳到 ~13%——這跟 P1f/P1g 已經記錄的探索階段隨機性（VLM frontier
+評分、ollama 取樣）完全一致：agent 這次走的路線恰好讓它更常正面看到
+沙發，取樣到的 frame 組成就完全不同。**兩三個 episode 規模下，這些
+百分比只能當作參考量級，不能當精確的類別能力比較**；IoU/offset 這兩個
+「只在偵測正確時才計算」的量反而在兩次跑之間相對穩定（0.246–0.326、
+51–62px），可信度較高。
+
+**sofa 幻覺率的根因（crop 視覺檢查confirmed）**：把兩次跑總共 25+38=63
+個 FP-hallucination 的 crop（帶 GT 實際類別標籤）全部 dump 出來看，
+**68%（17/25，第二批同樣以此類別為主）都是同一類問題：把 armchair
+（單人扶手椅／貴妃椅）誤認成 sofa**。實際看圖確認：ep3/ep13 裡反覆
+被誤判的是**同一張圓潤無扶手分隔線、豹紋布套的貴妃椅**，agent 在同一
+episode 裡從不同角度經過它時每次都被叫成 sofa（score 0.63–0.83，相當
+自信）。少數非 armchair 的誤判（piano close-up、wall/window 邊緣裁切）
+看起來才是真正隨機的雜訊，而且部分「wall/window」標籤本身是量測方法
+的假象——mask 邊界裁切到背景較多時，多數決類別會跑掉，但視覺上主體
+仍是同一張扶手椅（見 `ep3_step63_actual-wall_score0.72.png`）。
+
+**根因很具體，且可驗證**：檢查 `core/config.py` 的 `DEFAULT_VOCABULARY`
+（~40 個類別），**裡面沒有 "armchair"**。YOLOE 是開放詞彙偵測器，只能
+從給定的詞彙表裡選標籤——看到一張扶手椅但詞彙表沒有 "armchair" 這個
+選項時，"sofa" 顯然是模型認為最接近的候選字，於是系統性地把它分類
+成 sofa。這不是模型能力不足，是**詞彙表設計問題**。
+
+**結論與建議**：
+1. Recall 的類別間巨大差異（plant/sofa 在單次跑可以是 0%，chair 可以是
+   83%）目前無法用這批小樣本區分「類別真的很難認」還是「探索路徑剛好
+   沒帶它靠近目標」——擴大到更多 episode/固定種子後才能真正回答。
+2. sofa 的幻覺問題則已經有具體、可驗證的根因：**armchair 不在偵測詞彙
+   表裡**。建議把 `armchair`（以及可能同樣會被錯認的 `loveseat`/
+   `recliner`/`ottoman` 等相近家具類別）加進 `DEFAULT_VOCABULARY`，
+   讓 YOLOE 有機會正確區分兩者，而不是被迫塞進最近的候選類別。這是一個
+   低成本、證據充分、可以直接動手做的修正，跟 P1f/P1g 的導航容差調整
+   是完全不同層級的問題（偵測輸入雜訊，而非路徑規劃/收尾精度）。
+3. plant 類別的 0% recall 疑似跟其底層 GT 類別是 flowerpot/flower vase/
+   decorative plant 這些同義詞有關——detector 對這些具體視覺樣式的辨識
+   力可能本來就弱，值得比照 sofa 的做法把 crop dump 出來看，但屬於
+   不同的後續調查（本次未做）。
+
 ### P2 — 效能（real-time 主張）
 - 30-episode 全量兩次獨立測得 pipeline FPS 1.41–1.47，控制迴圈中位數
   ~480–710ms；目標 ≥5 FPS（優於論文的 RTX 3060 9.86 FPS 需在 12GB
