@@ -124,6 +124,14 @@ def classify_frame(
         gt_ys, gt_xs = np.nonzero(gt_goal_mask)
         det_ys, det_xs = np.nonzero(best_mask)
         offset = float(np.hypot(gt_xs.mean() - det_xs.mean(), gt_ys.mean() - det_ys.mean()))
+        if (
+            dump_dir is not None and best_det is not None
+            and best_det.crop is not None and best_det.crop.size > 0
+        ):
+            import cv2
+
+            fname = dump_dir / f"{dump_prefix}_TP-{target}_iou{best_iou:.2f}_score{best_det.score:.2f}.png"
+            cv2.imwrite(str(fname), best_det.crop[..., ::-1])
         return "TP", best_iou, offset
     if any((d.mask & gt_cat_mask).any() for d in matches):
         return "FP-wrong-instance", best_iou, None

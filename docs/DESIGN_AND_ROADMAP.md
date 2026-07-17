@@ -587,6 +587,38 @@ prototype 的語意對齊本身不夠精細，屬於 YOLOE/CLIP 這類開放詞�
 - 不再對這個特定類別繼續砸資源，優先做 P1h 開頭提到的 plant 根因調查
   或 P2 效能項目，證據報酬可能更高。
 
+**Prompt engineering 實測（2026-07-17）：一樣沒用，而且部分變體更糟**。
+新增 `scripts/prompt_experiment.py`，先讓 `detector_gt_check.py` 多 dump
+出同一批 episode 裡的真陽性 sofa crop（38 張，`*_TP-sofa_*`，全部來自
+ep13 那張真的沙發），湊成「17 張真扶手椅（被誤判）+ 38 張真沙發」的對照
+集合，對 5 種 class phrase 寫法（baseline / 加一個字 / 強調人數 / 完整
+描述句 / 只加強 armchair 描述）逐一測試，統計每種寫法下兩邊各自被分類
+成什麼：
+
+| variant | armchair→armchair | armchair→sofa | armchair→neither | sofa→sofa | sofa→armchair | sofa→neither |
+|---|---|---|---|---|---|---|
+| baseline | 0 | 4 | 13 | 28 | 0 | 10 |
+| plus_word | 0 | 4 | 13 | 29 | 0 | 9 |
+| seat_count | 0 | 7 | 10 | 31 | 0 | 7 |
+| long_phrase | 0 | 9 | 8 | 32 | 0 | 6 |
+| armchair_only | 0 | 4 | 13 | 24 | 4 | 10 |
+
+**沒有任何一種寫法讓 armchair→armchair 大於 0**——17 張真扶手椅，五種
+prompt 寫法測下來，一次都沒有被正確分類成 armchair。而且更值得注意的
+是：**越描述性/越長的 sofa 用詞（seat_count、long_phrase），雖然讓真
+沙發的 sofa→sofa 從 28 提升到 31–32（recall 變好），但同時把更多扶手椅
+從「沒被認出來」推向「被叫成 sofa」**（armchair→sofa 從 4 上升到 7、9）
+——說明加強 "sofa" 描述只是讓模型對「軟質、大塊的家具」整體更敏感，
+而不是讓它學會區分沙發跟扶手椅的邊界。`armchair_only` 變體則直接製造
+新的反向錯誤（sofa→armchair 從 0 變 4，且沒修好任何 armchair→armchair）。
+
+**結論：prompt engineering 這條路也走不通，而且部分寫法是負向的**。
+這比單純加詞彙表的測試更進一步排除了「文字端調整能解決」的可能性——
+兩個類別在這個具體物件上的視覺特徵，對 YOLOE 用的 CLIP 文字-視覺對齊
+來說根本沒有可分的邊界，不管怎麼措辭都一樣。這個方向到此為止，後續
+應該轉向文件開頭列的另外兩個方向（下游 VLM 二次確認，或直接接受這是
+sofa 類別的偵測天花板，轉去做 plant 根因或 P2 效能）。
+
 ### P2 — 效能（real-time 主張）
 - 30-episode 全量兩次獨立測得 pipeline FPS 1.41–1.47，控制迴圈中位數
   ~480–710ms；目標 ≥5 FPS（優於論文的 RTX 3060 9.86 FPS 需在 12GB
