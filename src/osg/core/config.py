@@ -74,6 +74,20 @@ class SceneGraphConfig:
     room_seg_every_kf: int = 10
     room_min_radius_m: float = 0.9
     room_door_width_m: float = 1.2
+    # Node-creation quality gate (P1h/orphan-node follow-up): a real diagnostic
+    # run showed ~228 tracks/episode with 36% never re-observed and 49% never
+    # reaching min_obs_for_refine -- most of the scene graph's memory was
+    # spent on throwaway single-sighting noise that every downstream consumer
+    # (frontier scoring, room segmentation, relinking) still had to pay for.
+    min_det_score: float = 0.35
+    min_det_bbox_px: float = 1500.0
+    # A detection that only re-matches an existing track from nearly the same
+    # camera position adds no real corroborating evidence (no parallax) --
+    # it's still consistent with a one-off misdetection that just happened to
+    # repeat within the current keyframe's dwell. A track is only promoted to
+    # "confirmed" (visible to tracks()/candidates(), eligible for relink) once
+    # matched from a pose at least this far from its first sighting.
+    confirm_baseline_m: float = 0.15
 
 
 @dataclass

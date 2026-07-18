@@ -41,6 +41,12 @@ class ObjectTrack:
     blacklisted: bool = False
     linked_ids: set = field(default_factory=set)
     refined_at_obs: int = 0
+    # Multi-view confirmation (P1h/orphan-node follow-up): a track starts
+    # tentative and is only promoted once re-observed from a sufficiently
+    # different camera pose (real parallax, not just a repeated glance from
+    # the same spot) -- see ObjectLayer.confirm_baseline_m.
+    confirmed: bool = False
+    first_cam_xy: Optional[np.ndarray] = None  # ground-plane pose of the first sighting
 
     @property
     def n_obs(self) -> int:

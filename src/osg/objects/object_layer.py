@@ -9,6 +9,7 @@ import numpy as np
 
 from ..core.geometry import ellipse_from_mask
 from ..core.types import Detection, FrameData
+from ..mapping.costmap import PLANE
 from .association import DataAssociator, Observation, ObjectTrack
 from .ellipsoid import Ellipsoid
 from .linking import object_center, relink
@@ -23,6 +24,9 @@ class ObjectLayer:
         min_obs_for_refine: int = 3,
         refine_every: int = 3,
         link_dist_m: float = 1.0,
+        min_det_score: float = 0.0,
+        min_det_bbox_px: float = 0.0,
+        confirm_baseline_m: float = 0.0,
         rng_seed: int = 0,
     ) -> None:
         self._tracks: Dict[int, ObjectTrack] = {}
@@ -32,14 +36,30 @@ class ObjectLayer:
         self.min_obs_for_refine = min_obs_for_refine
         self.refine_every = refine_every
         self.link_dist_m = link_dist_m
+        self.min_det_score = min_det_score
+        self.min_det_bbox_px = min_det_bbox_px
+        self.confirm_baseline_m = confirm_baseline_m
         self._rng = np.random.default_rng(rng_seed)
 
     # ------------------------------------------------------------------ api
 
     def update(self, frame: FrameData, dets: List[Detection]) -> None:
+        # Node-creation quality gate: a low-confidence or sliver detection
+        # shouldn't seed a new track, or even lend support to an existing
+        # one -- association still runs against every current track (a
+        # would-be match still consumes that track's slot so a second, good
+        # detection of the same object this frame doesn't spawn a duplicate),
+        # but only detections clearing the bar reach track creation/update.
+        dets = [
+            d for d in dets
+            if d.score >= self.min_det_score and self._bbox_px(d) >= self.min_det_bbox_px
+        ]
+        if not dets:
+            return
         matches = self._associator.associate(dets, frame, list(self._tracks.values()))
         K = frame.intrinsics.K()
         T_cw = frame.T_cw
+        cam_xy = frame.camera_position[list(PLANE)]
 
         relink_needed = False
         for det_idx, track_id in matches:
@@ -51,12 +71,18 @@ class ObjectLayer:
                 ell = Ellipsoid.init_from_detection(det, frame, rng=self._rng)
                 if ell is None:
                     continue
-                track = ObjectTrack(id=self._next_id, label=det.label, ellipsoid=ell)
+                track = ObjectTrack(
+                    id=self._next_id, label=det.label, ellipsoid=ell, first_cam_xy=cam_xy.copy(),
+                )
                 self._next_id += 1
                 self._tracks[track.id] = track
-                relink_needed = True
             else:
                 track = self._tracks[track_id]
+                if not track.confirmed and track.first_cam_xy is not None:
+                    baseline = float(np.linalg.norm(cam_xy - track.first_cam_xy))
+                    if baseline >= self.confirm_baseline_m:
+                        track.confirmed = True
+                        relink_needed = True
             track.observations.append(obs)
             if det.score > track.best_score:
                 track.best_score = det.score
@@ -65,12 +91,11 @@ class ObjectLayer:
                 track.best_bbox_px = float(max(0.0, x2 - x1) * max(0.0, y2 - y1))
                 # The pose this detection was made from is a proven
                 # "object visible from here" pose — the terminal stop target.
-                from ..mapping.costmap import PLANE
-
-                track.best_cam_xy = frame.camera_position[list(PLANE)].copy()
+                track.best_cam_xy = cam_xy.copy()
 
             due = (
-                track.n_obs >= self.min_obs_for_refine
+                track.confirmed
+                and track.n_obs >= self.min_obs_for_refine
                 and track.n_obs - track.refined_at_obs >= self.refine_every
             )
             if due:
@@ -81,11 +106,12 @@ class ObjectLayer:
                 track.refined_at_obs = track.n_obs
 
         if relink_needed:
-            relink(list(self._tracks.values()), self.link_dist_m)
+            relink([t for t in self._tracks.values() if t.confirmed], self.link_dist_m)
 
-    def tracks(self, include_blacklisted: bool = False) -> List[ObjectTrack]:
+    def tracks(self, include_blacklisted: bool = False, include_unconfirmed: bool = False) -> List[ObjectTrack]:
         return [
-            t for t in self._tracks.values() if include_blacklisted or not t.blacklisted
+            t for t in self._tracks.values()
+            if (include_blacklisted or not t.blacklisted) and (include_unconfirmed or t.confirmed)
         ]
 
     def get(self, track_id: int) -> Optional[ObjectTrack]:
@@ -98,12 +124,13 @@ class ObjectLayer:
         min_score: float = 0.0,
         min_bbox_px: float = 0.0,
     ) -> List[ObjectTrack]:
-        """Non-blacklisted tracks matching the target with enough support and
-        detection quality (fragment detections make useless candidates)."""
+        """Confirmed, non-blacklisted tracks matching the target with enough
+        support and detection quality (fragment detections make useless
+        candidates)."""
         target = target_label.lower().replace(" ", "_")
         out = []
         for t in self._tracks.values():
-            if t.blacklisted or t.n_obs < min_obs:
+            if t.blacklisted or not t.confirmed or t.n_obs < min_obs:
                 continue
             if t.best_score < min_score or t.best_bbox_px < min_bbox_px:
                 continue
@@ -111,6 +138,11 @@ class ObjectLayer:
                 out.append(t)
         out.sort(key=lambda t: -t.best_score)
         return out
+
+    @staticmethod
+    def _bbox_px(det: Detection) -> float:
+        x1, y1, x2, y2 = det.bbox_xyxy
+        return float(max(0.0, x2 - x1) * max(0.0, y2 - y1))
 
     def center_of(self, track: ObjectTrack) -> np.ndarray:
         return object_center(track, self._tracks)
