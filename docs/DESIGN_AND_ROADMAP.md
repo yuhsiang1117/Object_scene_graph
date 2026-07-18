@@ -722,10 +722,58 @@ confirmed 節點。這個 `sg.objects` 接著被三處直接消費，而且都�
   `confirm_baseline_m` 調小很多（例如 0.05m，剛好排除「同一格內反覆
   觸發」但幾乎不影響正常移動速度下的確認時機）。
 
-**後續方向 2**：`ep10/chair`、`ep12/bed` 這兩個案例值得單獨深入看：是不是這個
-   codebase 裡有一批對任何擾動都特別敏感的「脆弱 episode」，如果是，
-   未來每次評估改動的影響時都應該把它們單獨拉出來看，而不是只看
-   聚合 SR/SPL。
+**後續方向 2 執行結果（2026-07-18）：不是脆弱 episode，是跨集狀態洩漏
+的 bug**——用 `eval.episode_ids=["10","12"]` 把這兩個 episode（連同同 id
+的 `10/sofa`、`12/tv_monitor`）從 30 集裡單獨抽出來重跑 3 次，**結果逐
+位元組完全一致**（`10/chair`: success=1 spl=0.220 steps=310，三次不變；
+其餘三個也都三次一致）。這推翻了「隨機噪音」的解釋——同一個 episode、
+同一份程式碼，單獨跑穩定，放進完整序列就不穩定，代表問題出在**跑的
+順序**，不是 episode 本身或 LLM 取樣。
+
+**根因**：`AsyncScorer`/`LLMTextScorer` 在 `run_eval()` 裡是整個跑
+只建立一次、跨全部 episode 共用的物件（[runner.py](../src/osg/eval/runner.py)
+`scorer = build_scorer(cfg)` 在 episode 迴圈外），但裡面兩個快取——
+`AsyncScorer._latest`（frontier 分數，用 `frontier.id` 當 key）、
+`LLMTextScorer._room_label_cache`（房間標籤，用 `room.id` 當 key）——
+從未在集與集之間清空。而 `frontier.id`（[frontier.py:30](../src/osg/mapping/frontier.py)
+`self._next_id = 0`）跟 `room.id`（[room_seg.py:29](../src/osg/mapping/room_seg.py)
+`self._next_room_id = 1`）都是每個 episode（新建的 `FrontierExtractor`/
+`RoomSegmenter`）重新從 0/1 編號——id 撞號在小整數空間裡幾乎是必然，
+一旦撞號，新 episode 就會讀到上一集、完全不相干場景的舊分數/舊標籤。
+
+**修正**：`FrontierScorer` 加 `reset()`（預設 no-op），`LLMTextScorer`
+覆寫清空 `_room_label_cache`，`AsyncScorer` 覆寫清空 `_latest` 並轉呼叫
+內層 scorer 的 `reset()`；`run_eval()` 每個 episode 開始前呼叫
+`scorer.reset()`。63→65 單元測試（新增 2 個涵蓋 reset 行為）+ sim 整合
+測試全過。
+
+**30-episode 驗證（`quality_gate_only` 基準 vs 修正後）**：
+
+| | quality_gate_only | 修正後 |
+|---|---|---|
+| SR | 0.100 | **0.133** |
+| SPL | 0.0330 | **0.0520** |
+
+SPL 0.0520 是這一系列所有跑裡最高的（比之前最好的 P1f 基準 0.0335 高約
+55%）。**`ep10/chair` 這次在完整 30 集序列裡跑出 `success=1 spl=0.220
+dtg=0.109 steps=310 select_none=0`——跟三次隔離重跑的結果逐位元組完全
+相同**，證實污染已徹底清除。
+
+**`ep12/bed` 出現一個意外但合理的轉折**：這次沒有恢復成 P1e/P1f 裡的
+「成功」，反而跟三次隔離重跑一樣是失敗（`success=0 dtg=3.637
+select_none=49`）。回頭看：**`ep12/bed` 在三次乾淨隔離重跑裡本來就是
+一致失敗的**。這代表 P1e/P1f 裡 `ep12/bed` 的「成功」，很可能本身就是
+狀態洩漏的僥倖產物——湊巧繼承到某個不相干場景的殘留分數/標籤，剛好
+幫了忙，不是這個 episode 靠自己走到的。修好 bug 後看到的才是它真實的
+表現。跟 `quality_gate_only` 比，整體是 2 贏 1 輸（`(1,chair)` fail→
+success dtg 3.408→0.053；`(10,chair)` fail→success；`(3,tv_monitor)`
+success→fail dtg 0.054→0.569），淨值正向，吻合聚合 SPL 提升。
+
+**意義**：這個 bug 很可能是 P1f/P1g/P1i 一路以來反覆記錄、只歸因於
+「VLM 取樣溫度」的探索階段執行間隨機性的**真正主因之一**——之前所有
+「同一組 episode 重跑，dtg 大幅跳動」的觀察，有一部分應該要重新用
+修正後的程式碼驗證，才能判斷剩餘的變異有多少是真的 LLM 取樣噪音、
+多少是這個已修好的洩漏。
 
 ### P2 — 效能（real-time 主張）
 - 30-episode 全量兩次獨立測得 pipeline FPS 1.41–1.47，控制迴圈中位數
