@@ -132,11 +132,15 @@ class VerificationConfig:
     # through furniture) must not trigger the expensive approach+verify loop.
     min_score: float = 0.45
     min_bbox_px: int = 3000
-    # Evidence-score gate (P1i follow-up): disabled (0.0) by default -- the
-    # evidence-tracking mechanism itself (scene_graph.confirm_baseline_m/
-    # repeat_view_discount) needs validating before using it as a hard
-    # candidate filter on top of min_obs/min_score/min_bbox_px above.
-    min_evidence: float = 0.0
+    # Evidence-score gate (P1i follow-up, 2026-07-19): threshold picked from
+    # a real 8-episode/1343-track measurement (scripts/orphan_node_check.py)
+    # of evidence separated by whether a track ever reached candidate
+    # quality -- non-candidate tracks: p75=0.84 p90=1.27; candidate-quality
+    # tracks: min=0.64 p10=1.18 p25=1.56. 1.0 sits between the non-candidate
+    # p75/p90 (filtering roughly 75-80% of low-evidence noise) and just
+    # under the candidate p10 (sacrificing only ~6-7% of genuine candidates,
+    # erring toward not rejecting real targets over aggressively filtering).
+    min_evidence: float = 1.0
     ring_radii_m: List[float] = field(default_factory=lambda: [0.8, 1.2, 1.5, 2.0])
     accept_confidence: float = 0.5
     # Verification is rare (1-3 calls/episode) and precision-critical: the 3B

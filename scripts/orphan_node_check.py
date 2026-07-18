@@ -21,6 +21,8 @@ import argparse
 from collections import Counter, defaultdict
 from pathlib import Path
 
+import numpy as np
+
 from hydra import compose, initialize_config_dir
 
 from osg.core.config import register_configs
@@ -50,6 +52,8 @@ def main():
     label_orphans = Counter()
     label_totals = Counter()
     per_ep_rows = []
+    evidence_candidate = []  # evidence of tracks that ever reached candidate quality
+    evidence_noncandidate = []  # evidence of tracks that never did
 
     n_total = len(env.env.episodes)
     n_run = min(args.num_episodes, n_total)
@@ -76,6 +80,13 @@ def main():
             and t.best_score >= cfg.verification.min_score
             and t.best_bbox_px >= cfg.verification.min_bbox_px
         )
+        for t in tracks:
+            is_candidate = (
+                not t.blacklisted and t.n_obs >= cfg.verification.min_obs
+                and t.best_score >= cfg.verification.min_score
+                and t.best_bbox_px >= cfg.verification.min_bbox_px
+            )
+            (evidence_candidate if is_candidate else evidence_noncandidate).append(t.evidence)
         totals["tracks"] += n_total_tracks
         totals["orphan_n_obs1"] += n_orphan
         totals["weak_below_refine"] += n_weak
@@ -111,6 +122,21 @@ def main():
     for label, tot in sorted(label_totals.items(), key=lambda kv: -kv[1]):
         orph = label_orphans.get(label, 0)
         print(f"  {label:20s} {orph:3d}/{tot:3d}  ({100 * orph / tot:.0f}%)")
+
+    print()
+    print("=== evidence distribution (for picking verification.min_evidence) ===")
+
+    def _report(name, vals):
+        if not vals:
+            print(f"  {name}: n=0")
+            return
+        arr = np.array(vals)
+        pcts = np.percentile(arr, [10, 25, 50, 75, 90])
+        print(f"  {name}: n={len(arr)} min={arr.min():.2f} p10={pcts[0]:.2f} p25={pcts[1]:.2f} "
+              f"median={pcts[2]:.2f} p75={pcts[3]:.2f} p90={pcts[4]:.2f} max={arr.max():.2f}")
+
+    _report("candidate-quality tracks  ", evidence_candidate)
+    _report("non-candidate tracks      ", evidence_noncandidate)
 
 
 if __name__ == "__main__":
