@@ -688,14 +688,41 @@ SPL 幾乎打平 P1f 基準（0.0335）。更直接的證據：`stop_reason=None
 scene_graph/frontier 評分的耦合關係，把 `confirm_baseline_m` 調回
 正值即可重新啟用測試。
 
-**後續方向建議**：
-1. 查清楚 `object_layer.tracks()` 節點數變少，究竟怎麼影響
-   `scene_graph.rebuild()` 餵給 VLM frontier 評分的上下文——這是目前
-   唯一還沒驗證的因果連結，如果查清楚了，多視角確認機制或許能用更
-   保守的參數（例如更小的 `confirm_baseline_m`，或允許 `candidates()`
-   在 scene graph 過於稀疏時 fallback 到 unconfirmed 節點）安全地
-   重新啟用。
-2. `ep10/chair`、`ep12/bed` 這兩個案例值得單獨深入看：是不是這個
+**耦合關係已查清楚（2026-07-18）**：`SceneGraph.rebuild()`
+（[scene_graph.py:63](../src/osg/graph/scene_graph.py)）呼叫
+`object_layer.tracks()` 時沒傳 `include_unconfirmed=True`，只讀
+confirmed 節點。這個 `sg.objects` 接著被三處直接消費，而且都有
+「空了就顯示空字串/整段跳過」的行為：
+1. `LLMTextScorer.label_rooms()`（[llm_scorer.py:34-39](../src/osg/exploration/llm_scorer.py)）
+   只對 `sg.objects_in_room(room.id)` 非空的房間送 LLM 標房型；
+   tentative 物件不算數，房間長時間卡在 `label=None`。
+2. `_frontier_text()`（[llm_scorer.py:59-67](../src/osg/exploration/llm_scorer.py)）
+   查不到附近物件就直接寫死 `"nothing mapped nearby"`。
+3. `to_prompt_text()`（[serialize.py:29-59](../src/osg/graph/serialize.py)）
+   房間物件數是 0 就整行跳過，全場景都空的話回傳
+   `"(no objects mapped yet)"`。
+
+`confirm_baseline_m` 開啟時，探索早期（或任何還沒在附近走動夠久的
+區域）確認節點很少，`sg.objects` 幾乎是空的 → LLM/VLM 收到的 frontier
+評分 prompt 大量出現「這裡沒東西」「房間沒名字」→ 評分退化成接近
+`unscored_prior` 的猜測 → 對應到量測到的 `select_none` 暴增與探索卡死。
+這是直接的、無條件的資料依賴（不是機率性推論），不需要再額外量測就
+可以確認因果鏈成立。也解釋了為什麼單純關掉 `confirm_baseline_m`（節點
+建立當下就 confirmed）就能讓 scene graph 恢復即時填充、SR/SPL 回到
+基準附近。
+
+**若未來要重新啟用多視角確認**，這條因果鏈給出兩個具體、可行的緩解
+方向（優於盲目調小 `confirm_baseline_m`）：
+- 讓 `SceneGraph.rebuild()` 改用 `object_layer.tracks(include_unconfirmed=True)`
+  （或至少 `label_rooms()`/`_frontier_text()`/`to_prompt_text()` 這三處
+  單獨改用），把 tentative 節點也算進「這裡有東西」的判斷——多視角確認
+  只用來把關 APPROACH 候選品質（`candidates()`），不該連帶餓死 frontier
+  評分的場景描述。
+- 或者維持現狀（`candidates()`/`tracks()` 都只看 confirmed），但把
+  `confirm_baseline_m` 調小很多（例如 0.05m，剛好排除「同一格內反覆
+  觸發」但幾乎不影響正常移動速度下的確認時機）。
+
+**後續方向 2**：`ep10/chair`、`ep12/bed` 這兩個案例值得單獨深入看：是不是這個
    codebase 裡有一批對任何擾動都特別敏感的「脆弱 episode」，如果是，
    未來每次評估改動的影響時都應該把它們單獨拉出來看，而不是只看
    聚合 SR/SPL。
