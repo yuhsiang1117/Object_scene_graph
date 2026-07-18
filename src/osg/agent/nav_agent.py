@@ -93,6 +93,7 @@ class NavAgent:
             min_det_score=cfg.scene_graph.min_det_score,
             min_det_bbox_px=cfg.scene_graph.min_det_bbox_px,
             confirm_baseline_m=cfg.scene_graph.confirm_baseline_m,
+            repeat_view_discount=cfg.scene_graph.repeat_view_discount,
         )
         self.scene_graph = SceneGraph()
         self.keyframes = KeyframeStore(save_dir=keyframe_dir)
@@ -413,6 +414,7 @@ class NavAgent:
             min_obs=self.cfg.verification.min_obs,
             min_score=self.cfg.verification.min_score,
             min_bbox_px=self.cfg.verification.min_bbox_px,
+            min_evidence=self.cfg.verification.min_evidence,
         )
         if not candidates:
             return

@@ -41,12 +41,15 @@ class ObjectTrack:
     blacklisted: bool = False
     linked_ids: set = field(default_factory=set)
     refined_at_obs: int = 0
-    # Multi-view confirmation (P1h/orphan-node follow-up): a track starts
-    # tentative and is only promoted once re-observed from a sufficiently
-    # different camera pose (real parallax, not just a repeated glance from
-    # the same spot) -- see ObjectLayer.confirm_baseline_m.
-    confirmed: bool = False
     first_cam_xy: Optional[np.ndarray] = None  # ground-plane pose of the first sighting
+    # Evidence-score corroboration (P1i follow-up, replaces the earlier
+    # hard confirmed/tentative gate that starved scene_graph.rebuild() of
+    # objects early in exploration -- see ObjectLayer._view_diversity_weight).
+    # A track is visible immediately on creation; evidence accumulates every
+    # observation, weighted down for repeated glances from nearly the same
+    # spot so a genuine multi-view corroboration still counts for more than
+    # a burst of near-duplicate frames, without ever hiding the track.
+    evidence: float = 0.0
 
     @property
     def n_obs(self) -> int:

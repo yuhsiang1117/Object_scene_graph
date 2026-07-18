@@ -81,24 +81,24 @@ class SceneGraphConfig:
     # (frontier scoring, room segmentation, relinking) still had to pay for.
     min_det_score: float = 0.35
     min_det_bbox_px: float = 1500.0
-    # A detection that only re-matches an existing track from nearly the same
-    # camera position adds no real corroborating evidence (no parallax) --
-    # it's still consistent with a one-off misdetection that just happened to
-    # repeat within the current keyframe's dwell. A track is only promoted to
-    # "confirmed" (visible to tracks()/candidates(), eligible for relink) once
-    # matched from a pose at least this far from its first sighting.
-    # DISABLED (0.0) for now: a 30-episode eval with both this AND the
-    # quality gate above enabled together showed SR/SPL roughly halved vs
-    # baseline (2 clean successes -> total misses, agent_stats showed
-    # stop_reason=None with select_none exploding 0->22-24 -- exploration
-    # itself got less stable, plausibly via object_layer's now-smaller
-    # tracks() population feeding sparser context into scene_graph/frontier
-    # scoring). That eval did not isolate which of the two mechanisms caused
-    # it; disabling this one first (keeping the quality gate) to narrow it
-    # down. 0.0 means every quality-gated detection confirms its track
-    # immediately on creation (the pre-this-feature behavior); set > 0 to
-    # re-enable and re-test in isolation.
-    confirm_baseline_m: float = 0.0
+    # Evidence-score corroboration (P1i, FUS3DMaps-inspired 2026-07-19): a
+    # detection that only re-matches an existing track from nearly the same
+    # camera position adds little real corroborating evidence (no parallax)
+    # -- it's still consistent with a one-off misdetection that happened to
+    # repeat within the current keyframe's dwell. Earlier this was a hard
+    # confirmed/tentative visibility gate (a track was hidden from tracks()/
+    # candidates() entirely until re-observed from far enough away), but a
+    # 30-episode eval showed that starved scene_graph.rebuild() of objects
+    # early in exploration -- frontier scoring got "(no objects mapped yet)"
+    # prompts and SR/SPL roughly halved (agent_stats: stop_reason=None,
+    # select_none 0->22-24). Replaced with a soft evidence weight instead:
+    # tracks are visible immediately from creation (ObjectTrack.evidence
+    # accumulates every observation's det.score, discounted by
+    # repeat_view_discount when the camera hasn't moved this far from the
+    # track's first sighting). 0 disables the discount (every observation
+    # gets full weight, matching pre-feature behavior).
+    confirm_baseline_m: float = 0.15
+    repeat_view_discount: float = 0.2
 
 
 @dataclass
@@ -132,6 +132,11 @@ class VerificationConfig:
     # through furniture) must not trigger the expensive approach+verify loop.
     min_score: float = 0.45
     min_bbox_px: int = 3000
+    # Evidence-score gate (P1i follow-up): disabled (0.0) by default -- the
+    # evidence-tracking mechanism itself (scene_graph.confirm_baseline_m/
+    # repeat_view_discount) needs validating before using it as a hard
+    # candidate filter on top of min_obs/min_score/min_bbox_px above.
+    min_evidence: float = 0.0
     ring_radii_m: List[float] = field(default_factory=lambda: [0.8, 1.2, 1.5, 2.0])
     accept_confidence: float = 0.5
     # Verification is rare (1-3 calls/episode) and precision-critical: the 3B

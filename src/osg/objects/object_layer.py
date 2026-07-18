@@ -27,6 +27,7 @@ class ObjectLayer:
         min_det_score: float = 0.0,
         min_det_bbox_px: float = 0.0,
         confirm_baseline_m: float = 0.0,
+        repeat_view_discount: float = 0.2,
         rng_seed: int = 0,
     ) -> None:
         self._tracks: Dict[int, ObjectTrack] = {}
@@ -38,7 +39,13 @@ class ObjectLayer:
         self.link_dist_m = link_dist_m
         self.min_det_score = min_det_score
         self.min_det_bbox_px = min_det_bbox_px
+        # confirm_baseline_m: camera-position distance from a track's first
+        # sighting beyond which a re-match counts as genuine multi-view
+        # corroboration (full evidence weight) rather than a repeated glance
+        # from nearly the same spot (discounted -- see
+        # _view_diversity_weight). 0 disables the discount entirely.
         self.confirm_baseline_m = confirm_baseline_m
+        self.repeat_view_discount = repeat_view_discount
         self._rng = np.random.default_rng(rng_seed)
 
     # ------------------------------------------------------------------ api
@@ -73,21 +80,14 @@ class ObjectLayer:
                     continue
                 track = ObjectTrack(
                     id=self._next_id, label=det.label, ellipsoid=ell, first_cam_xy=cam_xy.copy(),
-                    # confirm_baseline_m <= 0 disables multi-view confirmation
-                    # entirely: every quality-gated sighting is trusted immediately.
-                    confirmed=self.confirm_baseline_m <= 0.0,
                 )
+                track.evidence += det.score  # first sighting: full weight
                 self._next_id += 1
                 self._tracks[track.id] = track
-                if track.confirmed:
-                    relink_needed = True
+                relink_needed = True  # visible immediately -- join the scene graph now
             else:
                 track = self._tracks[track_id]
-                if not track.confirmed and track.first_cam_xy is not None:
-                    baseline = float(np.linalg.norm(cam_xy - track.first_cam_xy))
-                    if baseline >= self.confirm_baseline_m:
-                        track.confirmed = True
-                        relink_needed = True
+                track.evidence += det.score * self._view_diversity_weight(track, cam_xy)
             track.observations.append(obs)
             if det.score > track.best_score:
                 track.best_score = det.score
@@ -99,8 +99,7 @@ class ObjectLayer:
                 track.best_cam_xy = cam_xy.copy()
 
             due = (
-                track.confirmed
-                and track.n_obs >= self.min_obs_for_refine
+                track.n_obs >= self.min_obs_for_refine
                 and track.n_obs - track.refined_at_obs >= self.refine_every
             )
             if due:
@@ -111,13 +110,24 @@ class ObjectLayer:
                 track.refined_at_obs = track.n_obs
 
         if relink_needed:
-            relink([t for t in self._tracks.values() if t.confirmed], self.link_dist_m)
+            relink(list(self._tracks.values()), self.link_dist_m)
 
-    def tracks(self, include_blacklisted: bool = False, include_unconfirmed: bool = False) -> List[ObjectTrack]:
-        return [
-            t for t in self._tracks.values()
-            if (include_blacklisted or not t.blacklisted) and (include_unconfirmed or t.confirmed)
-        ]
+    def _view_diversity_weight(self, track: ObjectTrack, cam_xy: np.ndarray) -> float:
+        """Full weight for a re-observation from a meaningfully different
+        camera pose than the track's first sighting (genuine multi-view
+        corroboration); discounted (not zeroed) for a repeated glance from
+        nearly the same spot, so a burst of near-duplicate frames can't
+        inflate evidence as fast as real parallax can (P1i follow-up:
+        FUS3DMaps-style evidence accumulation, replacing the earlier hard
+        confirmed/tentative visibility gate that starved scene_graph
+        context during early exploration)."""
+        if self.confirm_baseline_m <= 0.0 or track.first_cam_xy is None:
+            return 1.0
+        baseline = float(np.linalg.norm(cam_xy - track.first_cam_xy))
+        return 1.0 if baseline >= self.confirm_baseline_m else self.repeat_view_discount
+
+    def tracks(self, include_blacklisted: bool = False) -> List[ObjectTrack]:
+        return [t for t in self._tracks.values() if include_blacklisted or not t.blacklisted]
 
     def get(self, track_id: int) -> Optional[ObjectTrack]:
         return self._tracks.get(track_id)
@@ -128,14 +138,15 @@ class ObjectLayer:
         min_obs: int = 2,
         min_score: float = 0.0,
         min_bbox_px: float = 0.0,
+        min_evidence: float = 0.0,
     ) -> List[ObjectTrack]:
-        """Confirmed, non-blacklisted tracks matching the target with enough
-        support and detection quality (fragment detections make useless
-        candidates)."""
+        """Non-blacklisted tracks matching the target with enough support,
+        detection quality, and accumulated evidence (fragment detections
+        and single-glimpse noise make useless candidates)."""
         target = target_label.lower().replace(" ", "_")
         out = []
         for t in self._tracks.values():
-            if t.blacklisted or not t.confirmed or t.n_obs < min_obs:
+            if t.blacklisted or t.n_obs < min_obs or t.evidence < min_evidence:
                 continue
             if t.best_score < min_score or t.best_bbox_px < min_bbox_px:
                 continue

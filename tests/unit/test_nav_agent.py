@@ -53,6 +53,7 @@ def make_cfg(**agent_overrides) -> types.SimpleNamespace:
             min_obs_for_refine=3, refine_every=3, link_dist_m=1.0,
             keyframe_trans_m=0.25, keyframe_rot_deg=30.0, room_seg_every_kf=10,
             min_det_score=0.35, min_det_bbox_px=1500.0, confirm_baseline_m=0.0,
+            repeat_view_discount=0.2,
         ),
         agent=types.SimpleNamespace(
             agent_radius=0.18, forward_m=0.25, turn_deg=30.0, initial_scan=False,
@@ -62,6 +63,7 @@ def make_cfg(**agent_overrides) -> types.SimpleNamespace:
         ),
         verification=types.SimpleNamespace(
             ring_radii_m=[0.8, 1.2, 1.5, 2.0], min_obs=3, min_score=0.45, min_bbox_px=3000.0,
+            min_evidence=0.0,
         ),
         detector=types.SimpleNamespace(vocabulary=["chair", "bed"]),
     )
