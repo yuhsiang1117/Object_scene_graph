@@ -29,6 +29,12 @@ class LLMTextScorer(FrontierScorer):
         self.max_frontiers = max_frontiers_per_call
         self._room_label_cache: Dict[int, str] = {}
 
+    def reset(self) -> None:
+        # room.id restarts from 1 each episode (fresh RoomSegmenter per
+        # NavAgent) -- an unreset cache would label a new scene's room 1
+        # with whatever a previous, unrelated scene's room 1 was called.
+        self._room_label_cache.clear()
+
     # ------------------------------------------------------------- room labels
 
     def label_rooms(self, sg: SceneGraph) -> None:

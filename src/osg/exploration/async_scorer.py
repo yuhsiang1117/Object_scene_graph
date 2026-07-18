@@ -68,5 +68,15 @@ class AsyncScorer:
         with self._lock:
             return dict(self._latest)
 
+    def reset(self) -> None:
+        """Call at the start of each episode: frontier.id restarts from 0
+        each episode (fresh FrontierExtractor per NavAgent), so a stale
+        _latest entry would otherwise hand select_frontier() a score from a
+        different frontier in a previous, unrelated scene the moment a new
+        episode's id happens to collide with an old one."""
+        with self._lock:
+            self._latest = {}
+        self.scorer.reset()
+
     def shutdown(self) -> None:
         self._executor.shutdown(wait=False)

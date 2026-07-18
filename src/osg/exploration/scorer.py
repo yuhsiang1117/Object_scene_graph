@@ -24,6 +24,15 @@ class FrontierScorer(ABC):
     ) -> Dict[int, float]:
         """Returns {frontier_id: P in [0, 1]}. May score a subset."""
 
+    def reset(self) -> None:
+        """Clear any per-episode state before a new episode starts. A scorer
+        instance is built once and reused across every episode in a run
+        (see eval/runner.py); subclasses that key a cache by frontier.id or
+        room.id (both small integers that restart from 0/1 each episode --
+        see FrontierExtractor/RoomSegmenter) must override this, or stale
+        entries from a previous, unrelated scene silently leak into the
+        current one whenever an id happens to collide. No-op by default."""
+
 
 class RandomScorer(FrontierScorer):
     def __init__(self, seed: int = 0) -> None:

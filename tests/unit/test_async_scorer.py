@@ -57,3 +57,31 @@ def test_error_is_contained():
     assert a.n_errors == 1
     assert a.latest() == {}
     a.shutdown()
+
+
+def test_reset_clears_stale_scores_and_delegates():
+    """P1i follow-up: frontier.id restarts from 0 each episode but a scorer
+    instance (and its _latest cache) is reused across the whole eval run --
+    without reset(), episode N+1's frontier id=1 would silently inherit
+    episode N's score for a completely different frontier in another scene."""
+    class TrackingScorer(FrontierScorer):
+        def __init__(self):
+            self.reset_calls = 0
+
+        def score(self, frontiers, sg, target, keyframes=None):
+            return {f.id: 0.7 for f in frontiers}
+
+        def reset(self):
+            self.reset_calls += 1
+
+    inner = TrackingScorer()
+    a = AsyncScorer(inner)
+    a.request(_frontiers(), SceneGraph(), "bed")
+    time.sleep(0.2)
+    assert a.latest() == {1: 0.7}  # stale score from "episode N"
+
+    a.reset()  # "episode N+1" begins
+
+    assert a.latest() == {}
+    assert inner.reset_calls == 1
+    a.shutdown()

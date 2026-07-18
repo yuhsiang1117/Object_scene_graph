@@ -145,6 +145,14 @@ def run_eval(cfg) -> dict:
         verify_calls_before = verifier.n_calls if verifier is not None else 0
         verify_rej_before = verifier.n_rejections if verifier is not None else 0
 
+        # frontier.id/room.id both restart from 0/1 each episode (fresh
+        # FrontierExtractor/RoomSegmenter per NavAgent below), but the
+        # scorer's internal caches are keyed by those same small ints and
+        # persist across the whole run -- without this, a new episode can
+        # silently inherit a stale score/room-label from a previous,
+        # unrelated scene the moment an id collides.
+        scorer.reset()
+
         profiler = Profiler()
         agent = NavAgent(
             cfg, detector, scorer, verifier, target,
