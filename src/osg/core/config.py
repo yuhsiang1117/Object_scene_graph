@@ -87,7 +87,18 @@ class SceneGraphConfig:
     # repeat within the current keyframe's dwell. A track is only promoted to
     # "confirmed" (visible to tracks()/candidates(), eligible for relink) once
     # matched from a pose at least this far from its first sighting.
-    confirm_baseline_m: float = 0.15
+    # DISABLED (0.0) for now: a 30-episode eval with both this AND the
+    # quality gate above enabled together showed SR/SPL roughly halved vs
+    # baseline (2 clean successes -> total misses, agent_stats showed
+    # stop_reason=None with select_none exploding 0->22-24 -- exploration
+    # itself got less stable, plausibly via object_layer's now-smaller
+    # tracks() population feeding sparser context into scene_graph/frontier
+    # scoring). That eval did not isolate which of the two mechanisms caused
+    # it; disabling this one first (keeping the quality gate) to narrow it
+    # down. 0.0 means every quality-gated detection confirms its track
+    # immediately on creation (the pre-this-feature behavior); set > 0 to
+    # re-enable and re-test in isolation.
+    confirm_baseline_m: float = 0.0
 
 
 @dataclass

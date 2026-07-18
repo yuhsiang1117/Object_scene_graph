@@ -73,9 +73,14 @@ class ObjectLayer:
                     continue
                 track = ObjectTrack(
                     id=self._next_id, label=det.label, ellipsoid=ell, first_cam_xy=cam_xy.copy(),
+                    # confirm_baseline_m <= 0 disables multi-view confirmation
+                    # entirely: every quality-gated sighting is trusted immediately.
+                    confirmed=self.confirm_baseline_m <= 0.0,
                 )
                 self._next_id += 1
                 self._tracks[track.id] = track
+                if track.confirmed:
+                    relink_needed = True
             else:
                 track = self._tracks[track_id]
                 if not track.confirmed and track.first_cam_xy is not None:
