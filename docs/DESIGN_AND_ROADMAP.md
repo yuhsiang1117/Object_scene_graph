@@ -619,6 +619,87 @@ prompt 寫法測下來，一次都沒有被正確分類成 armchair。而且更�
 應該轉向文件開頭列的另外兩個方向（下游 VLM 二次確認，或直接接受這是
 sofa 類別的偵測天花板，轉去做 plant 根因或 P2 效能）。
 
+### P1i — 物件節點孤兒問題：品質門檻 + 多視角確認（2026-07-17/18）
+
+**動機**：`object_layer.py` 原本的建節點邏輯是「一次比對失敗就立刻新增」
+（見 [object_layer.py:70-78](../src/osg/objects/object_layer.py)）——沒有
+信心門檻、沒有最少觀察次數，只要 mask/depth 能算出橢圓就建立新
+`ObjectTrack`。品質檢查（`min_score`/`min_bbox_px`/`min_obs`）全部延後到
+`candidates()`（挑 APPROACH 候選時）才做。
+
+**量測（`scripts/orphan_node_check.py`，8 episodes）**：平均每 episode
+產生 **228 個物件節點**，其中 **36.3% 只被看過一次就再也沒被確認過**
+（n_obs==1），**48.7% 從未累積到 `min_obs_for_refine=3` 次觀察**（連
+Wasserstein 精煉都沒跑過）。只有 39.7% 曾經達到候選品質門檻，而真正走到
+verifier 被拒絕的只有 2 個——代表六成節點根本沒被任何後續機制檢查過，
+就一直留在 scene graph 裡，被 room segmentation、relink、VLM frontier
+評分持續攤提計算成本。按類別拆解：door（89%）、plant（76%）、towel
+（70%）、cabinet（56%）孤兒率最高。
+
+**修正**：`object_layer.py` 新增兩個機制（`ObjectTrack` 加
+`confirmed`/`first_cam_xy` 欄位）：
+1. **建節點前的品質門檻**（`scene_graph.min_det_score=0.35`、
+   `min_det_bbox_px=1500`）：偵測分數或 bbox 太小的偵測，連建立/延續
+   track 的資格都沒有。
+2. **多視角確認**（`scene_graph.confirm_baseline_m`）：新節點一律先標
+   `confirmed=False`（tentative），只有在從跟第一次看見時「相機位置
+   夠遠」的姿態再次比對成功，才升級成 `confirmed=True`。`tracks()`/
+   `candidates()`/`relink()` 預設只看 confirmed 節點（`tracks()` 新增
+   `include_unconfirmed` 參數供需要原始池的呼叫端使用）。
+
+**效果驗證（同一批 8 episodes 重跑）**：總節點數 1823→1060（-42%），
+孤兒節點結構性歸零（n_obs==1 在新語意下不可能出現在 confirmed 節點裡），
+weak 節點（<3 obs）888→125，**達到候選品質門檻的節點反而從 724 增加到
+855**（+18%，推測是雜訊不再稀釋 association 比對名額）。62 單元測試
+（新增 2 個測試涵蓋「同姿態不確認/不同姿態才確認」）+ sim 整合測試全過。
+
+**SR/SPL 驗證發現嚴重副作用（同時開啟兩個機制）**：10-episode 抽測與
+30-episode 全量都顯示**明顯退步**——SR 從 P1f 基準 0.133 掉到 0.067，
+SPL 從 0.0335 掉到 0.0204。逐集比對只有 2 個翻盤，且都是負向（成功→
+失敗，無任何新增成功）：`ep10/chair`（dtg 0.109→1.467）、`ep12/bed`
+（dtg 0.106→1.439），兩者 `agent_stats` 都顯示 `stop_reason=None`
+（整個 500 步從未進入 APPROACH）且 `select_none` 從 0 暴增到 22–24——
+不是「候選確認delay到錯過視窗」，是**探索階段本身變得不穩定**。物件
+節點門檻的程式碼完全沒碰 frontier 選擇邏輯，懷疑是間接路徑：
+`scene_graph.rebuild()` 讀 `object_layer.tracks()`，可見節點少了
+42% 可能讓 VLM frontier 評分拿到的場景上下文變少/變不同。
+
+**隔離測試（只關掉多視角確認，保留品質門檻，`confirm_baseline_m`
+預設 0.15→0.0）**：30-episode 全量重跑，SR/SPL 回升到 0.100/0.0330——
+SPL 幾乎打平 P1f 基準（0.0335）。更直接的證據：`stop_reason=None`
+（從未進 APPROACH）的比例從退步版的 16/30 完全回到基準的 11/30，
+`confirm_baseline_m` 是主因的判斷有這個指標的直接支持。
+
+**但不是乾淨的復原**：`ep10/chair`、`ep12/bed` 這兩個追蹤案例本身並
+沒有真的變回成功（ep10/chair 好轉但仍失敗 dtg 0.599；ep12/bed 反而
+更差 dtg 3.184、select_none 飆到 63）。整體是 3 個新翻盤成失敗、2 個
+新翻盤成成功（其中兩個 tv_monitor 案例 dtg 從 5–9m 直接掉到 0.05–0.07m，
+近乎完美），淨損 1 個 episode，SR 0.133→0.100。這個「不同 episode 各自
+換位、聚合值接近基準」的模式，比較符合本文件已經多次記錄的探索階段
+執行間隨機性，而不是單一方向的系統性傷害。`ep10/chair` 本身在 P1b
+階段就已知是容易卡住的脆弱案例，可能對 object_layer 的任何改動都比較
+敏感，不一定是這次改動的問題。
+
+**目前狀態（已提交，`confirm_baseline_m=0.0` 停用）**：只保留品質門檻，
+統計上跟基準無顯著差異（SPL 幾乎相同），孤兒節點的量測效果仍然成立
+（品質門檻本身沒被推翻，只是還沒有單獨用 30-episode 驗證完全隔離掉
+`confirm_baseline_m` 以外的因素）。多視角確認機制的程式碼（`confirmed`/
+`first_cam_xy` 欄位、promotion 邏輯）保留在原地，未來若要查清楚
+scene_graph/frontier 評分的耦合關係，把 `confirm_baseline_m` 調回
+正值即可重新啟用測試。
+
+**後續方向建議**：
+1. 查清楚 `object_layer.tracks()` 節點數變少，究竟怎麼影響
+   `scene_graph.rebuild()` 餵給 VLM frontier 評分的上下文——這是目前
+   唯一還沒驗證的因果連結，如果查清楚了，多視角確認機制或許能用更
+   保守的參數（例如更小的 `confirm_baseline_m`，或允許 `candidates()`
+   在 scene graph 過於稀疏時 fallback 到 unconfirmed 節點）安全地
+   重新啟用。
+2. `ep10/chair`、`ep12/bed` 這兩個案例值得單獨深入看：是不是這個
+   codebase 裡有一批對任何擾動都特別敏感的「脆弱 episode」，如果是，
+   未來每次評估改動的影響時都應該把它們單獨拉出來看，而不是只看
+   聚合 SR/SPL。
+
 ### P2 — 效能（real-time 主張）
 - 30-episode 全量兩次獨立測得 pipeline FPS 1.41–1.47，控制迴圈中位數
   ~480–710ms；目標 ≥5 FPS（優於論文的 RTX 3060 9.86 FPS 需在 12GB
