@@ -829,6 +829,39 @@ run3   SR=0.100  SPL=0.0271
 案例（邊界抖動 vs 真正路徑分岔），不是廣泛污染殘留。SR/SPL 聚合值
 在低樣本數下天生高變異，這是評估方法論的限制，不是程式碼問題。
 
+**用 FUS3DMaps 的 evidence score 概念取代 confirm_baseline_m 的二元開關
+（2026-07-19）**：讀了 FUS3DMaps（arXiv:2605.03669，開放詞彙語意地圖
+論文）後發現一個直接可用的概念——這篇論文融合 dense/instance 兩層語意
+embedding 時，不是用硬開關決定「這個 instance 能不能用」，而是持續累積
+一個 evidence score（每個 voxel 的 precision 加總），只有新的 evidence
+score 超過舊的才更新融合結果。物件從一開始就可見，只是信心不夠時
+「暫時不覆蓋舊估計」，不會被整個藏起來。
+
+這正好對應到本節稍早發現的問題：`confirm_baseline_m` 原本是硬性開關，
+把新節點藏到二次確認為止，結果餓死了 `scene_graph.rebuild()` 早期的
+內容，讓 frontier 評分拿到「這裡沒東西」的空 prompt，SR/SPL 腰斬。
+改用 evidence score 之後：
+- `ObjectTrack` 新增 `evidence: float`，每次觀察都累加 `det.score`；
+  如果這次觀察的相機位置離該節點第一次被看到的位置**不到**
+  `confirm_baseline_m`（預設 0.15m，softened 後可以安全恢復非零值），
+  這次累加會乘上 `repeat_view_discount`（預設 0.2）打折——不是歸零，
+  只是同一個定點反覆看到的證據價值比較低。
+- **節點一建立就立刻可見**（`tracks()` 拿掉了 confirmed 過濾），跟
+  這次調查最初、修 scorer 洩漏之後的狀態完全一樣，不會再重演 P1i
+  前段那次的退步。
+- `candidates()`（APPROACH 候選篩選）新增可選的 `min_evidence` 門檻，
+  預設 0.0（關閉/無作用），先讓記帳機制本身過驗證，之後再視情況調高。
+
+**驗證（30-episode，`min_evidence=0.0` 維持關閉）**：跟前一次
+scorer-fix 驗證（run3，SR=0.100 SPL=0.0271）逐集比對，**28/30 完全
+一致**，聚合 SR/SPL 分毫不差，`ep10/chair` 再度精確重現
+（success=1 dtg=0.109 steps=310）。唯二差異（`8/plant`、`9/chair`）
+都不是成功/失敗翻盤，落在已知的 Ollama 取樣噪音範圍內。63→67 單元
+測試（重寫確認相關測試，改成驗證 evidence 累積與折扣邏輯）+ sim
+整合測試全過。這確認了重構本身是行為保持一致的——`min_evidence=0.0`
+時跟修 scorer 洩漏後的狀態功能上完全等價，可以放心作為啟用真正
+`min_evidence` 門檻之前的安全基準。
+
 ### P2 — 效能（real-time 主張）
 - 30-episode 全量兩次獨立測得 pipeline FPS 1.41–1.47，控制迴圈中位數
   ~480–710ms；目標 ≥5 FPS（優於論文的 RTX 3060 9.86 FPS 需在 12GB
