@@ -74,6 +74,12 @@ class NavAgent:
         self.scorer = scorer
         self.verifier = verifier
         self.profiler = profiler or Profiler()
+        # Debug hook: if set, called with (frame, dets) every keyframe right
+        # after the detections that feed object_layer.update() are computed
+        # -- lets diagnostics observe exactly what the scene graph is built
+        # from without duplicating the keyframe-timing logic. None by default
+        # (zero cost, never called).
+        self.on_keyframe_detections = None
 
         self.costmap = Costmap2D(resolution=cfg.mapping.resolution_m)
         self.frontier_extractor = FrontierExtractor(
@@ -328,6 +334,8 @@ class NavAgent:
         self._kf_count += 1
         with self.profiler.timeit("detector"):
             dets = self.detector.detect(frame.rgb)
+        if self.on_keyframe_detections is not None:
+            self.on_keyframe_detections(frame, dets)
         with self.profiler.timeit("object_layer"):
             self.object_layer.update(frame, dets)
         self.keyframes.add(frame)

@@ -98,13 +98,33 @@ def _majority_category(mask: np.ndarray, sem_ids: np.ndarray, by_semid: dict) ->
     return obj.category.name() if obj is not None else f"id{top}"
 
 
+def _save_annotated_frame(path: Path, rgb: np.ndarray, det, label_suffix: str) -> None:
+    """Full frame (not just the crop) with the detection's bbox + label
+    drawn on it, so a reviewer can see where in the room it fired and what
+    else is visible around it -- a tight crop alone loses that context."""
+    import cv2
+
+    img = np.ascontiguousarray(rgb[..., ::-1])  # rgb -> bgr for cv2
+    x1, y1, x2, y2 = det.bbox_xyxy.astype(int)
+    cv2.rectangle(img, (x1, y1), (x2, y2), (0, 0, 255), 2)
+    text = f"{det.label} {det.score:.2f} ({label_suffix})"
+    (tw, th), _ = cv2.getTextSize(text, cv2.FONT_HERSHEY_SIMPLEX, 0.6, 2)
+    ty = max(y1, th + 6)
+    cv2.rectangle(img, (x1, ty - th - 6), (x1 + tw + 4, ty + 2), (0, 0, 255), -1)
+    cv2.putText(img, text, (x1 + 2, ty - 2), cv2.FONT_HERSHEY_SIMPLEX, 0.6, (255, 255, 255), 2)
+    cv2.imwrite(str(path), img)
+
+
 def classify_frame(
     sem_ids: np.ndarray, goal_ids: set, cat_ids: set, dets, target: str, iou_hit=0.1,
     by_semid: dict | None = None, dump_dir: Optional[Path] = None, dump_prefix: str = "",
+    full_frame_rgb: Optional[np.ndarray] = None,
 ):
     """Returns (verdict, iou_or_None, centroid_offset_px_or_None). If dump_dir
     is given, saves the crop + a majority-ground-truth-category label for any
-    FP-hallucination detection (what the detector actually saw instead)."""
+    FP-hallucination detection (what the detector actually saw instead). If
+    full_frame_rgb is also given, additionally saves the full frame with the
+    detection's bbox/label drawn on it (see _save_annotated_frame)."""
     gt_goal_mask = np.isin(sem_ids, list(goal_ids)) if goal_ids else np.zeros_like(sem_ids, dtype=bool)
     gt_cat_mask = np.isin(sem_ids, list(cat_ids)) if cat_ids else np.zeros_like(sem_ids, dtype=bool)
     matches = [d for d in dets if _normalize(d.label) == _normalize(target)]
@@ -132,6 +152,11 @@ def classify_frame(
 
             fname = dump_dir / f"{dump_prefix}_TP-{target}_iou{best_iou:.2f}_score{best_det.score:.2f}.png"
             cv2.imwrite(str(fname), best_det.crop[..., ::-1])
+            if full_frame_rgb is not None:
+                _save_annotated_frame(
+                    dump_dir / f"{dump_prefix}_TP-{target}_FULLFRAME.png",
+                    full_frame_rgb, best_det, f"iou{best_iou:.2f}",
+                )
         return "TP", best_iou, offset
     if any((d.mask & gt_cat_mask).any() for d in matches):
         return "FP-wrong-instance", best_iou, None
@@ -142,6 +167,11 @@ def classify_frame(
         import cv2
 
         cv2.imwrite(str(fname), best_det.crop[..., ::-1])  # rgb -> bgr for cv2
+        if full_frame_rgb is not None:
+            _save_annotated_frame(
+                dump_dir / f"{dump_prefix}_actual-{actual.replace(' ', '-')}_FULLFRAME.png",
+                full_frame_rgb, best_det, f"actual={actual}",
+            )
     return "FP-hallucination", best_iou, None
 
 
