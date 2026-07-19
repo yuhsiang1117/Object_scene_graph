@@ -73,7 +73,12 @@ class SceneGraphConfig:
     assoc_depth_gate_m: float = 0.5
     room_seg_every_kf: int = 10
     room_min_radius_m: float = 0.9
-    room_door_width_m: float = 1.2
+    # 1.2 caused universal 1-room collapse on real HM3D scans: the merge
+    # condition is clearance > door_width_m/2, so a wider value RAISES the
+    # threshold and preserves more boundaries. 2.0 is where a 10-episode
+    # sweep on real explored costmaps saturates (matches the measured
+    # 0.85m/0.934m boundary clearances in the multi-room episodes).
+    room_door_width_m: float = 2.0
     # Node-creation quality gate (P1h/orphan-node follow-up): a real diagnostic
     # run showed ~228 tracks/episode with 36% never re-observed and 49% never
     # reaching min_obs_for_refine -- most of the scene graph's memory was

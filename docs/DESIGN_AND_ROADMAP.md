@@ -910,6 +910,105 @@ min_evidence=1.0   SR=0.100  SPL=0.0452
 SPL 有實質、可重現的改善。**結論：`min_evidence=1.0` 保留，這是一個
 有具體機制證據支持、通過複數次獨立重跑驗證的正向改動**。
 
+### P1j — 房間上下文驗證（room-context verification）：分割 bug 修復，但真實資料證偽（2026-07-19/20）
+
+**動機**：`TargetVerifier.verify()`（[verifier.py](../src/osg/verification/verifier.py)）
+只送一張裁切圖 + 目標類別名稱給 VLM，完全沒有場景上下文。而 frontier
+評分早就在用 `to_prompt_text(sg)` 把整個 scene graph（含房間標籤）塞給
+LLM（見本文件稍早的 VLM 輸入說明）。想法：驗證時如果也告訴 VLM「這個
+物件在地圖標記的哪個房間」，能不能利用房間類型（例如「浴室裡的白色
+陶瓷物體更可能是馬桶」）幫忙消歧義、壓低誤判率？
+
+**第一輪：`tests/fixtures/verify_bench` 手工標注房間，理想化 A/B**
+（`scripts/verify_bench.py` 的 24 張固定裁切圖沒有記錄原始房間位置，
+所以手動依每張圖的 `note` 欄位標出「這張圖實際會在哪個房間」，作為
+上限估計)：
+
+```
+baseline（不加房間上下文）  accuracy=0.750  precision=0.857  recall=0.800
+with 手工房間標籤           accuracy=0.900  precision=1.000  recall=0.867
+```
+
+兩個誤判全部修正：`bed_04_mislabeled_sofa_c.jpg`（真的是沙發，被告知
+房間是「客廳」後正確拒絕）、`chair_02_garbage_sliver.jpg`（沒有椅子，
+告知「走廊」後正確拒絕）。方向正向，但這個測試的前提是**每個候選都
+能拿到準確、有區分力的房間名稱**——這正是要驗證的假設。
+
+**第二輪：發現房間切割普遍崩潰成 1 個房間**——用
+`scripts/export_room_structure.py` 檢查 ep7/toilet 的分割過程，發現
+watershed 找到 3 個候選子區域，但 `_merge_open_boundaries()`
+（[room_seg.py:65-95](../src/osg/mapping/room_seg.py)）把邊界 clearance
+0.85m 跟 0.934m 都判定為「比門寬」而合併，最終只剩 1 個房間。擴大到
+12 個真實 episode 直接跑正式 pipeline（房間切割 + LLM 房間標記都不
+修改，原封不動）驗證：**12/12 episode 房間切割全部收斂成 1 個房間**，
+19 次驗證事件裡只有 5 次曾經拿到任何房間標籤，而且同一個 episode 裡
+所有候選（包含 7 個散落在 3.2m~9.5m 外的誤判)全部拿到同一個標籤——
+房間上下文在目前的切割演算法下沒有任何區分力。
+
+**根因與修正方向的推導**：合併條件是
+`clearance > door_width_m/2.0`（[room_seg.py:91](../src/osg/mapping/room_seg.py)）。
+調小 `door_width_m` 會**降低**這個門檻，讓合併條件更容易成立、
+merge 更多——方向跟直覺相反。要減少過度合併，必須**調大**
+`door_width_m`，讓門檻升高。
+
+**掃描驗證（10 episode，重用同一份已探索完的 costmap，換參數重新
+分割，不必重跑模擬)**：
+
+| door_width_m | 1.2（原值） | 1.5 | 1.8 | 2.0 | 2.5 | 3.0 |
+|---|---|---|---|---|---|---|
+| 平均房間數 | 1.00 | 1.00 | 1.30 | **1.40** | 1.40 | 1.40 |
+| 多房間比例 | 0% | 0% | 30% | **30%** | 30% | 30% |
+
+`2.0` 是效果飽和點（之後到 3.0 完全不變)，且跟 ep7 實測的邊界
+clearance（0.85m、0.934m）吻合：threshold=door_width_m/2 要 >0.934
+才能同時保留兩條邊界，2.0（threshold=1.0）剛好是第一個滿足的整數值。
+**採用 `room_door_width_m: 1.2 → 2.0`**
+（[config.py:76](../src/osg/core/config.py)，已提交)。
+
+**第三輪：用修正後的分割重跑真實 A/B，樣本從 12 集加大到 30 集
+（hm3d_val_mini 全量)**：
+
+```
+baseline（不加房間上下文，全部 32 筆可比）
+  accuracy=0.781  precision=0.722  recall=0.867  (TP=13 FP=5 FN=2 TN=12)
+
+with 真實房間標籤（僅 10/32=31% 事件有標籤可用）
+  accuracy=0.700  precision=0.000  recall=0.000  (TP=0 FP=1 FN=2 TN=7)
+```
+
+分割品質確實改善了（多房間 episode 0/12→4/30，`ep7/toilet` 第一次
+出現真正有區分力的雙標籤 `['bedroom','living room']`)，但驗證準確率
+沒有跟著提升，逐筆比對是**兩好兩壞、淨值打平甚至略負**：
+
+| 修好的 | 弄壞的 |
+|---|---|
+| `ep5/bed` track302（gt=False，7.2m 外)：baseline 誤收→with_room 正確拒絕 | `ep3/sofa` track109（gt=False，6.8m 外，room='bedroom')：baseline 正確拒絕→with_room 誤收 |
+| `ep7/sofa` track61（gt=False，2.2m 外)：baseline 誤收→with_room 正確拒絕 | `ep9/chair` track58（**gt=True**，0.7m，room='bedroom')：baseline 正確收下→with_room 誤拒 |
+
+`ep9/chair` 這筆特別值得注意：真正的椅子被標成在「臥室」之後，VLM
+反而更容易拒絕它——疑似房間刻板印象偏見（"臥室不太會有椅子"）壓過
+視覺證據，這是跟分割品質無關的**新副作用**。
+
+**額外發現：LLM 房間標記本身有明顯偏置**——統計 30 個 episode 的
+`room.label`（[llm_scorer.py:40-61](../src/osg/exploration/llm_scorer.py)
+`label_rooms()`)，`bedroom` 出現約 11 次、`bathroom` 3 次、
+`living room` 2 次、`kitchen` 1 次，嚴重失衡。這解釋了為什麼即使
+幾何分割修好、同一 episode 出現 2 個房間，這 2 個房間也常常被貼上
+**同一個**字（`ep3/sofa` 的兩個幾何上不同的房間都被標成 "bedroom"）
+——第一輪手工標注測試「每個候選都有準確、有區分力的房間名稱」這個
+前提，在真實系統裡幾乎不成立。
+
+**結論：房間上下文驗證這個點子沒有在真實 pipeline 上驗證通過，
+暫緩實作**。想法本身在理想化資料上成立（0.750→0.900)，但依賴兩個
+獨立、都不小的真實問題：(1) 分割修完後仍有 87%（26/30) episode 只有
+1 個房間（多半是探索範圍本身就沒跨出一個房間，不完全是分割演算法
+的錯)，(2) LLM 房間標記的 "bedroom" 偏置讓「不同房間拿到不同標籤」
+這個前提很少成立。要讓這個功能真的有用，兩者都要先解決，工作量比
+原本設想的大。`room_door_width_m=2.0` 本身作為分割品質修正**獨立
+成立、予以保留**——即使房間上下文驗證用不上，更準確的房間切割對
+scene graph 的其他消費者（frontier 評分的 `_frontier_text()`、
+`to_prompt_text()`）仍有價值。
+
 ### P2 — 效能（real-time 主張）
 - 30-episode 全量兩次獨立測得 pipeline FPS 1.41–1.47，控制迴圈中位數
   ~480–710ms；目標 ≥5 FPS（優於論文的 RTX 3060 9.86 FPS 需在 12GB
