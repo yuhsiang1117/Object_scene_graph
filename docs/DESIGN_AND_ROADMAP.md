@@ -1105,6 +1105,89 @@ production**——會是對唯一 ground truth 的退步。若未來要重啟,�
 牆帶偵測),但那已超出低成本調整範圍,且效益上限受限於「no_peaks
 主要影響的是本該單一房間的小場景」這個事實。
 
+### P1k — NVIDIA NIM 雲端 VLM 後端（2026-07-21）
+
+**動機**：本地 Ollama 的 qwen2.5vl 驗證器又慢（P2 記錄的單次 ~33s 瓶頸）
+又受 6GB VRAM 限制。試把 VLM 換成 NVIDIA NIM（build.nvidia.com）hosted
+API——OpenAI 相容，理論上只是 `base_url`/`api_key`/`model` 的 config 換法。
+
+**90b 不可用**：使用者指定的 `meta/llama-3.2-90b-vision-instruct` 在公開
+NIM 端點對圖像請求**逾時 150s+**（連 11KB 小圖都回不來），實測不可用
+（金鑰/連線/文字模型都正常，8b 文字 <1s；純粹是這個大 vision 模型未
+部署可用實例）。改用同家族的 **11b**（~0.7s 正常）。
+
+**verify_bench A/B（24 張標註 crop）——明確正面**：
+
+| 模型 | accuracy | precision | recall | 每次延遲 |
+|---|---|---|---|---|
+| **NIM meta/llama-3.2-11b-vision** | **0.850** | 0.833 | **1.000** | ~0.7s |
+| 本地 qwen2.5vl:7b | 0.750 / 0.781 | 0.846 | 0.733 | ~33s |
+
+NIM 11b **同時更準（+0.10 accuracy）又快 ~40 倍**，且 recall=1.000（從不
+誤拒真目標——對 ObjectNav 最關鍵，誤拒會把真目標加黑名單、直接結束
+episode）。失敗模式偏「太容易說 yes」（3 個 FP：garbage sliver 當 chair、
+2 個 mislabeled sofa 當 bed）。
+
+**json mode 相容性（實作關鍵）**：NIM **文字**模型 `response_format=
+json_object` 正常；**視覺**模型在該模式下回傳畸形 JSON（把訊息結構
+echo 回來）。解法：視覺路徑不送 `response_format`、改從純文字 extract
+JSON（文字 scorer 也照樣能解析）。
+
+**Productionize（已提交）**：
+- `ChatClient` 加 `send_response_format` 旗標（預設 True，向後相容），
+  串到 [config.py](../src/osg/core/config.py) `LLMConfig` 與
+  `build_scorer`/`build_verifier`（[runner.py](../src/osg/eval/runner.py)）。
+- `configs/llm/nim.yaml`：base_url、`${oc.env:NVIDIA_API_KEY}`、text
+  `llama-3.1-8b-instruct`、vlm `llama-3.2-11b-vision-instruct`、
+  `send_response_format: false`。
+- `configs/verification/nim.yaml`：verifier vision model（verifier 讀
+  `verification` group，不是 `llm`）。
+- 用法：`python scripts/run_eval.py llm=nim verification=nim exploration=llm_text`
+  （需 `.env` 的 `NVIDIA_API_KEY`；金鑰只在 gitignored `.env`，未進 commit）。
+- 68 個 non-gpu 測試全過；production build path 端到端驗證通過。
+
+**完整 30-episode SR（`llm=nim verification=nim exploration=llm_text`）**：
+
+```
+NIM pipeline (30 ep)   SR=0.067 (2/30)   SPL=0.0371   llm_errors=2
+本地 qwen 基準 (30 ep)  SR=0.100–0.133    SPL=0.027–0.070
+```
+
+成功 2 集：`ep1/chair`（spl 0.366）、`ep2/tv_monitor`（spl 0.747）。
+**NIM 整合穩定**：整輪只有 2 次 llm_error（幾乎沒被 rate-limit），
+SPL 0.0371 落在本地基準範圍內，SR 0.067 略低於基準（2 vs 3–4 次成功——
+差 1–2 集，在 n=30 高變異下不構成統計退步）。
+
+**最值得注意的訊號：4 個「近失手」**——`ep10/chair`（dtg=0.109）、
+`ep6/chair`（dtg=0.121）、`ep9/chair`（dtg=0.159）、`ep7/sofa`（dtg=0.151）
+都走到距目標 ~0.11–0.16m（實際已到位）卻 success=0。若這 4 集轉成功，
+SR 會是 6/30=0.20，反而高於基準。這代表**NIM pipeline 導航到目標的能力
+沒問題，SR 的損失發生在終端 STOP 轉換，不是 VLM 品質**：
+- verifier 全程沒誤拒（recall=1.0 維持），失敗不是驗證造成。
+- 這批近失手吻合本文件 P1a/P1f 記錄的**終端停位/可見性脆弱性**（HM3D
+  success 要求 STOP 姿態能看見物件，2D 視線會被桌高遮擋物擋到；停在
+  viewpoint set 外 ~0.12m 就失敗）。`ep10/chair` 本地曾以完全相同的
+  dtg=0.109 steps=310 成功，這裡同軌跡卻失敗——高度懷疑是 `llm_text`
+  探索路徑（vs 基準的 `vlm`）造成終端停位些微不同，跨過了那條脆弱的
+  成功門檻。
+
+**對照的兩個不可比因素（誠實標註）**：(1) exploration 模式不同
+（NIM 這輪 `llm_text` 純文字評分 vs 基準 `vlm` 影像評分）；(2) SR/SPL 在
+n=30、僅 2–4 次成功的低樣本下天生高變異（本文件多處記錄，換 1–2 集就
+腰斬/翻倍）。因此這輪的定位是**端到端整合 + 穩定性 + 延遲驗證**，SR 作
+參考、非統計結論。要對 SR 下定論需 (a) 用相同 `exploration=vlm` 重跑、
+(b) 更大 episode 數。
+
+**注意的坑（未來若擴大用 NIM）**：`TargetVerifier.verify()` 在例外時
+**fail-open（回 True）**——若 NIM 被 rate-limit 大量 429，會變成「無條件
+接受所有候選」而非拒絕，可能灌爆 false positive。這輪只有 2 次 error 故
+影響可忽略，但高併發/大規模跑前應加退避重試或把 fail-open 改成可設定。
+
+**總結**：NIM 後端整合成功且有價值——verify_bench 明確更準更快
+（0.850 vs 0.750、~40x），端到端穩定跑通，30-ep SR/SPL 與本地基準同量級
+（差異落在已知的終端停位脆弱性與 exploration 模式，非 VLM 品質）。作為
+可選後端保留（`llm=nim verification=nim`）。
+
 ### P2 — 效能（real-time 主張）
 - 30-episode 全量兩次獨立測得 pipeline FPS 1.41–1.47，控制迴圈中位數
   ~480–710ms；目標 ≥5 FPS（優於論文的 RTX 3060 9.86 FPS 需在 12GB
