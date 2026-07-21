@@ -1217,6 +1217,58 @@ SR=0.067 (2/30)   SPL=0.0371   llm_calls=22   llm_errors=22  (100% 失敗)
 11b 單圖限制。作為可選後端保留（`llm=nim verification=nim`；影像評分場景
 需 `exploration=llm_text` 或單圖模型）。
 
+### P1L — 單樓層乾淨對照（2026-07-21/22）
+
+**動機**：本系統的 scene graph 是 2D（costmap + watershed room-seg），
+**無法表示樓梯/多樓層**。量測全部 36 個 HM3D val 場景（`scripts/`
+未提交診斷，用目標 viewpoint 垂直分布判樓層）：**只有 10 個單樓層**、
+15 個雙層、9 個三層、1 個四層。**關鍵：預設 `val_mini` 的兩個場景
+（wcojb4TFT35、TEEsavR23oF）都是雙層**——所以本文件先前所有 SR/SPL
+（含 P1i baseline、P1k NIM）都在多樓層場景上量的，本身就有 confound
+（地圖把兩層樓疊成一個平面）。新增 `configs/eval/hm3d_val_single_floor.yaml`
+（`EvalConfig.content_scenes` → habitat `ds.content_scenes`）限定那 10 個
+單樓層場景（279 episodes）。
+
+**單樓層 30-ep 重跑（各自 30 集）**：
+
+```
+本地 (exploration=vlm, verify qwen7b)   SR=0.167 (5/30)  SPL=0.0421
+NIM  (exploration=llm_text, verify 11b)  SR=0.067 (2/30)  SPL=0.0226  llm_err=1
+```
+
+**先修正一個 apples-to-apples 陷阱**：Habitat 的 episode 迭代在兩次跑
+之間**不完全確定性**（num_episodes=30 的切點落在不同場景邊界），兩輪
+實際各有 2 集不同（本地多了 `ep27/tv_monitor` 這個成功集、NIM 沒跑到）。
+在**共同的 28 集**上重新計算才是乾淨對照：
+
+```
+                     shared 28-ep
+本地 (vlm scoring)    SR=0.143 (4/28)  SPL=0.0355
+NIM  (llm_text)       SR=0.071 (2/28)  SPL=0.0242
+```
+
+**兩個結論**：
+1. **限定單樓層確實拉高 SR**（本地 0.143–0.167 vs 多樓層基準 0.100–0.133）
+   ——符合預期：地圖現在能完整表示可導航空間，不再被跨樓層污染。這是
+   乾淨、方向明確的 headline。
+2. **共同 28 集上本地（0.143）領先 NIM（0.071）2 集**，但**不是乾淨的
+   「NIM vs 本地後端」對照**——這兩輪同時差了三件事：後端（本地/NIM）、
+   驗證器（qwen7b/llama-11b）、**scorer 模型與模態（qwen3b 影像 vs
+   llama-8b 純文字）**。NIM 被自己的單圖限制逼成 text-only frontier 評分。
+   逐集看差異來源：`ep5/plant`（本地 dtg 0.07 成功 / NIM 0.22 近失手）是
+   終端停位抖動；`ep10/chair`（本地 0.02 成功 / **NIM 5.48 差很遠**）是
+   **探索路徑分岔**——NIM 的純文字 scorer 探索到完全不同的地方。所以
+   NIM 落後主要來自被迫 text-only 探索 + 終端抖動，**不是驗證品質**
+   （verify_bench 上 NIM 反而更準）。
+
+n=28、僅 2 個單樓層場景（5cdEh9F2hJL + svBbv1Pavdk）、2–4 次成功，高變異，
+換 1–2 集就翻。要下 SR 定論需跑完整 279 集單樓層集（本地約 6 小時/輪）。
+
+**踩到的坑（已記錄）**：從本地跑切到 NIM 跑時 CUDA OOM——`_unload_ollama_models`
+在 `base_url=NIM` 時 POST 到 nvidia host、**不會卸載本地 ollama** 的模型，
+6GB GPU 被前一輪 ollama 佔著 4.2GB，NIM 跑的 YOLOE detector 塞不下。手動
+`curl keep_alive=0` 卸載後才能跑。未來要無縫切換後端應在 runner 裡處理。
+
 ### P2 — 效能（real-time 主張）
 - 30-episode 全量兩次獨立測得 pipeline FPS 1.41–1.47，控制迴圈中位數
   ~480–710ms；目標 ≥5 FPS（優於論文的 RTX 3060 9.86 FPS 需在 12GB
