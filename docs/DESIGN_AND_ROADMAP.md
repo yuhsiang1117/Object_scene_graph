@@ -1183,10 +1183,39 @@ n=30、僅 2–4 次成功的低樣本下天生高變異（本文件多處記錄
 接受所有候選」而非拒絕，可能灌爆 false positive。這輪只有 2 次 error 故
 影響可忽略，但高併發/大規模跑前應加退避重試或把 fail-open 改成可設定。
 
+**apples-to-apples 嘗試（`exploration=vlm`，匹配基準的影像 frontier 評分）
+——揭露一個整合限制 + 一個 pipeline 洞察（2026-07-21）**：改用預設的
+`vlm` scorer（跟本地基準同模式）重跑 30-ep，想做乾淨對照，結果：
+
+```
+SR=0.067 (2/30)   SPL=0.0371   llm_calls=22   llm_errors=22  (100% 失敗)
+```
+
+**22/22 scoring 呼叫全部 HTTP 400 失敗**，錯誤訊息：
+`"At most 1 image(s) may be provided in one prompt"`——**NIM llama-3.2-11b-vision
+每個 prompt 只收 1 張圖**，而 `VLMScorer` 一次送最多 `max_frontiers_per_call=4`
+張（每個 frontier 一張）。所以這輪的**影像 frontier 評分實際完全沒運作**，
+退回無評分 fallback，不是有效的 apples-to-apples。
+
+**但結果跟前一輪 `llm_text` 逐位元組完全相同**（SR 0.067、同樣成功
+`ep1/chair`+`ep2/tv_monitor`、同樣 4 個近失手 `ep10/ep6/ep9/ep7`、SPL 同值）
+——這反而是個有價值的洞察：**在這 30 個 episode 上，frontier LLM 評分
+（NIM 文字、或完全失效無評分）幾乎不改變結果**，SR 由終端 STOP 行為與
+幾何主導，不是由 frontier 評分決定。也再次佐證前一輪「近失手」的診斷：
+問題在終端停位，不在探索評分或 VLM 品質。
+
+**限制與可行性**：要在 NIM 11b 上真正跑影像 frontier 評分，得設
+`max_frontiers_per_call=1`（每次 1 張圖），但那會退化成「每個 throttle
+週期只評 1 個 frontier」的稀疏模式，跟基準的 4-frontier 批次評分不同量級，
+且依上面的洞察大概率不改變 SR。真正要多影像 frontier 評分需換用支援多圖
+的 NIM 模型。這也記錄成 NIM 整合的一個實務限制（驗證器單圖沒問題，
+多圖 frontier 評分才受限）。
+
 **總結**：NIM 後端整合成功且有價值——verify_bench 明確更準更快
 （0.850 vs 0.750、~40x），端到端穩定跑通，30-ep SR/SPL 與本地基準同量級
-（差異落在已知的終端停位脆弱性與 exploration 模式，非 VLM 品質）。作為
-可選後端保留（`llm=nim verification=nim`）。
+（差異落在已知的終端停位脆弱性，非 VLM 品質）；影像 frontier 評分受 NIM
+11b 單圖限制。作為可選後端保留（`llm=nim verification=nim`；影像評分場景
+需 `exploration=llm_text` 或單圖模型）。
 
 ### P2 — 效能（real-time 主張）
 - 30-episode 全量兩次獨立測得 pipeline FPS 1.41–1.47，控制迴圈中位數
