@@ -44,12 +44,17 @@ class ChatClient:
         api_key: str = "ollama",
         timeout_s: float = 60.0,
         max_image_px: int = 512,
+        send_response_format: bool = True,
     ) -> None:
         from openai import OpenAI
 
         self._client = OpenAI(base_url=base_url, api_key=api_key, timeout=timeout_s)
         self.model = model
         self.max_image_px = max_image_px
+        # When False, do not send response_format=json_object (some providers,
+        # e.g. NIM vision models, mangle their output in that mode); JSON is
+        # still parsed from the text reply below.
+        self.send_response_format = send_response_format
 
     def chat(
         self,
@@ -73,7 +78,7 @@ class ChatClient:
             {"role": "user", "content": content},
         ]
         kwargs = {}
-        if json_response:
+        if json_response and self.send_response_format:
             kwargs["response_format"] = {"type": "json_object"}
 
         last_err: Optional[Exception] = None

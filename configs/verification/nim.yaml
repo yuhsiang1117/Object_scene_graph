@@ -1,0 +1,9 @@
+defaults:
+  - base_on
+
+# Target verifier on NVIDIA NIM. Use together with `llm=nim` (which supplies
+# base_url / api_key and disables response_format for vision models). The 11B
+# vision model scored 0.850 on verify_bench (precision 0.833, recall 1.000)
+# vs the local qwen2.5vl:7b baseline 0.750, at ~40x lower per-call latency.
+enabled: true
+vlm_model: meta/llama-3.2-11b-vision-instruct

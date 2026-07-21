@@ -127,6 +127,10 @@ class LLMConfig:
     vlm_model: str = "qwen2.5vl:3b"
     timeout_s: float = 120.0
     max_image_px: int = 512
+    # Some OpenAI-compatible providers (e.g. NVIDIA NIM vision models) return
+    # malformed output when sent response_format=json_object; setting this false
+    # omits that param and parses the JSON out of the plain-text reply instead.
+    send_response_format: bool = True
 
 
 @dataclass

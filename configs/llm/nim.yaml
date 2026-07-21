@@ -1,0 +1,16 @@
+defaults:
+  - base_ollama
+
+# NVIDIA NIM (build.nvidia.com) — OpenAI-compatible hosted inference.
+# Pair with `verification=nim` so the target verifier also uses the hosted
+# vision model. Needs NVIDIA_API_KEY in the environment (e.g. from .env).
+#
+# Note: on the public NIM endpoint the 90B vision model times out; the 11B
+# sibling responds in <1s and scored 0.850 on verify_bench (vs local qwen
+# 0.750). Vision models mangle their output under response_format=json_object,
+# so send_response_format is disabled and JSON is parsed from the text reply.
+base_url: https://integrate.api.nvidia.com/v1
+api_key: ${oc.env:NVIDIA_API_KEY,missing}
+text_model: meta/llama-3.1-8b-instruct
+vlm_model: meta/llama-3.2-11b-vision-instruct
+send_response_format: false

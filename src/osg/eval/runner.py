@@ -33,14 +33,14 @@ def build_scorer(cfg) -> AsyncScorer:
     elif name == "llm_text":
         client = ChatClient(
             cfg.llm.base_url, cfg.llm.text_model, cfg.llm.api_key,
-            cfg.llm.timeout_s, cfg.llm.max_image_px,
+            cfg.llm.timeout_s, cfg.llm.max_image_px, cfg.llm.send_response_format,
         )
         inner = LLMTextScorer(client, cfg.exploration.subgraph_radius_m,
                               cfg.exploration.max_frontiers_per_call)
     elif name == "vlm":
         client = ChatClient(
             cfg.llm.base_url, cfg.llm.vlm_model, cfg.llm.api_key,
-            cfg.llm.timeout_s, cfg.llm.max_image_px,
+            cfg.llm.timeout_s, cfg.llm.max_image_px, cfg.llm.send_response_format,
         )
         inner = VLMScorer(client, cfg.exploration.subgraph_radius_m,
                           cfg.exploration.max_frontiers_per_call,
@@ -76,6 +76,7 @@ def build_verifier(cfg) -> Optional[TargetVerifier]:
         # Verification is the one blocking VLM call: use a longer timeout
         # (partial CPU offload) and small images.
         max(cfg.llm.timeout_s, 240.0), min(cfg.llm.max_image_px, 256),
+        cfg.llm.send_response_format,
     )
     debug_dir = str(Path(cfg.output_dir) / "verify_debug")
     return TargetVerifier(vlm, cfg.verification.accept_confidence, debug_dir=debug_dir)
