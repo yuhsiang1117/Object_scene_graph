@@ -34,6 +34,11 @@ def make_objectnav_config(cfg):
         ds.split = cfg.eval.split
         ds.data_path = cfg.eval.episodes_path.replace("{split}", cfg.eval.split)
         ds.scenes_dir = cfg.eval.scenes_dir
+        # Restrict to specific scenes (e.g. single-floor only: the 2D costmap /
+        # room-seg scene graph cannot handle stairs). Default ["*"] = all.
+        content_scenes = getattr(cfg.eval, "content_scenes", None)
+        if content_scenes:
+            ds.content_scenes = list(content_scenes)
 
         agent = sim.agents.main_agent
         agent.sim_sensors.rgb_sensor.width = cfg.eval.rgb_width

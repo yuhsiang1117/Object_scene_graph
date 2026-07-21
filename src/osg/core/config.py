@@ -175,6 +175,9 @@ class EvalConfig:
     scenes_dir: str = "data/scene_datasets/"
     num_episodes: int = -1  # -1 = all
     episode_ids: Optional[List[str]] = None
+    # Restrict the eval to specific scene ids (None/["*"] = all). Used by the
+    # single-floor preset since the 2D scene graph cannot represent stairs.
+    content_scenes: Optional[List[str]] = None
     save_viz: bool = True
     rgb_width: int = 640
     rgb_height: int = 480
