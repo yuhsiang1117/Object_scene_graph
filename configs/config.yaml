@@ -4,7 +4,7 @@ defaults:
   - detector: yoloe_small   # 6GB VRAM profile; switch to `yoloe` on >=12GB
   - scene_graph: default
   - exploration: vlm
-  - llm: ollama
+  - llm: nim            # NVIDIA NIM (needs NVIDIA_API_KEY); override llm=ollama for local
   - verification: "on"
   - eval: hm3d_val_mini
   - _self_
