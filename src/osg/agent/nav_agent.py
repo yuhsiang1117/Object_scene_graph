@@ -94,6 +94,7 @@ class NavAgent:
         self.object_layer = ObjectLayer(
             assoc_score_thresh=cfg.scene_graph.assoc_score_thresh,
             assoc_depth_gate_m=cfg.scene_graph.assoc_depth_gate_m,
+            assoc_category_gate=cfg.scene_graph.assoc_category_gate,
             min_obs_for_refine=cfg.scene_graph.min_obs_for_refine,
             refine_every=cfg.scene_graph.refine_every,
             link_dist_m=cfg.scene_graph.link_dist_m,
@@ -290,14 +291,6 @@ class NavAgent:
           the deadline.
         """
         agent_xy = frame.camera_position[list(PLANE)]
-        # Old terminal behavior (ObjectSceneGraph_old): navigate to the object
-        # goal and declare reached once within the success distance -- no VLM
-        # verification, no bbox/visibility approach.
-        if self._target_obj_xy is not None:
-            if np.linalg.norm(agent_xy - self._target_obj_xy) <= self.cfg.agent.success_distance:
-                self.state = State.DONE
-                self.approach_stop_reason = "reached"
-                return STOP_ACTION
         det = self._best_target_detection(frame)
 
         if det is not None:
@@ -472,12 +465,10 @@ class NavAgent:
         self._candidate_id = track.id
         obj_xy = self.object_layer.center_of(track)[list(PLANE)]
 
-        if self.verifier is None:
-            # Verification disabled (paper baseline): head straight for it,
-            # using the same visibility-driven stop as the verified path.
-            self._start_approach(obj_xy)
-            return
-
+        # Always pre-position at a viewpoint from which the object is visible
+        # before approaching -- HM3D success requires stopping at such a pose,
+        # not merely near the object's 3D center. When verification is off the
+        # VERIFYING state simply skips the VLM call (see _do_verification).
         view_xy = self.viewpoint_planner.approach_viewpoint(obj_xy, self.costmap)
         if view_xy is None:
             return  # not yet observable from mapped space; keep exploring
@@ -520,7 +511,12 @@ class NavAgent:
             self._goto_deadline = self.step_count + 60
             return self._follow_path(frame) or TURN_ACTION
         with self.profiler.timeit("verification"):
-            accepted = self.verifier.verify(track, self.target, live_view=frame.rgb)
+            # verification off (old-fidelity mode): accept without a VLM call and
+            # go straight to the visibility-driven bbox approach.
+            accepted = (
+                True if self.verifier is None
+                else self.verifier.verify(track, self.target, live_view=frame.rgb)
+            )
         if accepted:
             obj_xy = self.object_layer.center_of(track)[list(PLANE)]
             self._start_approach(obj_xy)

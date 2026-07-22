@@ -71,16 +71,27 @@ def test_different_pose_redetection_gets_full_evidence(intrinsics):
     assert tracks[0].evidence == pytest.approx(0.8 + 0.8)  # both full weight
 
 
-def test_different_label_merges_without_category_gate(intrinsics):
-    """Ported VOOM Wasserstein matcher has NO category-label check
-    (category_gate=False, the default): a co-located detection of a different
-    label associates to the existing track (keeping the first label)."""
+def test_different_label_new_track(intrinsics):
+    """Default ObjectLayer uses category_gate=True (needed for SR eval): a
+    co-located detection of a different label does NOT merge -- it starts its
+    own track, so labels stay separate."""
     frame = make_frame(intrinsics, np.eye(4), depth_value=3.0)
     layer = ObjectLayer()
     layer.update(frame, [_det("chair", (320, 240), (60, 40))])
     frame2 = make_frame(intrinsics, np.eye(4), depth_value=3.0, frame_id=1)
     layer.update(frame2, [_det("table", (320, 240), (60, 40))])
-    assert len(layer.tracks()) == 1  # merged, not two tracks
+    assert sorted(t.label for t in layer.tracks()) == ["chair", "table"]
+
+
+def test_no_category_gate_merges_different_label(intrinsics):
+    """With category_gate=False (old VOOM fidelity) a co-located different-label
+    detection associates to the existing track (keeping the first label)."""
+    associator = DataAssociator(category_gate=False)
+    e = Ellipsoid(center=np.array([0.0, 0.0, 3.0]), axes=np.array([0.4, 0.3, 0.35]), R=np.eye(3))
+    track = ObjectTrack(id=0, label="chair", ellipsoid=e)
+    frame = make_frame(intrinsics, np.eye(4), depth_value=3.0)
+    det = _det("table", (320, 240), (60, 40))
+    assert associator.associate([det], frame, [track]) == [(0, 0)]
 
 
 def test_category_gate_keeps_labels_separate(intrinsics):

@@ -71,6 +71,11 @@ class SceneGraphConfig:
     near_edge_dist_m: float = 1.5
     assoc_score_thresh: float = 0.4
     assoc_depth_gate_m: float = 0.5
+    # Wasserstein data association requires the detection label to match the
+    # track label. The ported VOOM matcher had no label check, but for SR eval
+    # (navigate to a target CATEGORY) cross-category merges corrupt labels and
+    # starve target candidates -- so gate on category by default.
+    assoc_category_gate: bool = True
     room_seg_every_kf: int = 10
     room_min_radius_m: float = 0.9
     # 1.2 caused universal 1-room collapse on real HM3D scans: the merge

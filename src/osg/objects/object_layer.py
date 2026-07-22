@@ -21,6 +21,7 @@ class ObjectLayer:
         self,
         assoc_score_thresh: float = 0.4,
         assoc_depth_gate_m: float = 0.5,
+        assoc_category_gate: bool = True,
         min_obs_for_refine: int = 3,
         refine_every: int = 3,
         link_dist_m: float = 1.0,
@@ -32,7 +33,9 @@ class ObjectLayer:
     ) -> None:
         self._tracks: Dict[int, ObjectTrack] = {}
         self._next_id = 0
-        self._associator = DataAssociator(assoc_score_thresh, assoc_depth_gate_m)
+        self._associator = DataAssociator(
+            assoc_score_thresh, assoc_depth_gate_m, category_gate=assoc_category_gate
+        )
         self._refiner = WassersteinRefiner()
         self.min_obs_for_refine = min_obs_for_refine
         self.refine_every = refine_every
