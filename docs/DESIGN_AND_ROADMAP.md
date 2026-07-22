@@ -1269,6 +1269,39 @@ n=28、僅 2 個單樓層場景（5cdEh9F2hJL + svBbv1Pavdk）、2–4 次成功
 6GB GPU 被前一輪 ollama 佔著 4.2GB，NIM 跑的 YOLOE detector 塞不下。手動
 `curl keep_alive=0` 卸載後才能跑。未來要無縫切換後端應在 runner 裡處理。
 
+### P1M — old-algorithm swap 的 SR 復原（2026-07-22）
+
+把感知/探索/導航演算法換成 ObjectSceneGraph_old 的方法後（Wasserstein 關聯、
+morphological room-seg、WFD frontier、GVG Voronoi 導航、old 終端無 VLM 驗證；
+保留 YOLOE），pipeline 跑通但單樓層 SR=0/15。逐集分類（state_log + stop_reason）：
+10/15 從未成為候選（Mode A），5/15 進了 approach 卻停在 2–4m 外（Mode B）。
+
+**三步復原到 SR 0.200（同一批 15 集單樓層）**：
+
+```
+old-algo swap              SR 0/15  (0.000)
++ category_gate + viewpoint SR 1/15  (0.067)
++ 放寬候選門檻              SR 3/15  (0.200)   <- 超過現行演算法基準 0.167
+```
+
+1. **category_gate**（`assoc_category_gate=True`）：ported Wasserstein matcher 原本
+   無標籤檢查，跨類別關聯把目標類別偵測吸進別類 track、永遠不成候選
+   （`candidates()` 要求 `label==target`）。開 category gate 後修復——例如
+   ep12/sofa 從「站在 0.03m 卻不是候選」變成 dtg 0.23m 的 bbox-approach。
+2. **viewpoint 定位**：`_check_candidates` 一律先導航到「能看到物件的 viewpoint」
+   再做 bbox-approach（HM3D success 要求停在能見到物件的姿態，不是靠近 3D 中心
+   ——P0-P1 的教訓）；`_do_verification` 在無 verifier 時跳過 VLM 呼叫。把 ep3/sofa
+   轉成成功（dtg 0.01）。
+3. **放寬候選門檻**（只在 `verification=off` preset：min_bbox_px 3000→1200、
+   min_obs 3→2、min_evidence 1.0→0.5、min_score 0.45→0.35）：無 VLM 驗證時候選門檻
+   是唯一過濾器，嚴門檻擋掉遠處小物件（plant/sofa/tv）。放寬後 ep18/plant（原 Mode A）、
+   ep15/bed 都成功；approach 從 5→8/15，只多 1 個誤判 approach（ep27/bed 停 5m 外）。
+   門檻只改 `verification=off`，`verification=on`（現行演算法基準）維持嚴門檻不受影響。
+
+意義：**old 演算法在同一 Python harness、單樓層上做到 SR 0.200，略高於現行演算法
+的 0.167**——但 n=15、僅 2 場景、3 次成功，高變異，是方向性結果非統計定論。
+剩餘失敗仍以「探索沒走到目標」為主（ep8/sofa、ep23/sofa dtg 5–8m）。
+
 ### P2 — 效能（real-time 主張）
 - 30-episode 全量兩次獨立測得 pipeline FPS 1.41–1.47，控制迴圈中位數
   ~480–710ms；目標 ≥5 FPS（優於論文的 RTX 3060 9.86 FPS 需在 12GB
