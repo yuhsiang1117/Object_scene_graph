@@ -27,11 +27,18 @@ import numpy as np
 from osg.agent.nav_agent import STOP_ACTION, NavAgent, State
 from osg.core.types import CameraIntrinsics, Detection
 from osg.exploration.async_scorer import AsyncScorer
-from osg.exploration.scorer import NearestScorer
+from osg.exploration.scorer import FrontierScorer
 from osg.mapping.costmap import FREE, OCCUPIED, UNKNOWN
 from osg.perception.detector import StubDetector
 
 from .conftest import make_camera, make_frame
+
+
+class _StubScorer(FrontierScorer):
+    """Deterministic no-LLM scorer for tests (all frontiers equally promising)."""
+
+    def score(self, frontiers, sg, target, keyframes=None):
+        return {f.id: 1.0 for f in frontiers}
 
 APPROACH_BBOX_THRESHOLD = 40_000.0
 _INTRINSICS = CameraIntrinsics(fx=320.0, fy=320.0, cx=320.0, cy=240.0, width=640, height=480)
@@ -73,7 +80,7 @@ def make_cfg(**agent_overrides) -> types.SimpleNamespace:
 
 
 def make_agent(cfg=None, target="chair") -> NavAgent:
-    agent = NavAgent(cfg or make_cfg(), StubDetector(), AsyncScorer(NearestScorer()), None, target)
+    agent = NavAgent(cfg or make_cfg(), StubDetector(), AsyncScorer(_StubScorer()), None, target)
     agent.costmap.grid[:, :] = FREE
     return agent
 

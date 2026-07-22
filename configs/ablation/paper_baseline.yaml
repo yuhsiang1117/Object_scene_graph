@@ -1,8 +1,0 @@
-# @package _global_
-# Paper configuration: text-only LLM frontier scoring, no verification
-defaults:
-  - override /exploration: llm_text
-  - override /verification: "off"
-
-agent:
-  success_distance: 0.13

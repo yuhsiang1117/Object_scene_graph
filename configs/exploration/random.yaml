@@ -1,4 +1,0 @@
-defaults:
-  - base_vlm
-
-scorer: random

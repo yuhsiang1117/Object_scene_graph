@@ -1,5 +1,0 @@
-# @package _global_
-# No LLM at all: nearest-frontier exploration (paper's "Without LLM" ablation)
-defaults:
-  - override /exploration: nearest
-  - override /verification: "off"

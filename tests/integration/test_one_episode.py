@@ -30,7 +30,11 @@ def test_one_episode_runs():
     from osg.agent.nav_agent import NavAgent
     from osg.core.config import register_configs
     from osg.exploration.async_scorer import AsyncScorer
-    from osg.exploration.scorer import NearestScorer
+    from osg.exploration.scorer import FrontierScorer
+
+    class _StubScorer(FrontierScorer):
+        def score(self, frontiers, sg, target, keyframes=None):
+            return {f.id: 1.0 for f in frontiers}
     from osg.perception.detector import StubDetector
     from osg.sim.habitat_env import HabitatObjectNavEnv
 
@@ -47,7 +51,7 @@ def test_one_episode_runs():
     agent = NavAgent(
         cfg,
         detector=StubDetector(),
-        scorer=AsyncScorer(NearestScorer()),
+        scorer=AsyncScorer(_StubScorer()),
         verifier=None,
         target_category=env.target_category(),
     )

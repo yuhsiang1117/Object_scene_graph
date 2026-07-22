@@ -15,38 +15,21 @@ from ..agent.nav_agent import NavAgent
 from ..core.profiler import Profiler
 from ..exploration.async_scorer import AsyncScorer
 from ..exploration.llm_scorer import LLMTextScorer
-from ..exploration.scorer import NearestScorer, RandomScorer
-from ..exploration.vlm_scorer import VLMScorer
 from ..llm.client import ChatClient
 from ..mapping.costmap import PLANE
-from ..verification.verifier import TargetVerifier
 from .metrics import aggregate, per_category
 from .visualize import save_topdown
 
 
 def build_scorer(cfg) -> AsyncScorer:
-    name = cfg.exploration.scorer
-    if name == "random":
-        inner = RandomScorer(seed=cfg.seed)
-    elif name == "nearest":
-        inner = NearestScorer()
-    elif name == "llm_text":
-        client = ChatClient(
-            cfg.llm.base_url, cfg.llm.text_model, cfg.llm.api_key,
-            cfg.llm.timeout_s, cfg.llm.max_image_px, cfg.llm.send_response_format,
-        )
-        inner = LLMTextScorer(client, cfg.exploration.subgraph_radius_m,
-                              cfg.exploration.max_frontiers_per_call)
-    elif name == "vlm":
-        client = ChatClient(
-            cfg.llm.base_url, cfg.llm.vlm_model, cfg.llm.api_key,
-            cfg.llm.timeout_s, cfg.llm.max_image_px, cfg.llm.send_response_format,
-        )
-        inner = VLMScorer(client, cfg.exploration.subgraph_radius_m,
-                          cfg.exploration.max_frontiers_per_call,
-                          cfg.exploration.images_per_frontier)
-    else:
-        raise ValueError(f"unknown scorer: {name}")
+    # Old-algorithm pipeline: text-LLM frontier ranking over the scene-graph
+    # subgraphs (ObjectSceneGraph_old frontiers_ranking).
+    client = ChatClient(
+        cfg.llm.base_url, cfg.llm.text_model, cfg.llm.api_key,
+        cfg.llm.timeout_s, cfg.llm.max_image_px, cfg.llm.send_response_format,
+    )
+    inner = LLMTextScorer(client, cfg.exploration.subgraph_radius_m,
+                          cfg.exploration.max_frontiers_per_call)
     return AsyncScorer(inner)
 
 
@@ -66,20 +49,6 @@ def build_detector(cfg):
 
         return StubDetector()
     raise ValueError(f"unknown detector: {cfg.detector.name}")
-
-
-def build_verifier(cfg) -> Optional[TargetVerifier]:
-    if not cfg.verification.enabled:
-        return None
-    vlm = ChatClient(
-        cfg.llm.base_url, cfg.verification.vlm_model, cfg.llm.api_key,
-        # Verification is the one blocking VLM call: use a longer timeout
-        # (partial CPU offload) and small images.
-        max(cfg.llm.timeout_s, 240.0), min(cfg.llm.max_image_px, 256),
-        cfg.llm.send_response_format,
-    )
-    debug_dir = str(Path(cfg.output_dir) / "verify_debug")
-    return TargetVerifier(vlm, cfg.verification.accept_confidence, debug_dir=debug_dir)
 
 
 def _unload_ollama_models(cfg) -> None:
@@ -120,7 +89,7 @@ def run_eval(cfg) -> dict:
     env = HabitatObjectNavEnv(cfg)
     detector = build_detector(cfg)
     scorer = build_scorer(cfg)
-    verifier = build_verifier(cfg)
+    verifier = None  # old-algorithm terminal: viewpoint pre-positioning + bbox stop, no VLM verify
 
     n_total = len(env.env.episodes)
     n_run = n_total if cfg.eval.num_episodes < 0 else min(cfg.eval.num_episodes, n_total)
@@ -143,8 +112,6 @@ def run_eval(cfg) -> dict:
         # would show the whole run's running total instead of its own.
         llm_calls_before, llm_errors_before = scorer.n_calls, scorer.n_errors
         llm_last_error_before = scorer.last_error
-        verify_calls_before = verifier.n_calls if verifier is not None else 0
-        verify_rej_before = verifier.n_rejections if verifier is not None else 0
 
         # frontier.id/room.id both restart from 0/1 each episode (fresh
         # FrontierExtractor/RoomSegmenter per NavAgent below), but the
@@ -191,9 +158,6 @@ def run_eval(cfg) -> dict:
             "approach_stop_reason": agent.approach_stop_reason,
             "final_xy": [float(x) for x in trajectory[-1]],
         }
-        if verifier is not None:
-            rec["verify_calls"] = verifier.n_calls - verify_calls_before
-            rec["verify_rejections"] = verifier.n_rejections - verify_rej_before
         results.append(rec)
         with open(episodes_file, "a") as f:
             f.write(json.dumps(rec) + "\n")

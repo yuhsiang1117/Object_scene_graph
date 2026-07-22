@@ -1,8 +1,0 @@
-defaults:
-  - base_ollama
-
-# Cloud swap: any OpenAI-compatible endpoint
-base_url: https://api.openai.com/v1
-api_key: ${oc.env:OPENAI_API_KEY,missing}
-text_model: gpt-4o-mini
-vlm_model: gpt-4o-mini

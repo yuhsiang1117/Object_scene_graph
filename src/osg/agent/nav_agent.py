@@ -42,7 +42,6 @@ from ..perception.keyframe import KeyframeSelector, KeyframeStore
 from ..planning.controller import WaypointController
 from ..planning.planner import PlanResult
 from ..planning.voronoi_planner import HybridVoronoiPlanner
-from ..verification.verifier import TargetVerifier
 from ..verification.viewpoint import ViewpointPlanner
 
 STOP_ACTION = "stop"
@@ -65,7 +64,7 @@ class NavAgent:
         cfg,
         detector: Detector,
         scorer: AsyncScorer,
-        verifier: Optional[TargetVerifier],
+        verifier,  # always None in old-algorithm mode (no VLM verifier); kept for call-site compat
         target_category: str,
         keyframe_dir: Optional[str] = None,
         profiler: Optional[Profiler] = None,
