@@ -202,7 +202,12 @@ def test_stops_at_deadline():
     assert agent.approach_stop_reason == "deadline"
 
 
-def test_stops_when_goal_unreachable():
+def test_navigates_toward_vicinity_when_goal_cell_blocked():
+    """GVG Voronoi navigation (ported from old) approaches a goal whose exact
+    cell is blocked to its reachable medial-axis vicinity (a node within
+    goal_near) instead of declaring the goal unreachable -- so it returns a
+    navigation action; the stop then comes from the distance / step-budget
+    rules, exercised by the other approach tests."""
     agent = make_agent()
     goal = np.array([5.0, 0.0])
     rc = agent.costmap.world_to_grid(goal)
@@ -210,13 +215,10 @@ def test_stops_when_goal_unreachable():
     agent.state = State.APPROACH
     agent._goal_xy = goal
     agent._approach_steps_left = 5
-    agent.detector.push([])  # never visible; falls through to the advance branch
+    agent.detector.push([])
 
     action = agent._do_approach(_frame([0.0, 0.0]))
-
-    assert action == STOP_ACTION
-    assert agent.state == State.DONE
-    assert agent.approach_stop_reason == "path_consumed"
+    assert action in ("move_forward", "turn_left", "turn_right")  # navigating, not crashed
 
 
 def _carve_free_square(agent, half_width_cells=20):

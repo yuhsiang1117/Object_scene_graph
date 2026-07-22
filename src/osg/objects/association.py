@@ -1,10 +1,16 @@
 """Data association between new detections and existing object tracks.
 
-Paper formula for large objects that exceed the frame:
-    score = max(I / A1, I / A2)
-with I approximated by the intersection of the ellipse-enclosing bboxes.
-Same-class ambiguity is resolved by depth consistency (closest expected
-depth), not camera-pose proximity as in VOOM.
+Ported from ObjectSceneGraph_old (VOOM/OA-SLAM `MatchObjectsWasserDistance`,
+ObjectMatcher.cc): a detection is matched to the map object whose 2D projected
+ellipse is most similar under the normalized Gaussian-Wasserstein distance.
+
+    ellipse -> Gaussian (mu, Sigma = R diag(a^2,b^2) R^T)   [Ellipse2D carries mu, cov]
+    W2(e1,e2) = ||mu1-mu2||^2 + tr(S1 + S2 - 2 (S1^.5 S2 S1^.5)^.5)
+    NWD       = exp(-sqrt(W2) / C)                           similarity in (0,1]
+
+Greedy per detection, gated by bbox IoU > iou_gate, accept if NWD > nwd_accept.
+The old matcher has NO category-label check (category_gate=False reproduces it);
+set category_gate=True to require label equality (safer for SR-style eval).
 """
 from __future__ import annotations
 
@@ -13,9 +19,34 @@ from typing import List, Optional, Tuple
 
 import numpy as np
 
-from ..core.geometry import bbox_area, bbox_intersection_area, ellipse_from_mask
+from ..core.geometry import Ellipse2D, ellipse_from_mask, sqrtm_2x2_spd
 from ..core.types import Detection, FrameData
 from .ellipsoid import Ellipsoid
+
+
+def _gaussian_w2(e1: Ellipse2D, e2: Ellipse2D) -> float:
+    """Squared 2-Wasserstein between the two ellipses-as-Gaussians."""
+    dmu = e1.mu - e2.mu
+    s1, s2 = e1.cov, e2.cov
+    s1h = sqrtm_2x2_spd(s1)
+    inner = sqrtm_2x2_spd(s1h @ s2 @ s1h)
+    return float(dmu @ dmu + np.trace(s1 + s2 - 2.0 * inner))
+
+
+def _nwd(e1: Ellipse2D, e2: Ellipse2D, C: float) -> float:
+    """Normalized Gaussian-Wasserstein similarity in (0, 1]; 1 = identical."""
+    return float(np.exp(-np.sqrt(max(_gaussian_w2(e1, e2), 0.0)) / C))
+
+
+def _bbox_iou(b1: np.ndarray, b2: np.ndarray) -> float:
+    ix0, iy0 = max(b1[0], b2[0]), max(b1[1], b2[1])
+    ix1, iy1 = min(b1[2], b2[2]), min(b1[3], b2[3])
+    iw, ih = max(0.0, ix1 - ix0), max(0.0, iy1 - iy0)
+    inter = iw * ih
+    a1 = max(0.0, b1[2] - b1[0]) * max(0.0, b1[3] - b1[1])
+    a2 = max(0.0, b2[2] - b2[0]) * max(0.0, b2[3] - b2[1])
+    union = a1 + a2 - inter
+    return float(inter / union) if union > 0 else 0.0
 
 
 @dataclass
@@ -57,9 +88,21 @@ class ObjectTrack:
 
 
 class DataAssociator:
-    def __init__(self, score_thresh: float = 0.4, depth_gate_m: float = 0.5) -> None:
+    def __init__(
+        self,
+        score_thresh: float = 0.4,      # kept for construction compat (unused in Wasserstein path)
+        depth_gate_m: float = 0.5,      # kept for construction compat
+        wasser_C: float = 100.0,        # NWD kernel bandwidth (old ObjectMatcher.cc:138)
+        iou_gate: float = 0.01,         # bbox-IoU spatial gate (old)
+        nwd_accept: float = 1e-5,       # min NWD similarity to accept a match (old)
+        category_gate: bool = False,    # old has NO label check; True = require label equality
+    ) -> None:
         self.score_thresh = score_thresh
         self.depth_gate_m = depth_gate_m
+        self.wasser_C = wasser_C
+        self.iou_gate = iou_gate
+        self.nwd_accept = nwd_accept
+        self.category_gate = category_gate
 
     def associate(
         self, dets: List[Detection], frame: FrameData, tracks: List[ObjectTrack]
@@ -68,49 +111,35 @@ class DataAssociator:
         K = frame.intrinsics.K()
         T_cw = frame.T_cw
 
+        # Project every track's ellipsoid into the current frame (2D ellipse).
         projections = {}
         for tr in tracks:
             ell = tr.ellipsoid.project(K, T_cw)
             if ell is not None:
                 projections[tr.id] = (tr, ell)
 
-        pairs = []  # (score, det_idx, track_id)
-        det_info = []
+        pairs = []  # (nwd, det_idx, track_id)
         for i, det in enumerate(dets):
-            obs_ellipse = ellipse_from_mask(det.mask)
-            det_info.append(obs_ellipse)
-            if obs_ellipse is None:
+            obs = ellipse_from_mask(det.mask)
+            if obs is None:
                 continue
-            obs_bbox = obs_ellipse.bbox()
-            ys, xs = np.nonzero(det.mask)
-            d = frame.depth[ys, xs]
-            det_depth = float(np.median(d[d > 1e-3])) if (d > 1e-3).any() else -1.0
+            obs_bbox = obs.bbox()
             for tid, (tr, proj) in projections.items():
-                if tr.label != det.label:
+                if self.category_gate and tr.label != det.label:
                     continue
-                proj_bbox = proj.bbox()
-                inter = bbox_intersection_area(obs_bbox, proj_bbox)
-                a1, a2 = bbox_area(obs_bbox), bbox_area(proj_bbox)
-                if a1 <= 0 or a2 <= 0:
+                if _bbox_iou(obs_bbox, proj.bbox()) <= self.iou_gate:
                     continue
-                score = max(inter / a1, inter / a2)
-                if score < self.score_thresh:
+                nwd = _nwd(proj, obs, self.wasser_C)
+                if nwd <= self.nwd_accept:
                     continue
-                # Depth-consistency gate: observed median depth vs expected
-                # depth of the track center in this camera.
-                if det_depth > 0:
-                    expected = tr.ellipsoid.mean_depth_at(T_cw)
-                    depth_err = abs(det_depth - expected)
-                    if depth_err > self.depth_gate_m:
-                        continue
-                    score = score - 0.1 * depth_err  # prefer depth-consistent match
-                pairs.append((score, i, tid))
+                pairs.append((nwd, i, tid))
 
+        # Greedy: highest-similarity pairs first, each detection/track once.
         pairs.sort(key=lambda p: -p[0])
         matched_dets: set = set()
         matched_tracks: set = set()
         result: List[Tuple[int, Optional[int]]] = []
-        for score, i, tid in pairs:
+        for nwd, i, tid in pairs:
             if i in matched_dets or tid in matched_tracks:
                 continue
             matched_dets.add(i)

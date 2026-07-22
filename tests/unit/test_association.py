@@ -71,25 +71,37 @@ def test_different_pose_redetection_gets_full_evidence(intrinsics):
     assert tracks[0].evidence == pytest.approx(0.8 + 0.8)  # both full weight
 
 
-def test_different_label_new_track(intrinsics):
+def test_different_label_merges_without_category_gate(intrinsics):
+    """Ported VOOM Wasserstein matcher has NO category-label check
+    (category_gate=False, the default): a co-located detection of a different
+    label associates to the existing track (keeping the first label)."""
     frame = make_frame(intrinsics, np.eye(4), depth_value=3.0)
     layer = ObjectLayer()
     layer.update(frame, [_det("chair", (320, 240), (60, 40))])
     frame2 = make_frame(intrinsics, np.eye(4), depth_value=3.0, frame_id=1)
     layer.update(frame2, [_det("table", (320, 240), (60, 40))])
-    labels = sorted(t.label for t in layer.tracks())
-    assert labels == ["chair", "table"]
+    assert len(layer.tracks()) == 1  # merged, not two tracks
 
 
-def test_depth_gate_rejects(intrinsics):
-    """Same image position but very different depth -> separate objects."""
-    associator = DataAssociator(depth_gate_m=0.5)
+def test_category_gate_keeps_labels_separate(intrinsics):
+    """With category_gate=True the label check is restored."""
+    associator = DataAssociator(category_gate=True)
+    e = Ellipsoid(center=np.array([0.0, 0.0, 3.0]), axes=np.array([0.4, 0.3, 0.35]), R=np.eye(3))
+    track = ObjectTrack(id=0, label="chair", ellipsoid=e)
+    frame = make_frame(intrinsics, np.eye(4), depth_value=3.0)
+    det = _det("table", (320, 240), (60, 40))
+    assert associator.associate([det], frame, [track]) == [(0, None)]
+
+
+def test_no_depth_gate_associates_by_projection(intrinsics):
+    """Wasserstein association is on the 2D projected vs detection ellipse only
+    -- no depth gate -- so a co-located detection associates regardless of depth."""
+    associator = DataAssociator()
     e = Ellipsoid(center=np.array([0.0, 0.0, 3.0]), axes=np.array([0.4, 0.3, 0.35]), R=np.eye(3))
     track = ObjectTrack(id=0, label="chair", ellipsoid=e)
     frame = make_frame(intrinsics, np.eye(4), depth_value=6.0)  # twice as far
-    det = _det("chair", (320, 240), (30, 20))
-    matches = associator.associate([det], frame, [track])
-    assert matches == [(0, None)]
+    det = _det("chair", (320, 240), (60, 40))
+    assert associator.associate([det], frame, [track]) == [(0, 0)]
 
 
 def test_candidates_filtering(intrinsics):

@@ -40,7 +40,8 @@ from ..objects.object_layer import ObjectLayer
 from ..perception.detector import Detector
 from ..perception.keyframe import KeyframeSelector, KeyframeStore
 from ..planning.controller import WaypointController
-from ..planning.planner import AStarPlanner, PlanResult
+from ..planning.planner import PlanResult
+from ..planning.voronoi_planner import HybridVoronoiPlanner
 from ..verification.verifier import TargetVerifier
 from ..verification.viewpoint import ViewpointPlanner
 
@@ -106,8 +107,13 @@ class NavAgent:
         self.kf_selector = KeyframeSelector(
             cfg.scene_graph.keyframe_trans_m, cfg.scene_graph.keyframe_rot_deg
         )
-        self.planner = AStarPlanner(
-            inflate_radius_m=cfg.agent.agent_radius + cfg.mapping.inflate_margin_m
+        # GVG Voronoi (medial-axis) navigation ported from ObjectSceneGraph_old,
+        # with a grid-A* fallback for early/tiny maps (single planner so frontier
+        # selection and path planning both get the fallback).
+        self.planner = HybridVoronoiPlanner(
+            collision_m=cfg.agent.agent_radius + cfg.mapping.inflate_margin_m,
+            goal_near_m=getattr(cfg.exploration, "voronoi_goal_near_m", 0.7),
+            inflate_radius_m=cfg.agent.agent_radius + cfg.mapping.inflate_margin_m,
         )
         self.controller = WaypointController(forward_m=cfg.agent.forward_m)
         self.viewpoint_planner = ViewpointPlanner(list(cfg.verification.ring_radii_m))
@@ -131,6 +137,10 @@ class NavAgent:
         # Location-keyed blacklist: frontier ids are reassigned on every
         # extraction, so blocking must be spatial to persist. [(xy, until)]
         self._blocked_frontier_pts: list = []
+        # Centroid of the frontier the agent most recently gave up on: excluded
+        # from the "all frontiers blocked" fallback so the agent doesn't
+        # immediately re-pursue the dead-end it just abandoned.
+        self._last_giveup_pt: Optional[np.ndarray] = None
         self._candidate_id: Optional[int] = None
         self._goal_xy: Optional[np.ndarray] = None
         self._last_action: Optional[str] = None
@@ -223,6 +233,8 @@ class NavAgent:
                     ))
                     self._block_frontier(self._current_frontier, 100)
                     self.stats["frontier_give_up"] = self.stats.get("frontier_give_up", 0) + 1
+                    if self._current_frontier is not None:
+                        self._last_giveup_pt = self._current_frontier.centroid_xy.copy()
                     self._current_frontier = None
                     self._current_path = None
                     self.state = State.EXPLORE
@@ -278,6 +290,14 @@ class NavAgent:
           the deadline.
         """
         agent_xy = frame.camera_position[list(PLANE)]
+        # Old terminal behavior (ObjectSceneGraph_old): navigate to the object
+        # goal and declare reached once within the success distance -- no VLM
+        # verification, no bbox/visibility approach.
+        if self._target_obj_xy is not None:
+            if np.linalg.norm(agent_xy - self._target_obj_xy) <= self.cfg.agent.success_distance:
+                self.state = State.DONE
+                self.approach_stop_reason = "reached"
+                return STOP_ACTION
         det = self._best_target_detection(frame)
 
         if det is not None:
@@ -373,7 +393,9 @@ class NavAgent:
             return
         self._last_select_step = self.step_count
         with self.profiler.timeit("frontier_extract"):
-            frontiers = self.frontier_extractor.extract(self.costmap)
+            frontiers = self.frontier_extractor.extract(
+                self.costmap, frame.camera_position[list(PLANE)]
+            )
         if not frontiers:
             return
         # Async scoring request (never blocks); use whatever scores exist now
@@ -397,6 +419,26 @@ class NavAgent:
         by_id = {f.id: f for f in frontiers}
         for fid in failed:  # block only the candidates that actually failed
             self._block_frontier(by_id.get(fid), 50)
+        if best is None or best.path_cost is None:
+            # Every frontier was blocked (a give-up/plan-fail cascade in
+            # cluttered scenes leaves nothing selectable) -- rather than turn in
+            # place burning the step budget until blocks expire, fall back to the
+            # best path-reachable frontier ignoring blocks, excluding only the
+            # one just given up on. A frontier blocked from an earlier pose is
+            # often reachable now; if it re-stalls, give-up catches it again.
+            relaxed_blocked = set()
+            if self._last_giveup_pt is not None:
+                relaxed_blocked = {
+                    f.id for f in frontiers
+                    if np.linalg.norm(f.centroid_xy - self._last_giveup_pt) < 0.6
+                }
+            if len(relaxed_blocked) < len(frontiers):
+                best = select_frontier(
+                    frontiers, self.scorer.latest(), self.planner, self.costmap,
+                    agent_xy, unscored_prior=self.cfg.exploration.unscored_prior,
+                    min_path_cost_m=self.cfg.exploration.min_path_cost_m,
+                    top_n=self.cfg.exploration.top_n_frontiers, blocked=relaxed_blocked,
+                )
         if best is None or best.path_cost is None:
             self.stats["select_none"] += 1
             return

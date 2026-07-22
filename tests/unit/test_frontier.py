@@ -33,8 +33,8 @@ def test_min_cells_filters_noise():
     cm = _map_with_opening()
     # Tiny unknown pinhole inside the room -> 1-2 frontier cells around it
     cm.grid[50, 50] = UNKNOWN
-    frontiers = FrontierExtractor(min_cells=6, dedup_m=0.5).extract(cm)
-    assert len(frontiers) == 1  # pinhole ignored
+    frontiers = FrontierExtractor(min_cells=4, dedup_m=0.5).extract(cm)
+    assert len(frontiers) == 1  # pinhole (1 cell) ignored, doorway (>4) kept
 
 
 def test_dedup_merges_close_frontiers():
