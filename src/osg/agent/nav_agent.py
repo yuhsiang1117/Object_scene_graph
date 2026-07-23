@@ -141,6 +141,12 @@ class NavAgent:
         # from the "all frontiers blocked" fallback so the agent doesn't
         # immediately re-pursue the dead-end it just abandoned.
         self._last_giveup_pt: Optional[np.ndarray] = None
+        # A frontier is only genuinely "reached" if we end up within this of its
+        # goal. The controller reports None (arrived) whenever the planned path
+        # terminates within its arrival tolerance of the agent -- which also
+        # happens for a degenerate stub path when the frontier is unreachable
+        # (goal snapped to a nearby node). This threshold separates the two.
+        self._frontier_reach_m = 0.5
         self._candidate_id: Optional[int] = None
         self._goal_xy: Optional[np.ndarray] = None
         self._last_action: Optional[str] = None
@@ -579,6 +585,28 @@ class NavAgent:
         action = self.controller.act(frame.T_wc, self._current_path)
         if action is None:
             self._current_path = None
+            # Fix A: the controller returns None the moment the planned path
+            # ends within its arrival tolerance of the agent. When the planner
+            # hands back a degenerate stub path (goal snapped near the start
+            # because the real frontier is unreachable), that reads as a false
+            # "arrival": the FSM drops GOTO_FRONTIER->EXPLORE without blocking
+            # the frontier, so the same one is re-selected every cycle and the
+            # agent freezes in place (give-up never fires -- it only counts
+            # elapsed steps *inside* GOTO_FRONTIER, and the re-entry resets its
+            # timer). If we are still far from the frontier goal, this was not a
+            # real arrival: block the frontier so a different one is chosen next.
+            if (
+                self.state == State.GOTO_FRONTIER
+                and self._current_frontier is not None
+                and np.linalg.norm(frame.camera_position[list(PLANE)] - goal)
+                > self._frontier_reach_m
+            ):
+                self._block_frontier(self._current_frontier, 100)
+                # Also mark it as the last give-up point so the "all frontiers
+                # blocked" relaxed fallback (which deliberately ignores the
+                # blacklist) doesn't immediately re-pursue this same stub.
+                self._last_giveup_pt = self._current_frontier.centroid_xy.copy()
+                self.stats["frontier_stub_block"] = self.stats.get("frontier_stub_block", 0) + 1
         return action
 
     def _follow_to(self, frame: FrameData, goal_xy: np.ndarray) -> Optional[str]:
