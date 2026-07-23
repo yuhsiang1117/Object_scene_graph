@@ -226,8 +226,26 @@ class VoronoiPlanner(Planner):
                     best_path, best_len = p, L
             path_idx = best_path
         else:
+            # No skeleton node within goal_near_m of the goal: the goal is in a
+            # different medial-axis component than the robot (clearance erosion
+            # severed the passage, even though the free space is 4-connected).
+            # Navigating to the nearest in-component node then only makes sense
+            # if it gets the robot MEANINGFULLY closer to the goal; otherwise
+            # that node is ~= the robot's own cell and the "path" is a stub that
+            # reads as a false arrival (goal 1-3 m away, path ends at the start),
+            # freezing the agent. Require real progress; if there is none, fail
+            # so HybridVoronoiPlanner falls back to grid-A*, which routes through
+            # the full free grid and does reach these goals.
             goal_i = self._nearest(goal_rc, allowed=comp)
-            path_idx = self._astar(start_i, goal_i) if goal_i is not None else None
+            if goal_i is None:
+                self.last_failure = "no_goal_node"
+                return PlanResult(False)
+            start_to_goal = float(np.linalg.norm(start_rc - goal_rc))
+            node_to_goal = float(np.linalg.norm(self._nodes[goal_i] - goal_rc))
+            if node_to_goal > start_to_goal - near_c:
+                self.last_failure = "goal_unreachable_via_graph"
+                return PlanResult(False)
+            path_idx = self._astar(start_i, goal_i)
 
         if not path_idx:
             self.last_failure = "no_path"
