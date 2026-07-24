@@ -67,6 +67,11 @@ class SceneGraphConfig:
     keyframe_rot_deg: float = 30.0
     min_obs_for_refine: int = 3
     refine_every: int = 3
+    # Reject a Wasserstein refine that moves the ellipsoid centre further than
+    # this (m) from its pre-refine value -- the reprojection objective is
+    # parallax-limited and otherwise drifts the 3D centre metres under the
+    # narrow ObjectNav view arc (see analyze_refine_accuracy). 0 disables.
+    refine_max_center_move_m: float = 0.5
     link_dist_m: float = 1.0
     near_edge_dist_m: float = 1.5
     assoc_score_thresh: float = 0.4

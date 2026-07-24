@@ -52,8 +52,15 @@ def residuals(params: np.ndarray, observations: List[Observation]) -> np.ndarray
 
 
 class WassersteinRefiner:
-    def __init__(self, max_nfev: int = 50) -> None:
+    def __init__(self, max_nfev: int = 50, max_center_move_m: float = 0.5) -> None:
         self.max_nfev = max_nfev
+        # VOOM/OA-SLAM reject: the reprojection objective constrains depth only
+        # through parallax, so with the narrow view arc typical of ObjectNav a
+        # refine step can slide the centre metres along the ray while keeping 2D
+        # error low. Measured (analyze_refine_accuracy) that this degrades the
+        # 3D centre more often than it helps (+1..+5 m tails). Reject any refine
+        # that moves the centre further than this from its pre-refine value.
+        self.max_center_move_m = max_center_move_m
 
     def refine(self, track: ObjectTrack, max_obs: int = 10) -> Optional[Ellipsoid]:
         obs = track.observations[-max_obs:]  # bound the residual count
@@ -73,4 +80,8 @@ class WassersteinRefiner:
         refined = _ellipsoid_from(sol.x)
         if not np.isfinite(refined.center).all():
             return None
+        # Reject centre jumps the parallax can't justify (see __init__).
+        if self.max_center_move_m > 0.0:
+            if float(np.linalg.norm(refined.center - track.ellipsoid.center)) > self.max_center_move_m:
+                return None
         return refined

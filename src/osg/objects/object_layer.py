@@ -24,6 +24,7 @@ class ObjectLayer:
         assoc_category_gate: bool = True,
         min_obs_for_refine: int = 3,
         refine_every: int = 3,
+        refine_max_center_move_m: float = 0.5,
         link_dist_m: float = 1.0,
         min_det_score: float = 0.0,
         min_det_bbox_px: float = 0.0,
@@ -36,7 +37,7 @@ class ObjectLayer:
         self._associator = DataAssociator(
             assoc_score_thresh, assoc_depth_gate_m, category_gate=assoc_category_gate
         )
-        self._refiner = WassersteinRefiner()
+        self._refiner = WassersteinRefiner(max_center_move_m=refine_max_center_move_m)
         self.min_obs_for_refine = min_obs_for_refine
         self.refine_every = refine_every
         self.link_dist_m = link_dist_m

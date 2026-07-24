@@ -57,7 +57,8 @@ def make_cfg(**agent_overrides) -> types.SimpleNamespace:
         scene_graph=types.SimpleNamespace(
             room_min_radius_m=0.9, room_door_width_m=1.2,
             assoc_score_thresh=0.4, assoc_depth_gate_m=0.5, assoc_category_gate=True,
-            min_obs_for_refine=3, refine_every=3, link_dist_m=1.0,
+            min_obs_for_refine=3, refine_every=3, refine_max_center_move_m=0.5,
+            link_dist_m=1.0,
             keyframe_trans_m=0.25, keyframe_rot_deg=30.0, room_seg_every_kf=10,
             min_det_score=0.35, min_det_bbox_px=1500.0, confirm_baseline_m=0.0,
             repeat_view_discount=0.2,

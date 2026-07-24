@@ -96,6 +96,7 @@ class NavAgent:
             assoc_category_gate=cfg.scene_graph.assoc_category_gate,
             min_obs_for_refine=cfg.scene_graph.min_obs_for_refine,
             refine_every=cfg.scene_graph.refine_every,
+            refine_max_center_move_m=cfg.scene_graph.refine_max_center_move_m,
             link_dist_m=cfg.scene_graph.link_dist_m,
             min_det_score=cfg.scene_graph.min_det_score,
             min_det_bbox_px=cfg.scene_graph.min_det_bbox_px,
