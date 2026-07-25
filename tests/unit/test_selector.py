@@ -48,3 +48,19 @@ def test_unscored_prior_used():
     best = select_frontier([f_near, f_far], {}, planner, cm, np.array([0.0, 0.0]))
     assert best is not None  # prior lets selection proceed without LLM scores
     assert best.id == 1
+
+
+def test_info_gain_prefers_high_unknown_frontier():
+    from osg.mapping.costmap import UNKNOWN
+    cm, planner, f_near, f_far = _setup()
+    scores = {1: 0.5, 2: 0.5}
+    # Baseline (no info gain): equal score -> nearer frontier wins.
+    best = select_frontier([f_near, f_far], scores, planner, cm, np.array([0.0, 0.0]))
+    assert best.id == 1
+
+    # Make the area around the FAR frontier (x=4) unknown -> high info gain there.
+    rc = cm.world_to_grid(np.array([4.0, 0.0]))
+    cm.grid[rc[0] - 15:rc[0] + 15, rc[1] - 15:rc[1] + 15] = UNKNOWN
+    best = select_frontier([f_near, f_far], scores, planner, cm, np.array([0.0, 0.0]),
+                           info_gain_weight=5.0, info_gain_radius_m=1.0)
+    assert best.id == 2  # far frontier's large unknown area outweighs its distance

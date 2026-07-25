@@ -7,7 +7,7 @@ from typing import Dict, List, Optional, Set
 
 import numpy as np
 
-from ..mapping.costmap import Costmap2D
+from ..mapping.costmap import UNKNOWN, Costmap2D
 from ..mapping.frontier import Frontier
 from ..planning.planner import Planner
 
@@ -23,6 +23,22 @@ def frontier_goal_xy(f: Frontier, costmap: Costmap2D) -> np.ndarray:
     return cells_xy[int(np.argmin(d))]
 
 
+def _info_gains(frontiers, costmap: Costmap2D, radius_m: float) -> Dict[int, int]:
+    """Per-frontier unknown-area estimate: number of UNKNOWN costmap cells in a
+    square window of `radius_m` around each frontier centroid (a cheap proxy for
+    how much new space observing from there would reveal)."""
+    unknown = costmap.grid == UNKNOWN
+    h, w = unknown.shape
+    rad = max(1, int(radius_m / costmap.resolution))
+    out: Dict[int, int] = {}
+    for f in frontiers:
+        rc = costmap.world_to_grid(f.centroid_xy)
+        r0, r1 = max(0, rc[0] - rad), min(h, rc[0] + rad + 1)
+        c0, c1 = max(0, rc[1] - rad), min(w, rc[1] + rad + 1)
+        out[f.id] = int(unknown[r0:r1, c0:c1].sum())
+    return out
+
+
 def select_frontier(
     frontiers: List[Frontier],
     scores: Dict[int, float],
@@ -34,18 +50,31 @@ def select_frontier(
     top_n: int = 5,
     blocked: Optional[Set[int]] = None,
     failed_out: Optional[Set[int]] = None,
+    info_gain_weight: float = 0.0,
+    info_gain_radius_m: float = 2.5,
 ) -> Optional[Frontier]:
     """Best frontier by P_i / d_i among the top-N scored candidates.
     Candidates whose path planning failed are added to `failed_out` so the
     caller can block just those — blocking every frontier on one bad round
-    deadlocked exploration."""
+    deadlocked exploration.
+
+    Information gain: when `info_gain_weight > 0`, each frontier's score is
+    boosted by how much unknown area it exposes -- the count of UNKNOWN costmap
+    cells within `info_gain_radius_m` of the frontier, normalized against the
+    best candidate this round: score *= (1 + info_gain_weight * gain/gain_max).
+    Folding it in before the top-N cut makes exploration commit to frontiers
+    that open large unexplored regions instead of the nearest small one."""
     blocked = blocked or set()
     candidates = [f for f in frontiers if f.id not in blocked]
     if not candidates:
         return None
 
+    gain = _info_gains(candidates, costmap, info_gain_radius_m) if info_gain_weight > 0.0 else None
+    gmax = max(gain.values()) if gain else 0
     for f in candidates:
-        f.score = scores.get(f.id, unscored_prior)
+        base = scores.get(f.id, unscored_prior)
+        boost = 1.0 + info_gain_weight * (gain[f.id] / gmax) if (gain and gmax > 0) else 1.0
+        f.score = base * boost
     candidates.sort(key=lambda f: -(f.score or 0.0))
     candidates = candidates[:top_n]
 

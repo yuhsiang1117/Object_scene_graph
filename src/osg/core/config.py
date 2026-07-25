@@ -35,6 +35,14 @@ class AgentConfig:
     # borderline "object recognizable but distant" crop measured ~25k px^2
     # in verify_debug samples; this threshold asks for a noticeably closer
     # view than that before considering the approach complete).
+    # Terminal stop is primarily DEPTH-based: RGB-D gives the real metric range
+    # to the detected target, so we stop every object at the same distance
+    # regardless of its pixel size -- unlike a bbox-area threshold, which trips
+    # a 2 m sofa at ~2.6 m but a chair at ~1 m. Stop once the target's median
+    # mask depth falls to approach_stop_depth_m (agent is close and the object
+    # is visible -> inside the densely-tiled viewpoint region). bbox is only a
+    # fallback for when the mask has no valid depth.
+    approach_stop_depth_m: float = 1.0
     approach_stop_bbox_px: float = 40_000.0
     approach_max_steps: int = 12  # ~3 m of travel at forward_m=0.25
     # Tighter-than-default planner/controller stopping precision for the
@@ -127,6 +135,14 @@ class ExplorationConfig:
     max_frontiers_per_call: int = 4
     unscored_prior: float = 0.3
     min_path_cost_m: float = 0.5
+    # Information-gain weighting: boost frontiers that expose more unknown area
+    # (estimated as the count of UNKNOWN costmap cells within info_gain_radius_m
+    # of the frontier), so exploration commits to directions that open large
+    # unexplored regions instead of crawling the nearest small frontier. A
+    # frontier's score is multiplied by (1 + info_gain_weight * gain/gain_max),
+    # normalized against the best candidate each round. 0 weight disables it.
+    info_gain_weight: float = 2.0
+    info_gain_radius_m: float = 2.5
 
 
 @dataclass

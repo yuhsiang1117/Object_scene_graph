@@ -286,8 +286,11 @@ class NavAgent:
         """Walk toward the verified object while it stays visible.
 
         Every step re-runs the detector on the current pose:
-        - visible with a large-enough bbox -> close and in clear view, stop.
-        - visible but still small -> record this pose as good, advance one
+        - visible and within the target metric range (median mask depth <=
+          approach_stop_depth_m) -> close and in clear view, stop. Depth is the
+          primary signal (bbox area is object-size-dependent); bbox is a
+          fallback for when the mask carries no valid depth.
+        - visible but still too far -> record this pose as good, advance one
           more step toward the object.
         - not visible -> if a previous pose was confirmed visible, retreat
           there (a step just carried us behind an occluder the 2D costmap
@@ -303,14 +306,18 @@ class NavAgent:
             self._approach_last_good_xy = agent_xy.copy()
             x1, y1, x2, y2 = det.bbox_xyxy
             bbox_px = max(0.0, x2 - x1) * max(0.0, y2 - y1)
-            # Calibration data (P1c): approach_stop_bbox_px is one global
-            # threshold, but "close enough" bbox area plausibly differs a
-            # lot by object scale (sofa vs plant). Log every observed value
-            # so per-category thresholds can be derived from real episodes
-            # instead of guessed -- the project's repeated lesson this
-            # session is that guessed thresholds get corrected anyway.
-            self.approach_bbox_log.append((self.step_count, round(float(bbox_px), 1)))
-            if bbox_px >= self.cfg.agent.approach_stop_bbox_px:
+            depth = self._detection_depth(det, frame)
+            # Log (step, bbox_px, depth) for terminal calibration.
+            self.approach_bbox_log.append(
+                (self.step_count, round(float(bbox_px), 1),
+                 round(float(depth), 3) if depth is not None else None)
+            )
+            if depth is not None:
+                if depth <= self.cfg.agent.approach_stop_depth_m:
+                    self.state = State.DONE
+                    self.approach_stop_reason = "depth"
+                    return STOP_ACTION
+            elif bbox_px >= self.cfg.agent.approach_stop_bbox_px:  # fallback: no valid depth
                 self.state = State.DONE
                 self.approach_stop_reason = "bbox"
                 return STOP_ACTION
@@ -414,6 +421,8 @@ class NavAgent:
                 top_n=self.cfg.exploration.top_n_frontiers,
                 blocked=blocked,
                 failed_out=failed,
+                info_gain_weight=self.cfg.exploration.info_gain_weight,
+                info_gain_radius_m=self.cfg.exploration.info_gain_radius_m,
             )
         by_id = {f.id: f for f in frontiers}
         for fid in failed:  # block only the candidates that actually failed
@@ -437,6 +446,8 @@ class NavAgent:
                     agent_xy, unscored_prior=self.cfg.exploration.unscored_prior,
                     min_path_cost_m=self.cfg.exploration.min_path_cost_m,
                     top_n=self.cfg.exploration.top_n_frontiers, blocked=relaxed_blocked,
+                    info_gain_weight=self.cfg.exploration.info_gain_weight,
+                    info_gain_radius_m=self.cfg.exploration.info_gain_radius_m,
                 )
         if best is None or best.path_cost is None:
             self.stats["select_none"] += 1
@@ -559,6 +570,19 @@ class NavAgent:
     def _target_visible(self, frame: FrameData) -> bool:
         """Does the detector see the target category in the current view?"""
         return self._best_target_detection(frame) is not None
+
+    @staticmethod
+    def _detection_depth(det: Detection, frame: FrameData) -> Optional[float]:
+        """Median metric depth (m) over the detection's mask, using only valid
+        depth pixels; None if too few valid samples (mask off the depth range)."""
+        ys, xs = np.nonzero(det.mask)
+        if ys.size == 0:
+            return None
+        d = frame.depth[ys, xs]
+        valid = d > 1e-3
+        if int(valid.sum()) < 8:
+            return None
+        return float(np.median(d[valid]))
 
     def _plan_to(
         self, frame: FrameData, goal_xy: np.ndarray, goal_tolerance_m: Optional[float] = None

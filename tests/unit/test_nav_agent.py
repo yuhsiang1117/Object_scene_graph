@@ -53,6 +53,7 @@ def make_cfg(**agent_overrides) -> types.SimpleNamespace:
         exploration=types.SimpleNamespace(
             frontier_min_cells=8, frontier_dedup_m=1.0,
             unscored_prior=0.3, min_path_cost_m=0.5, top_n_frontiers=5,
+            info_gain_weight=2.0, info_gain_radius_m=2.5,
         ),
         scene_graph=types.SimpleNamespace(
             room_min_radius_m=0.9, room_door_width_m=1.2,
@@ -66,7 +67,7 @@ def make_cfg(**agent_overrides) -> types.SimpleNamespace:
         agent=types.SimpleNamespace(
             agent_radius=0.18, forward_m=0.25, turn_deg=30.0, initial_scan=False,
             camera_height=0.88, approach_stop_bbox_px=APPROACH_BBOX_THRESHOLD,
-            approach_max_steps=12,
+            approach_stop_depth_m=1.0, approach_max_steps=12,
             approach_goal_tolerance_m=0.12, approach_arrival_tol_m=0.1,
         ),
         verification=types.SimpleNamespace(
@@ -103,7 +104,8 @@ def _frame(xy, frame_id=0):
     return make_frame(_INTRINSICS, T, depth_value=100.0, frame_id=frame_id)
 
 
-def test_stops_when_bbox_large_enough():
+def test_bbox_fallback_stop_when_no_valid_depth():
+    # Empty mask (_det uses np.zeros) -> no valid depth -> bbox fallback fires.
     agent = make_agent()
     agent.state = State.APPROACH
     agent._goal_xy = np.array([5.0, 0.0])
@@ -115,7 +117,44 @@ def test_stops_when_bbox_large_enough():
     assert action == STOP_ACTION
     assert agent.state == State.DONE
     assert agent.approach_stop_reason == "bbox"
-    assert agent.approach_bbox_log == [(0, 90000.0)]  # calibration data for P1c
+    assert agent.approach_bbox_log == [(0, 90000.0, None)]  # (step, bbox_px, depth)
+
+
+def test_stops_when_within_depth_range():
+    # Primary terminal: target visible AND within approach_stop_depth_m (1.0 m).
+    agent = make_agent()
+    agent.state = State.APPROACH
+    agent._goal_xy = np.array([5.0, 0.0])
+    agent._approach_steps_left = 5
+    det = _det("chair", (50, 50))  # small bbox -- would NOT trip the bbox threshold
+    det.mask[100:200, 100:200] = True  # populate mask so depth is sampled
+    agent.detector.push([det])
+    frame = make_frame(_INTRINSICS, make_camera([0.0, 0.88, 0.0], [1.0, 0.88, 0.0]),
+                       depth_value=0.8)  # target 0.8 m away <= 1.0 m
+
+    action = agent._do_approach(frame)
+
+    assert action == STOP_ACTION
+    assert agent.state == State.DONE
+    assert agent.approach_stop_reason == "depth"
+
+
+def test_advances_when_visible_but_too_far_by_depth():
+    # Visible but beyond stop range -> keep advancing (bbox is large but depth rules).
+    agent = make_agent()
+    agent.state = State.APPROACH
+    agent._goal_xy = np.array([5.0, 0.0])
+    agent._approach_steps_left = 5
+    det = _det("chair", (300, 300))  # large bbox
+    det.mask[100:200, 100:200] = True
+    agent.detector.push([det])
+    frame = make_frame(_INTRINSICS, make_camera([0.0, 0.88, 0.0], [1.0, 0.88, 0.0]),
+                       depth_value=3.0)  # 3 m > 1.0 m stop range
+
+    action = agent._do_approach(frame)
+
+    assert action != STOP_ACTION
+    assert agent.state == State.APPROACH
 
 
 def test_advances_when_visible_but_small():
