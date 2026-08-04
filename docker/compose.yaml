@@ -1,19 +1,16 @@
 services:
   ollama:
     image: ollama/ollama:latest
+    container_name: ollama
     restart: unless-stopped
     environment:
       - OLLAMA_KEEP_ALIVE=30m
-      - OLLAMA_MAX_LOADED_MODELS=2  # 3b scoring + 7b verification coexist
-      - OLLAMA_CONTEXT_LENGTH=8192  # bounds the KV cache; 4 images @512px ~ 6k tokens
+      - OLLAMA_MAX_LOADED_MODELS=2  
+      - OLLAMA_CONTEXT_LENGTH=8192
     volumes:
       - ollama-models:/root/.ollama
     ports:
       - "11434:11434"
-    # GPU inference. On the 6 GB card this coexists with habitat+YOLOE
-    # (~1.4 GB) because the detector evicts its text encoder after startup;
-    # under VRAM pressure ollama partial-offloads to CPU instead of failing.
-    # (CPU-only inference was measured at >200 s per vision call — unusable.)
     deploy:
       resources:
         reservations:
@@ -24,30 +21,30 @@ services:
 
   nav:
     build:
-      context: .
+      context: ..
       dockerfile: docker/Dockerfile
+      args:
+        USER_UID: ${UID:-1000}
+        USER_GID: ${GID:-1000}
+    container_name: nav
+    runtime: nvidia
     depends_on:
       - ollama
     stdin_open: true
     tty: true
-    # Run as the host user so files written into the bind mount (outputs/,
-    # data/) are not root-owned on the host.
-    user: "1000:1000"
+    command: ["sleep", "infinity"]
+    user: "${UID:-1000}:${GID:-1000}"
     environment:
       - OLLAMA_HOST=http://ollama:11434
       - NVIDIA_DRIVER_CAPABILITIES=all
       - PYTORCH_CUDA_ALLOC_CONF=expandable_segments:True
       - HOME=/tmp
       - YOLO_CONFIG_DIR=/tmp/Ultralytics
+      - NVIDIA_API_KEY=${NVIDIA_API_KEY}
     volumes:
-      # The repo bind mount already covers ./data (gitignored). If your HM3D
-      # data lives outside the repo, add an explicit mount here, e.g.:
-      #   - /path/to/hm3d:/workspace/data/scene_datasets/hm3d:ro
-      # (note: a mount at that path breaks scripts/download_data.py, which
-      # needs to create a symlink there — mount only pre-downloaded data)
-      - .:/workspace
+      - ..:/workspace
       - weights-cache:/workspace/data/weights
-      - ./outputs:/workspace/outputs
+      - ../outputs:/workspace/outputs
     deploy:
       resources:
         reservations:
