@@ -9,6 +9,7 @@ data/
 .env
 *.npz
 *.pt
+mobileclip_blt.ts
 .vscode/
 .idea/
 .claude
