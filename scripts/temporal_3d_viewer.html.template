@@ -1,0 +1,352 @@
+<!DOCTYPE html><html lang="en"><head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>Scene graph — temporal 3D</title>
+</head><body>
+<!--ARTIFACT_CONTENT_START-->
+<style>
+  :root{
+    --bg:#080b0f; --bg2:#0b1016;
+    --panel:rgba(17,23,30,0.86); --panel-line:rgba(120,140,162,0.16);
+    --text:#d3dde8; --muted:#7f8ea1; --faint:#576475;
+    --accent:#ffb454; --accent-dim:#8a6a34;
+    --target:#ff5d8f; --object:#4fd6c9;
+    --mono:ui-monospace,"SF Mono","Cascadia Code",Menlo,Consolas,monospace;
+    --sans:system-ui,-apple-system,"Segoe UI",Roboto,sans-serif;
+  }
+  .sr-only{position:absolute;width:1px;height:1px;overflow:hidden;clip:rect(0 0 0 0)}
+  #sg3d{position:relative;width:100%;height:min(78vh,760px);min-height:460px;
+    background:radial-gradient(120% 120% at 50% 0%,#0e141b 0%,var(--bg) 70%);
+    border:1px solid var(--panel-line);border-radius:14px;overflow:hidden;
+    color:var(--text);font-family:var(--sans);user-select:none;touch-action:none}
+  #sg3d canvas{display:block;width:100%;height:100%;cursor:grab}
+  #sg3d canvas:active{cursor:grabbing}
+  .hud{position:absolute;pointer-events:none}
+  .hud-tl{top:14px;left:16px}
+  .hud-tr{top:14px;right:16px;text-align:right}
+  .title{font-size:15px;font-weight:500;letter-spacing:.2px}
+  .sub{font-size:12px;color:var(--muted);margin-top:3px;font-family:var(--mono)}
+  .badge{display:inline-block;font-family:var(--mono);font-size:11px;letter-spacing:.4px;
+    padding:3px 9px;border-radius:999px;border:1px solid;margin-left:6px;vertical-align:1px}
+  .badge.ok{color:#7fe6b0;border-color:#2f6b4d;background:rgba(46,120,84,.14)}
+  .stat{font-family:var(--mono);font-size:12px;line-height:1.55;color:var(--muted)}
+  .stat b{color:var(--text);font-weight:500}
+  .legend{position:absolute;left:16px;bottom:74px;display:flex;flex-direction:column;
+    gap:5px;font-family:var(--mono);font-size:11px;color:var(--muted);pointer-events:none}
+  .legend .row{display:flex;align-items:center;gap:7px}
+  .sw{width:11px;height:11px;border-radius:3px;flex:none;border:1px solid rgba(255,255,255,.14)}
+  .sw.ring{border-radius:50%;background:transparent}
+  .dock{position:absolute;left:0;right:0;bottom:0;padding:12px 16px 13px;
+    background:linear-gradient(to top,var(--panel),rgba(17,23,30,0));
+    display:flex;align-items:center;gap:14px}
+  .pbtn{pointer-events:auto;flex:none;width:38px;height:38px;border-radius:10px;
+    border:1px solid var(--panel-line);background:rgba(20,27,35,.9);color:var(--text);
+    font-size:15px;cursor:pointer;display:flex;align-items:center;justify-content:center;
+    transition:border-color .15s,background .15s}
+  .pbtn:hover{border-color:var(--accent-dim);background:rgba(31,40,51,.95)}
+  .pbtn:focus-visible{outline:2px solid var(--accent);outline-offset:2px}
+  .track{flex:1;display:flex;flex-direction:column;gap:5px;pointer-events:auto}
+  .track input[type=range]{width:100%;-webkit-appearance:none;appearance:none;height:4px;
+    border-radius:3px;background:#26313d;outline:none;cursor:pointer}
+  .track input[type=range]::-webkit-slider-thumb{-webkit-appearance:none;width:15px;height:15px;
+    border-radius:50%;background:var(--accent);border:2px solid #1a222b;cursor:pointer}
+  .track input[type=range]::-moz-range-thumb{width:15px;height:15px;border-radius:50%;
+    background:var(--accent);border:2px solid #1a222b;cursor:pointer}
+  .tlabels{display:flex;justify-content:space-between;font-family:var(--mono);
+    font-size:11px;color:var(--muted)}
+  .tlabels b{color:var(--accent);font-weight:500}
+  .toggles{position:absolute;right:16px;bottom:74px;display:flex;flex-direction:column;
+    gap:4px;align-items:flex-end}
+  .tg{pointer-events:auto;font-family:var(--mono);font-size:11px;color:var(--muted);
+    background:rgba(20,27,35,.8);border:1px solid var(--panel-line);border-radius:7px;
+    padding:4px 9px;cursor:pointer;display:flex;align-items:center;gap:6px;
+    transition:color .15s,border-color .15s}
+  .tg[aria-pressed=false]{opacity:.42}
+  .tg:hover{border-color:var(--accent-dim);color:var(--text)}
+  .tg .dot{width:9px;height:9px;border-radius:3px;flex:none}
+  .hint{position:absolute;left:50%;bottom:70px;transform:translateX(-50%);
+    font-family:var(--mono);font-size:11px;color:var(--faint);pointer-events:none;
+    transition:opacity .6s;white-space:nowrap}
+</style>
+
+<h2 class="sr-only">Interactive 3D playback of the object scene graph — costmap, rooms,
+object ellipsoids and the robot trajectory — built over time during one ObjectNav episode.</h2>
+
+<div id="sg3d">
+  <canvas id="sg3d-cv"></canvas>
+  <div class="hud hud-tl">
+    <div class="title" id="sg3d-title">scene graph</div>
+    <div class="sub" id="sg3d-sub">loading…</div>
+  </div>
+  <div class="hud hud-tr">
+    <div class="stat" id="sg3d-stat"></div>
+  </div>
+  <div class="legend" id="sg3d-legend">
+    <div class="row"><span class="sw" style="background:#39485a"></span>free space (by room)</div>
+    <div class="row"><span class="sw" style="background:#2b3a4a"></span>occupied / walls</div>
+    <div class="row"><span class="sw ring" style="border-color:var(--object)"></span>mapped object</div>
+    <div class="row"><span class="sw ring" style="border-color:var(--target)"></span>target category</div>
+    <div class="row"><span class="sw" style="background:var(--accent)"></span>robot path</div>
+  </div>
+  <div class="toggles" id="sg3d-toggles"></div>
+  <div class="hint" id="sg3d-hint">drag to orbit · scroll to zoom · shift-drag to pan</div>
+  <div class="dock">
+    <button class="pbtn" id="sg3d-play" aria-label="play"></button>
+    <div class="track">
+      <input type="range" id="sg3d-slider" min="0" max="0" value="0" step="1" aria-label="time">
+      <div class="tlabels"><span>keyframe <b id="sg3d-kf">0</b> · step <b id="sg3d-step">0</b></span>
+        <span id="sg3d-count"></span></div>
+    </div>
+  </div>
+</div>
+
+<script>
+const DATA = /*__DATA__*/ null;
+(function(){
+  const root=document.getElementById('sg3d');
+  if(!DATA||!DATA.frames||!DATA.frames.length){root.querySelector('#sg3d-sub').textContent='no data';return;}
+  const cv=document.getElementById('sg3d-cv'), ctx=cv.getContext('2d');
+  const F=DATA.frames, TILE=DATA.tile_m||0.2, FLOOR=DATA.floor_y||0;
+  const WALL_H=0.55, TRAJ_H=FLOOR+0.03;
+
+  // ---- room colors (categorical, low-saturation) ----
+  const ROOM=['#39485a','#7a5a3d','#4a6b4a','#6b4a63','#3d6b6b','#6b6b4a','#5a4a7a',
+              '#7a4a4a','#3d6b5a','#5a5f7a','#6b5a4a','#4a5a6b'];
+  const roomColor=id=> id>0?ROOM[id%ROOM.length]:'#333d47';
+
+  // ---- scene bounds (from the last, largest frame + trajectory) ----
+  let minX=1e9,maxX=-1e9,minZ=1e9,maxZ=-1e9;
+  const lf=F[F.length-1];
+  for(let i=0;i<lf.free.length;i+=3){const x=lf.free[i],z=lf.free[i+1];
+    if(x<minX)minX=x;if(x>maxX)maxX=x;if(z<minZ)minZ=z;if(z>maxZ)maxZ=z;}
+  for(let i=0;i<lf.occ.length;i+=2){const x=lf.occ[i],z=lf.occ[i+1];
+    if(x<minX)minX=x;if(x>maxX)maxX=x;if(z<minZ)minZ=z;if(z>maxZ)maxZ=z;}
+  if(!isFinite(minX)){minX=-2;maxX=2;minZ=-2;maxZ=2;}
+  const cx=(minX+maxX)/2, cz=(minZ+maxZ)/2;
+  const span=Math.max(maxX-minX,maxZ-minZ,3);
+
+  // ---- orbit camera ----
+  const cam={az:-0.9, el:0.72, dist:span*1.35, tx:cx, ty:FLOOR+0.3, tz:cz, fov:52*Math.PI/180};
+  function eye(){const ce=Math.cos(cam.el),se=Math.sin(cam.el),ca=Math.cos(cam.az),sa=Math.sin(cam.az);
+    return [cam.tx+cam.dist*ce*ca, cam.ty+cam.dist*se, cam.tz+cam.dist*ce*sa];}
+
+  // view basis
+  let E,RGT,UP,FWD,focal,W,H;
+  function setup(){
+    E=eye();
+    let f=[cam.tx-E[0],cam.ty-E[1],cam.tz-E[2]];
+    const fl=Math.hypot(f[0],f[1],f[2])||1; FWD=[f[0]/fl,f[1]/fl,f[2]/fl];
+    // right = normalize(forward × worldUp(0,1,0)) = normalize(-fz, 0, fx)
+    let r=[-FWD[2],0,FWD[0]]; const rl=Math.hypot(r[0],r[1],r[2])||1;
+    RGT=[r[0]/rl,r[1]/rl,r[2]/rl];
+    // up = right × forward
+    UP=[RGT[1]*FWD[2]-RGT[2]*FWD[1],RGT[2]*FWD[0]-RGT[0]*FWD[2],RGT[0]*FWD[1]-RGT[1]*FWD[0]];
+    focal=H/(2*Math.tan(cam.fov/2));
+  }
+  function toCam(p){const dx=p[0]-E[0],dy=p[1]-E[1],dz=p[2]-E[2];
+    return [dx*RGT[0]+dy*RGT[1]+dz*RGT[2], dx*UP[0]+dy*UP[1]+dz*UP[2], dx*FWD[0]+dy*FWD[1]+dz*FWD[2]];}
+  function proj(c){const z=c[2]; if(z<0.05)return null;
+    return [W/2+focal*c[0]/z, H/2-focal*c[1]/z, z];}
+
+  const LIGHT=(function(){const l=[0.4,0.85,0.3];const n=Math.hypot(...l);return [l[0]/n,l[1]/n,l[2]/n];})();
+  function shade(nrm,base){const d=Math.max(0,nrm[0]*LIGHT[0]+nrm[1]*LIGHT[1]+nrm[2]*LIGHT[2]);
+    const k=0.45+0.55*d; return mul(base,k);}
+  function mul(hex,k){const n=parseInt(hex.slice(1),16);let r=(n>>16)&255,g=(n>>8)&255,b=n&255;
+    r=Math.min(255,r*k)|0;g=Math.min(255,g*k)|0;b=Math.min(255,b*k)|0;
+    return 'rgb('+r+','+g+','+b+')';}
+
+  // ---- geometry builders ----
+  function quad(a,b,c,d,color,alpha){ // world pts CCW
+    const ux=b[0]-a[0],uy=b[1]-a[1],uz=b[2]-a[2], vx=d[0]-a[0],vy=d[1]-a[1],vz=d[2]-a[2];
+    let nx=uy*vz-uz*vy,ny=uz*vx-ux*vz,nz=ux*vy-uy*vx;const nl=Math.hypot(nx,ny,nz)||1;
+    return {pts:[a,b,c,d],nrm:[nx/nl,ny/nl,nz/nl],color,alpha};}
+
+  const state={toggles:{rooms:true,walls:true,objects:true,path:true}};
+
+  function buildPolys(fr){
+    const polys=[]; const h=TILE/2;
+    if(state.toggles.rooms){
+      for(let i=0;i<fr.free.length;i+=3){const x=fr.free[i],z=fr.free[i+1],rid=fr.free[i+2];
+        const col=roomColor(rid);
+        polys.push(quad([x-h,FLOOR,z-h],[x+h,FLOOR,z-h],[x+h,FLOOR,z+h],[x-h,FLOOR,z+h],col,0.9));}
+    }
+    if(state.toggles.walls){
+      for(let i=0;i<fr.occ.length;i+=2){const x=fr.occ[i],z=fr.occ[i+1];
+        const y0=FLOOR,y1=FLOOR+WALL_H,base='#2b3a4a',top='#3c4f63';
+        const c000=[x-h,y0,z-h],c100=[x+h,y0,z-h],c101=[x+h,y0,z+h],c001=[x-h,y0,z+h];
+        const t000=[x-h,y1,z-h],t100=[x+h,y1,z-h],t101=[x+h,y1,z+h],t001=[x-h,y1,z+h];
+        polys.push(quad(t000,t100,t101,t001,top,1));          // top
+        polys.push(quad(c000,c100,t100,t000,base,1));         // -z
+        polys.push(quad(c101,c001,t001,t101,base,1));         // +z
+        polys.push(quad(c001,c000,t000,t001,base,1));         // -x
+        polys.push(quad(c100,c101,t101,t100,base,1));         // +x
+      }
+    }
+    return polys;
+  }
+
+  function drawPolys(polys){
+    const items=[];
+    for(const p of polys){
+      const cpts=p.pts.map(toCam); let zc=0,vis=true;
+      for(const c of cpts){if(c[2]<0.05){vis=false;break;} zc+=c[2];}
+      if(!vis)continue;
+      const sp=cpts.map(proj); if(sp.some(s=>!s))continue;
+      items.push({sp,z:zc/cpts.length,color:shade(p.nrm,p.color),alpha:p.alpha});
+    }
+    items.sort((a,b)=>b.z-a.z);
+    for(const it of items){
+      ctx.globalAlpha=it.alpha; ctx.fillStyle=it.color;
+      ctx.beginPath(); ctx.moveTo(it.sp[0][0],it.sp[0][1]);
+      for(let i=1;i<it.sp.length;i++)ctx.lineTo(it.sp[i][0],it.sp[i][1]);
+      ctx.closePath(); ctx.fill();
+    }
+    ctx.globalAlpha=1;
+  }
+
+  // ellipsoid as 3 orthogonal wireframe rings
+  const RING=(function(){const n=28,a=[];for(let i=0;i<=n;i++){const t=i/n*2*Math.PI;a.push([Math.cos(t),Math.sin(t)]);}return a;})();
+  function drawEllipsoids(fr){
+    const list=[];
+    for(const e of fr.ellipsoids){
+      const c=e.center, R=e.R, ax=e.axes.map(v=>Math.min(Math.max(v,0.04),0.7));
+      const cc=toCam(c); if(cc[2]<0.05)continue;
+      list.push({e,c,R,ax,z:cc[2]});
+    }
+    list.sort((a,b)=>b.z-a.z);
+    const TGT=getComputedStyle(root).getPropertyValue('--target').trim()||'#ff5d8f';
+    const OBJ=getComputedStyle(root).getPropertyValue('--object').trim()||'#4fd6c9';
+    for(const o of list){
+      const isT=o.e.is_target, col=isT?TGT:OBJ;
+      // target: full 3-ring wireframe; others: a single faint equatorial ring
+      const planes=isT?[[0,1],[0,2],[1,2]]:[[0,2]];
+      ctx.lineWidth=isT?2:1; ctx.strokeStyle=col; ctx.globalAlpha=isT?0.95:0.4;
+      for(const pl of planes){
+        ctx.beginPath(); let started=false;
+        for(const uv of RING){
+          const loc=[0,0,0]; loc[pl[0]]=uv[0]*o.ax[pl[0]]; loc[pl[1]]=uv[1]*o.ax[pl[1]];
+          const w=[o.c[0]+o.R[0][0]*loc[0]+o.R[0][1]*loc[1]+o.R[0][2]*loc[2],
+                   o.c[1]+o.R[1][0]*loc[0]+o.R[1][1]*loc[1]+o.R[1][2]*loc[2],
+                   o.c[2]+o.R[2][0]*loc[0]+o.R[2][1]*loc[1]+o.R[2][2]*loc[2]];
+          const s=proj(toCam(w)); if(!s){started=false;continue;}
+          if(!started){ctx.moveTo(s[0],s[1]);started=true;}else ctx.lineTo(s[0],s[1]);
+        }
+        ctx.stroke();
+      }
+      // center dot
+      const sc=proj(toCam(o.c));
+      if(sc){ctx.globalAlpha=isT?1:0.55;ctx.fillStyle=col;ctx.beginPath();
+        ctx.arc(sc[0],sc[1],isT?3.2:1.6,0,2*Math.PI);ctx.fill();
+        if(isT){ctx.font='11px '+getComputedStyle(root).fontFamily;ctx.fillStyle=col;
+          ctx.globalAlpha=0.9;ctx.fillText(o.e.label,sc[0]+6,sc[1]-4);}}
+    }
+    ctx.globalAlpha=1;
+  }
+
+  function drawPath(fr){
+    if(!state.toggles.path)return;
+    const T=DATA.trajectory, upto=fr.step;
+    let prev=null;
+    for(const p of T){
+      if(p[2]>upto)break;
+      const s=proj(toCam([p[0],TRAJ_H,p[1]]));
+      if(s){if(prev){const t=p[2]/Math.max(1,upto);
+        ctx.strokeStyle=mul('#ffb454',0.35+0.65*t);ctx.lineWidth=2.4;
+        ctx.beginPath();ctx.moveTo(prev[0],prev[1]);ctx.lineTo(s[0],s[1]);ctx.stroke();}
+        prev=s;}else prev=null;
+    }
+    // robot marker at agent_xy
+    if(fr.agent_xy){
+      const base=[fr.agent_xy[0],FLOOR,fr.agent_xy[1]], topp=[fr.agent_xy[0],FLOOR+0.6,fr.agent_xy[1]];
+      const sb=proj(toCam(base)), st=proj(toCam(topp));
+      if(sb&&st){ctx.strokeStyle='#ffd9a0';ctx.lineWidth=2.2;
+        ctx.beginPath();ctx.moveTo(sb[0],sb[1]);ctx.lineTo(st[0],st[1]);ctx.stroke();
+        ctx.fillStyle='#fff2dc';ctx.beginPath();ctx.arc(st[0],st[1],4,0,2*Math.PI);ctx.fill();
+        ctx.fillStyle='rgba(255,180,84,.22)';ctx.beginPath();ctx.arc(sb[0],sb[1],6,0,2*Math.PI);ctx.fill();}
+    }
+  }
+
+  // ---- render ----
+  let cur=0;
+  function render(){
+    setup();
+    ctx.clearRect(0,0,W,H);
+    // ground grid fade
+    const fr=F[cur];
+    drawPolys(buildPolys(fr));
+    if(state.toggles.objects)drawEllipsoids(fr);
+    drawPath(fr);
+    // hud
+    root.querySelector('#sg3d-kf').textContent=fr.n_kf;
+    root.querySelector('#sg3d-step').textContent=fr.step;
+    const nobj=fr.ellipsoids.length, ntgt=fr.ellipsoids.filter(e=>e.is_target).length;
+    root.querySelector('#sg3d-count').textContent=nobj+' objects · '+ntgt+' target';
+    root.querySelector('#sg3d-stat').innerHTML=
+      'frame <b>'+(cur+1)+'/'+F.length+'</b><br>objects mapped <b>'+nobj+'</b><br>target found <b>'+
+      (ntgt>0?'yes':'—')+'</b>';
+  }
+
+  // ---- sizing ----
+  function resize(){const dpr=Math.min(2,window.devicePixelRatio||1);
+    const r=root.getBoundingClientRect(); W=r.width; H=r.height;
+    cv.width=W*dpr; cv.height=H*dpr; ctx.setTransform(dpr,0,0,dpr,0,0); render();}
+  window.addEventListener('resize',resize);
+
+  // ---- interaction ----
+  let drag=null;
+  cv.addEventListener('pointerdown',e=>{drag={x:e.clientX,y:e.clientY,pan:e.shiftKey};
+    cv.setPointerCapture(e.pointerId);hideHint();});
+  cv.addEventListener('pointermove',e=>{if(!drag)return;
+    const dx=e.clientX-drag.x, dy=e.clientY-drag.y; drag.x=e.clientX; drag.y=e.clientY;
+    if(drag.pan){const k=cam.dist*0.0016;
+      cam.tx-=(RGT[0]*dx-UP[0]*dy)*k; cam.ty-=(RGT[1]*dx-UP[1]*dy)*k; cam.tz-=(RGT[2]*dx-UP[2]*dy)*k;}
+    else{cam.az+=dx*0.006; cam.el=Math.max(0.08,Math.min(1.45,cam.el+dy*0.006));}
+    render();});
+  cv.addEventListener('pointerup',e=>{drag=null;});
+  cv.addEventListener('wheel',e=>{e.preventDefault();hideHint();
+    cam.dist=Math.max(1.2,Math.min(span*4,cam.dist*(1+Math.sign(e.deltaY)*0.09)));render();},{passive:false});
+
+  let hintT=setTimeout(hideHint,4200); function hideHint(){const h=root.querySelector('#sg3d-hint');
+    if(h)h.style.opacity=0;clearTimeout(hintT);}
+
+  // ---- playback ----
+  const slider=root.querySelector('#sg3d-slider'), playBtn=root.querySelector('#sg3d-play');
+  slider.max=F.length-1;
+  const PLAY='<svg width="14" height="14" viewBox="0 0 14 14"><path d="M3 2l9 5-9 5z" fill="currentColor"/></svg>';
+  const PAUSE='<svg width="14" height="14" viewBox="0 0 14 14"><rect x="3" y="2.5" width="3" height="9" fill="currentColor"/><rect x="8" y="2.5" width="3" height="9" fill="currentColor"/></svg>';
+  const RESET='<svg width="14" height="14" viewBox="0 0 14 14"><path d="M7 2a5 5 0 1 1-4.9 6" fill="none" stroke="currentColor" stroke-width="1.6"/><path d="M2 2v3h3" fill="none" stroke="currentColor" stroke-width="1.6"/></svg>';
+  let playing=false, timer=null;
+  function setFrame(i){cur=Math.max(0,Math.min(F.length-1,i));slider.value=cur;render();}
+  function tick(){if(cur>=F.length-1){stop();playBtn.innerHTML=RESET;playBtn.setAttribute('aria-label','replay');return;}
+    setFrame(cur+1);}
+  function play(){if(cur>=F.length-1)setFrame(0);playing=true;playBtn.innerHTML=PAUSE;
+    playBtn.setAttribute('aria-label','pause');timer=setInterval(tick,520);}
+  function stop(){playing=false;playBtn.innerHTML=PLAY;playBtn.setAttribute('aria-label','play');
+    clearInterval(timer);}
+  playBtn.innerHTML=PLAY;
+  playBtn.addEventListener('click',()=>{playing?stop():play();});
+  slider.addEventListener('input',()=>{if(playing)stop();setFrame(+slider.value);});
+
+  // ---- toggles ----
+  const tgDefs=[['rooms','rooms','#39485a'],['walls','walls','#2b3a4a'],
+                ['objects','objects','#4fd6c9'],['path','path','#ffb454']];
+  const tgWrap=root.querySelector('#sg3d-toggles');
+  for(const [key,label,col] of tgDefs){
+    const b=document.createElement('button'); b.className='tg'; b.setAttribute('aria-pressed','true');
+    b.innerHTML='<span class="dot" style="background:'+col+'"></span>'+label;
+    b.addEventListener('click',()=>{state.toggles[key]=!state.toggles[key];
+      b.setAttribute('aria-pressed',state.toggles[key]);render();});
+    tgWrap.appendChild(b);
+  }
+
+  // ---- header ----
+  root.querySelector('#sg3d-title').textContent='scene graph · ep'+DATA.episode_id+' · target: '+DATA.target;
+  const sub=root.querySelector('#sg3d-sub');
+  sub.innerHTML=F.length+' keyframes · '+DATA.steps+' steps'+
+    (DATA.success>=1?'<span class="badge ok">reached ✓</span>':'');
+
+  resize(); setFrame(0);
+})();
+</script>
+<!--ARTIFACT_CONTENT_END-->
+</body></html>
