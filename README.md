@@ -42,8 +42,8 @@ etc. are already set by the image/compose env, so no `docker exec` prefix or
 cp .env.example .env                  # adjust dataset paths if needed
 docker compose -f docker/compose.yaml --env-file .env build nav   # nav image (habitat-sim 0.3.1, torch cu121)
 docker compose -f docker/compose.yaml --env-file .env up -d       # start ollama + nav containers
-docker exec -it ollama ollama pull qwen2.5vl:3b
-docker exec -it nav /entrypoint.sh bash                           # shell inside nav (habitat conda env active)
+docker exec -it object_scene_graph-ollama-1 ollama pull qwen2.5vl:3b
+docker exec -it object_scene_graph-nav-1 /entrypoint.sh bash                           # shell inside nav (habitat conda env active)
 ```
 
 ### Smoke tests
