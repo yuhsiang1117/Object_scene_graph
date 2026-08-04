@@ -68,11 +68,29 @@ class NavAgent:
         target_category: str,
         keyframe_dir: Optional[str] = None,
         profiler: Optional[Profiler] = None,
+        nav_fn=None,
+        reachable_fn=None,
     ) -> None:
         self.cfg = cfg
         self.detector = detector
         self.scorer = scorer
         self.verifier = verifier
+        # Habitat-navmesh driving (old-stack alignment): nav_fn(goal_xy) returns
+        # the next discrete action toward goal_xy on Habitat's navmesh, or None
+        # when arrived/unreachable. When set, it replaces the costmap planner +
+        # controller for all goal-following. The costmap is still built (for
+        # frontier extraction / scene graph), only navigation switches.
+        self._nav_fn = nav_fn
+        self._reachable_fn = reachable_fn
+        self._use_navmesh = (
+            nav_fn is not None and bool(getattr(cfg.agent, "use_habitat_navmesh", False))
+        )
+        # Terminal-view verification mode: skip the pre-approach best_crop VLM
+        # call and instead verify the live close-up frame at the STOP decision
+        # (see _do_approach). Requires a verifier; no-op when verifier is None.
+        self._terminal_verify = (
+            verifier is not None and bool(getattr(cfg.verification, "terminal", False))
+        )
         self.profiler = profiler or Profiler()
         # Debug hook: if set, called with (frame, dets) every keyframe right
         # after the detections that feed object_layer.update() are computed
@@ -157,6 +175,7 @@ class NavAgent:
         self._progress_ref_xy = np.zeros(2)
         self._target_obj_xy: Optional[np.ndarray] = None
         self._went_to_best_cam = False
+        self._center_turns = 0  # centering turns spent on the current candidate
         # APPROACH state: path-goal cache is separate from _goal_xy/_current_path
         # used by GOTO_FRONTIER/GOTO_VERIFY_VIEW because APPROACH switches
         # between an "advance toward the object" goal and a "retreat to the
@@ -166,11 +185,18 @@ class NavAgent:
         self._approach_steps_left = 0
         self.stats = {"plan_ok": 0, "plan_fail": 0, "select_none": 0, "select_ok": 0}
         self.state_log = []
+        self.frontier_select_log: list = []
         self.giveup_log: list = []
         # Calibration data for approach_stop_bbox_px (P1c): every bbox_px
         # observed during APPROACH, plus why the episode's approach ended.
         self.approach_bbox_log: list = []
         self.approach_stop_reason: Optional[str] = None
+        # Approach-navigation diagnostics (for the terminal approach that ends
+        # the episode): why the agent stopped short of a correctly-mapped
+        # target. Split path_consumed into planner-no-path vs controller-arrived
+        # and record the approach geometry. See scripts/analyze_approach.py.
+        self.approach_diag: dict = {}
+        self._last_follow_none_reason: Optional[str] = None
         self.kf_selector.reset()
         self.controller.reset()
         self.detector.set_vocabulary(
@@ -300,6 +326,12 @@ class NavAgent:
           the deadline.
         """
         agent_xy = frame.camera_position[list(PLANE)]
+        # Track how close the agent gets to its approach goal this episode.
+        if self.approach_diag and self._goal_xy is not None:
+            dg = float(np.linalg.norm(agent_xy - self._goal_xy))
+            cur = self.approach_diag.get("min_dist_to_goal_m")
+            if cur is None or dg < cur:
+                self.approach_diag["min_dist_to_goal_m"] = dg
         det = self._best_target_detection(frame)
 
         if det is not None:
@@ -312,17 +344,39 @@ class NavAgent:
                 (self.step_count, round(float(bbox_px), 1),
                  round(float(depth), 3) if depth is not None else None)
             )
-            if depth is not None:
-                if depth <= self.cfg.agent.approach_stop_depth_m:
-                    self.state = State.DONE
-                    self.approach_stop_reason = "depth"
-                    return STOP_ACTION
-            elif bbox_px >= self.cfg.agent.approach_stop_bbox_px:  # fallback: no valid depth
+            stop_reason: Optional[str] = None
+            if getattr(self.cfg.agent, "approach_depth_stop", True):
+                if depth is not None:
+                    if depth <= self.cfg.agent.approach_stop_depth_m:
+                        stop_reason = "depth"
+                elif bbox_px >= self.cfg.agent.approach_stop_bbox_px:  # fallback: no valid depth
+                    stop_reason = "bbox"
+            if stop_reason is not None:
+                # Terminal-view verification: the agent is close and the target
+                # fills the view -- this live close-up is the decisive frame.
+                # Ask the VLM before committing STOP; a rejection means the
+                # detector locked onto a false positive, so blacklist it and
+                # resume exploring rather than stopping on empty/wrong space.
+                if self._terminal_verify:
+                    self.stats["terminal_verify"] = self.stats.get("terminal_verify", 0) + 1
+                    # Full live frame with the target boxed (scene context).
+                    if not self.verifier.verify_bbox(frame.rgb, det.bbox_xyxy, self.target):
+                        self.stats["terminal_reject"] = self.stats.get("terminal_reject", 0) + 1
+                        if self._candidate_id is not None:
+                            self.object_layer.blacklist(self._candidate_id)
+                        self._candidate_id = None
+                        self._target_obj_xy = None
+                        self.state = State.EXPLORE
+                        return TURN_ACTION
                 self.state = State.DONE
-                self.approach_stop_reason = "bbox"
+                self.approach_stop_reason = stop_reason
                 return STOP_ACTION
         elif (
-            self._approach_last_good_xy is not None
+            not self._use_navmesh  # navmesh knows the path; a momentary FOV loss
+            # while turning along it must NOT trigger a retreat, or the agent
+            # oscillates (approach -> lose detection -> retreat -> re-detect ...)
+            # until the deadline. Costmap mode keeps the LOS-occlusion retreat.
+            and self._approach_last_good_xy is not None
             and np.linalg.norm(agent_xy - self._approach_last_good_xy) > 0.1
         ):
             action = self._follow_to(frame, self._approach_last_good_xy)
@@ -337,10 +391,15 @@ class NavAgent:
             self.approach_stop_reason = "deadline"
             return STOP_ACTION
         self._approach_steps_left -= 1
+        self._last_follow_none_reason = None
         action = self._follow_to(frame, self._goal_xy)
         if action is None:  # path consumed or unreachable: as close as it gets
             self.state = State.DONE
             self.approach_stop_reason = "path_consumed"
+            if self.approach_diag is not None:
+                self.approach_diag["path_consumed_cause"] = self._last_follow_none_reason
+                if self._last_follow_none_reason == "planner_no_path":
+                    self.approach_diag["plan_fail"] = self.approach_diag.get("plan_fail", 0) + 1
             return STOP_ACTION
         return action
 
@@ -392,6 +451,15 @@ class NavAgent:
             if any(np.linalg.norm(f.centroid_xy - xy) < 0.6 for xy in active)
         }
 
+    @staticmethod
+    def _heading_xy(frame: FrameData) -> np.ndarray:
+        """Agent forward direction on the ground plane (unit). Camera looks along
+        +z (OpenCV), so world-forward = R @ [0,0,1], projected to (x, z)."""
+        fwd = frame.T_wc[:3, :3] @ np.array([0.0, 0.0, 1.0])
+        v = fwd[list(PLANE)]
+        n = float(np.linalg.norm(v))
+        return v / n if n > 1e-6 else np.array([1.0, 0.0])
+
     def _select_new_frontier(self, frame: FrameData) -> None:
         # Extraction + top-N path planning is expensive; while waiting the
         # agent turns in place, which grows the map anyway.
@@ -408,6 +476,7 @@ class NavAgent:
         self.scorer.request(frontiers, self.scene_graph, self.target, self.keyframes)
         blocked = self._blocked_ids(frontiers)
         agent_xy = frame.camera_position[list(PLANE)]
+        heading_xy = self._heading_xy(frame)
         failed: set = set()
         with self.profiler.timeit("frontier_select"):
             best = select_frontier(
@@ -423,6 +492,9 @@ class NavAgent:
                 failed_out=failed,
                 info_gain_weight=self.cfg.exploration.info_gain_weight,
                 info_gain_radius_m=self.cfg.exploration.info_gain_radius_m,
+                los_visibility_penalty=self.cfg.exploration.los_visibility_penalty,
+                heading_xy=heading_xy,
+                continuity_weight=self.cfg.exploration.continuity_weight,
             )
         by_id = {f.id: f for f in frontiers}
         for fid in failed:  # block only the candidates that actually failed
@@ -448,11 +520,23 @@ class NavAgent:
                     top_n=self.cfg.exploration.top_n_frontiers, blocked=relaxed_blocked,
                     info_gain_weight=self.cfg.exploration.info_gain_weight,
                     info_gain_radius_m=self.cfg.exploration.info_gain_radius_m,
+                    los_visibility_penalty=self.cfg.exploration.los_visibility_penalty,
+                    heading_xy=heading_xy,
+                    continuity_weight=self.cfg.exploration.continuity_weight,
                 )
         if best is None or best.path_cost is None:
             self.stats["select_none"] += 1
             return
         self.stats["select_ok"] += 1
+        # Per-selection trace (step, agent xy, chosen frontier xy, path cost,
+        # #frontiers) for exploration-efficiency debugging. See scripts.
+        self.frontier_select_log.append((
+            self.step_count,
+            [round(float(x), 2) for x in agent_xy],
+            [round(float(x), 2) for x in best.centroid_xy],
+            round(float(best.path_cost), 2) if best.path_cost is not None else None,
+            len(frontiers),
+        ))
         self._current_frontier = best
         self._plan_to(frame, frontier_goal_xy(best, self.costmap))
         if self._current_path is not None:
@@ -480,7 +564,35 @@ class NavAgent:
             return
         track = candidates[0]
         self._candidate_id = track.id
+        self._center_turns = 0  # fresh centering budget for this candidate
         obj_xy = self.object_layer.center_of(track)[list(PLANE)]
+
+        # Navmesh alignment (old stack): navigate straight to the object
+        # position and let Habitat's navmesh drive there, then STOP on arrival
+        # -- like publishing /goal_object. No viewpoint pre-positioning.
+        if self._use_navmesh:
+            # Don't commit to a target on a disconnected navmesh island (a
+            # visible-but-unreachable object, e.g. in a sealed bathroom): the
+            # agent can never get there, so blacklist it and keep exploring for
+            # a reachable goal instead of stopping and failing the episode.
+            if self._reachable_fn is not None and not self._reachable_fn(obj_xy):
+                self.object_layer.blacklist(track.id)
+                self._candidate_id = None
+                self.stats["unreachable_skip"] = self.stats.get("unreachable_skip", 0) + 1
+                return
+            # VLM verify the candidate before committing (no VERIFYING state in
+            # navmesh mode). Reject -> blacklist and keep exploring; this is the
+            # only FP gate in the navmesh path.
+            if self.verifier is not None:
+                with self.profiler.timeit("verification"):
+                    ok = self.verifier.verify(track, self.target)
+                if not ok:
+                    self.object_layer.blacklist(track.id)
+                    self._candidate_id = None
+                    self.stats["verify_reject"] = self.stats.get("verify_reject", 0) + 1
+                    return
+            self._start_approach(obj_xy)
+            return
 
         # Always pre-position at a viewpoint from which the object is visible
         # before approaching -- HM3D success requires stopping at such a pose,
@@ -499,8 +611,45 @@ class NavAgent:
         if track is None:
             self.state = State.EXPLORE
             return TURN_ACTION
-        # Face the object first so the live view actually shows it.
         from ..planning.controller import TURN_LEFT, TURN_RIGHT, _wrap, agent_heading
+
+        # Center-then-verify: if a VLM verifier is active and the target is
+        # actually visible in the live view, bring its detection to the middle
+        # of the camera before the VLM call, then verify that well-framed frame.
+        if (
+            self.verifier is not None
+            and getattr(self.cfg.verification, "center_before_verify", True)
+        ):
+            det = self._best_target_detection(frame)
+            if det is not None:
+                bbox_cx = 0.5 * (float(det.bbox_xyxy[0]) + float(det.bbox_xyxy[2]))
+                offset = float(np.arctan2(bbox_cx - frame.intrinsics.cx, frame.intrinsics.fx))
+                if (
+                    abs(offset) > np.radians(self.cfg.verification.center_tol_deg)
+                    and self._center_turns < self.cfg.verification.center_max_turns
+                ):
+                    self._center_turns += 1
+                    self.stats["center_turn"] = self.stats.get("center_turn", 0) + 1
+                    # target right of centre (offset>0) -> turn right to centre it
+                    return TURN_RIGHT if offset > 0 else TURN_LEFT
+                # Centred (or out of centring budget): verify the live framed view.
+                with self.profiler.timeit("verification"):
+                    accepted = (
+                        True if self._terminal_verify
+                        else self.verifier.verify_bbox(frame.rgb, det.bbox_xyxy, self.target)
+                    )
+                if accepted:
+                    obj_xy = self.object_layer.center_of(track)[list(PLANE)]
+                    self._start_approach(obj_xy, agent_xy=frame.camera_position[list(PLANE)])
+                    return self._do_approach(frame)
+                self.object_layer.blacklist(track.id)
+                self._candidate_id = None
+                self.state = State.EXPLORE
+                return TURN_ACTION
+            # target not visible in the live view -> fall through to the
+            # 3D-facing / best-cam recovery below.
+
+        # Face the object first so the live view actually shows it.
 
         obj_xy = self.object_layer.center_of(track)[list(PLANE)]
         agent_xy = frame.camera_position[list(PLANE)]
@@ -528,15 +677,16 @@ class NavAgent:
             self._goto_deadline = self.step_count + 60
             return self._follow_path(frame) or TURN_ACTION
         with self.profiler.timeit("verification"):
-            # verification off (old-fidelity mode): accept without a VLM call and
-            # go straight to the visibility-driven bbox approach.
+            # Pre-approach verification. Skipped (accept) when the verifier is
+            # off (old-fidelity mode) OR in terminal-view mode, where the
+            # decisive VLM check is deferred to the STOP moment in _do_approach.
             accepted = (
-                True if self.verifier is None
+                True if (self.verifier is None or self._terminal_verify)
                 else self.verifier.verify(track, self.target, live_view=frame.rgb)
             )
         if accepted:
             obj_xy = self.object_layer.center_of(track)[list(PLANE)]
-            self._start_approach(obj_xy)
+            self._start_approach(obj_xy, agent_xy=frame.camera_position[list(PLANE)])
             return self._do_approach(frame)
         self.object_layer.blacklist(track.id)
         self._candidate_id = None
@@ -545,14 +695,44 @@ class NavAgent:
 
     # ---------------------------------------------------------------- helpers
 
-    def _start_approach(self, obj_xy: np.ndarray) -> None:
-        self._goal_xy = self._nearest_free_xy(obj_xy)
+    def _start_approach(self, obj_xy: np.ndarray, agent_xy: Optional[np.ndarray] = None) -> None:
+        if self._use_navmesh:
+            # Navigate to the object itself; the navmesh snaps to the nearest
+            # standable point (effectively a viewpoint), like old /goal_object.
+            self._goal_xy = obj_xy.copy()
+        elif getattr(self.cfg.agent, "approach_navigable_goal", False) and agent_xy is not None:
+            self._goal_xy = self._approach_goal_xy(obj_xy, agent_xy)
+        else:
+            self._goal_xy = self._nearest_free_xy(obj_xy)
         self._target_obj_xy = obj_xy.copy()
         self.state = State.APPROACH
         self._current_path = None
         self._path_goal = None
-        self._goto_deadline = self.step_count + 100
-        self._approach_steps_left = self.cfg.agent.approach_max_steps
+        if self._use_navmesh:
+            # Navmesh drives the FULL distance to the object (no viewpoint
+            # pre-positioning), so the short-leg cap (approach_max_steps ~= 3 m)
+            # cuts the approach off while the target is still in view. Let it
+            # navigate to the object, bounded only by a generous deadline.
+            self._goto_deadline = self.step_count + self.cfg.agent.navmesh_approach_steps
+            self._approach_steps_left = 10 ** 9
+        else:
+            self._goto_deadline = self.step_count + 100
+            self._approach_steps_left = self.cfg.agent.approach_max_steps
+        # Snapshot the terminal approach for navigation diagnostics: the goal
+        # cell (nearest-free to the mapped object), how far it sits from the
+        # object, the agent's start distance to it, and the costmap status of
+        # the goal cell -- an UNKNOWN/OCCUPIED goal cell explains an
+        # unreachable-path stop. min_dist_to_goal is filled in per step.
+        self.approach_diag = {
+            "goal_xy": [float(x) for x in self._goal_xy],
+            "obj_xy": [float(x) for x in obj_xy],
+            "goal_to_obj_m": float(np.linalg.norm(self._goal_xy - obj_xy)),
+            "goal_cell": self._cell_status(self._goal_xy),
+            "start_step": self.step_count,
+            "min_dist_to_goal_m": None,
+            "plan_fail": 0,
+            "path_consumed_cause": None,
+        }
         self._approach_last_good_xy = None
 
     def _best_target_detection(self, frame: FrameData) -> Optional[Detection]:
@@ -601,6 +781,21 @@ class NavAgent:
         )
         if goal is None:
             return None
+        if self._use_navmesh:
+            # Drive on Habitat's navmesh. None = arrived-or-unreachable; if we're
+            # still far from a frontier goal, block it (as the stub-block does).
+            action = self._nav_fn(goal)
+            if (
+                action is None
+                and self.state == State.GOTO_FRONTIER
+                and self._current_frontier is not None
+                and np.linalg.norm(frame.camera_position[list(PLANE)] - goal)
+                > self._frontier_reach_m
+            ):
+                self._block_frontier(self._current_frontier, 100)
+                self._last_giveup_pt = self._current_frontier.centroid_xy.copy()
+                self.stats["frontier_stub_block"] = self.stats.get("frontier_stub_block", 0) + 1
+            return action
         if self._current_path is None:
             self._plan_to(frame, goal)
             if self._current_path is None:
@@ -650,6 +845,8 @@ class NavAgent:
         detour around a nearby thin obstacle to blow the 0.13 m success
         radius even when we were geometrically almost there.
         """
+        if self._use_navmesh:
+            return self._nav_fn(goal_xy)  # navmesh drives to the object; None = arrived
         need_replan = (
             self._current_path is None
             or self._path_goal is None
@@ -659,6 +856,10 @@ class NavAgent:
             self._plan_to(frame, goal_xy, goal_tolerance_m=self.cfg.agent.approach_goal_tolerance_m)
             self._path_goal = goal_xy.copy() if self._current_path is not None else None
             if self._current_path is None:
+                # planner could not reach goal_xy (costmap disconnected /
+                # goal in unknown/inflated space) -- distinct from the
+                # controller reporting arrival below.
+                self._last_follow_none_reason = "planner_no_path"
                 return None
         action = self.controller.act(
             frame.T_wc, self._current_path, arrival_tol_m=self.cfg.agent.approach_arrival_tol_m
@@ -666,7 +867,39 @@ class NavAgent:
         if action is None:
             self._current_path = None
             self._path_goal = None
+            # controller consumed the path (thinks it arrived at goal_xy) --
+            # a false "arrival" here means the planned path was a stub / ended
+            # short of the true goal.
+            self._last_follow_none_reason = "controller_arrived"
         return action
+
+    def _approach_goal_xy(self, obj_xy: np.ndarray, agent_xy: np.ndarray) -> np.ndarray:
+        """Navigable approach goal: a standoff point at approach_standoff_m from
+        the object along the ray toward the agent (the side the object was
+        observed from -> open, reachable space), snapped to the nearest free
+        cell. Avoids the enclosed-pocket goals that _nearest_free_xy produces
+        by placing the goal in front of the object rather than hard against it.
+        """
+        standoff = float(self.cfg.agent.approach_standoff_m)
+        to_agent = agent_xy - obj_xy
+        dist = float(np.linalg.norm(to_agent))
+        if dist < 1e-3:
+            return self._nearest_free_xy(obj_xy)
+        # If the agent is already closer than the standoff, keep the goal at the
+        # standoff (do not push it behind the agent past the object).
+        cand = obj_xy + (to_agent / dist) * min(standoff, dist)
+        return self._nearest_free_xy(cand)
+
+    def _cell_status(self, xy: np.ndarray) -> str:
+        """Costmap classification of a world point: free/occupied/unknown/oob."""
+        from ..mapping.costmap import FREE, OCCUPIED, UNKNOWN
+
+        rc = self.costmap.world_to_grid(xy)
+        h, w = self.costmap.grid.shape
+        if not (0 <= rc[0] < h and 0 <= rc[1] < w):
+            return "oob"
+        v = self.costmap.grid[rc[0], rc[1]]
+        return {FREE: "free", OCCUPIED: "occupied", UNKNOWN: "unknown"}.get(int(v), str(int(v)))
 
     def _nearest_free_xy(self, xy: np.ndarray) -> np.ndarray:
         """Nearest FREE cell to a (possibly occupied) object position — the

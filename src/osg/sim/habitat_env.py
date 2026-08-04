@@ -48,14 +48,30 @@ def make_objectnav_config(cfg):
         agent.sim_sensors.depth_sensor.height = cfg.eval.rgb_height
         agent.sim_sensors.depth_sensor.hfov = int(cfg.eval.hfov_deg)
         agent.sim_sensors.depth_sensor.normalize_depth = False
-        agent.height = 1.5
+        # Agent embodiment: match the HM3D ObjectNav benchmark (and the old ROS
+        # system) -- a 0.88 m agent with the camera at the top. The previous
+        # hardcoded 1.5 m body made the navmesh reject low-clearance areas the
+        # 0.88 m benchmark agent can traverse, diverging from both the standard
+        # and the workspace we compare against.
+        agent.height = cfg.agent.camera_height
         agent.radius = cfg.agent.agent_radius
+        cam_pos = [0.0, float(cfg.agent.camera_height), 0.0]
+        agent.sim_sensors.rgb_sensor.position = cam_pos
+        agent.sim_sensors.depth_sensor.position = cam_pos
 
         sim.forward_step_size = cfg.agent.forward_m
         sim.turn_angle = int(cfg.agent.turn_deg)
 
         task.measurements.success.success_distance = cfg.agent.success_distance
         hab_cfg.habitat.environment.max_episode_steps = cfg.agent.max_steps
+        # Spread a fixed-size eval across scenes rather than draining one scene
+        # first. Habitat groups episodes by scene and only switches after
+        # max_scene_repeat_steps (default 10000), so a ~30-episode run stays
+        # inside a single scene -- unrepresentative of the val split. -1 keeps
+        # the habitat default.
+        msre = getattr(cfg.eval, "max_scene_repeat_episodes", -1)
+        if msre and msre > 0:
+            hab_cfg.habitat.environment.iterator_options.max_scene_repeat_episodes = msre
         hab_cfg.habitat.seed = cfg.seed
     return hab_cfg
 
@@ -72,6 +88,58 @@ class HabitatObjectNavEnv:
             cfg.eval.hfov_deg, cfg.eval.rgb_width, cfg.eval.rgb_height
         )
         self._frame_id = 0
+        # Habitat-navmesh path follower, mirroring the OLD ObjectSceneGraph
+        # stack (publish a goal point -> Habitat plans+drives on its own
+        # navmesh) instead of the from-scratch costmap planner+controller.
+        # Only used when agent.use_habitat_navmesh is set; harmless otherwise.
+        self._follower = None
+        self._action_name = {v: k for k, v in self.ACTIONS.items()}
+        self._navmesh_goal_radius = float(getattr(cfg.agent, "navmesh_goal_radius", 0.1))
+
+    def _ensure_follower(self):
+        if self._follower is None:
+            from habitat.tasks.nav.shortest_path_follower import ShortestPathFollower
+            self._follower = ShortestPathFollower(
+                self.env.sim, goal_radius=self._navmesh_goal_radius, return_one_hot=False
+            )
+        return self._follower
+
+    def action_to_goal(self, goal_xy) -> Optional[str]:
+        """Next discrete action to drive toward a ground-plane goal on Habitat's
+        navmesh, or None if arrived (within goal_radius) or the goal is not
+        navigable. Snaps the 2D goal to the nearest navmesh point at the agent's
+        current floor height."""
+        follower = self._ensure_follower()
+        pos = self.env.sim.get_agent_state().position
+        goal3d = np.array([float(goal_xy[0]), float(pos[1]), float(goal_xy[1])], dtype=np.float32)
+        snapped = self.env.sim.pathfinder.snap_point(goal3d)
+        if snapped is None or bool(np.isnan(np.asarray(snapped)).any()):
+            return None  # unreachable -> caller treats as "arrived" and re-decides
+        try:
+            a = follower.get_next_action(np.asarray(snapped, dtype=np.float32))
+        except Exception:
+            return None
+        if a is None or int(a) == self.ACTIONS["stop"]:
+            return None  # arrived at goal
+        return self._action_name.get(int(a))
+
+    def is_reachable(self, goal_xy) -> bool:
+        """Whether a ground-plane goal is on the same navmesh component as the
+        agent (a geodesic path exists). Targets in sealed/disconnected rooms
+        (closed door or a step in the mesh) are visible but unreachable -- the
+        agent should not commit to them."""
+        import habitat_sim
+
+        pf = self.env.sim.pathfinder
+        pos = self.env.sim.get_agent_state().position
+        goal3d = np.array([float(goal_xy[0]), float(pos[1]), float(goal_xy[1])], dtype=np.float32)
+        g = pf.snap_point(goal3d)
+        if g is None or bool(np.isnan(np.asarray(g)).any()):
+            return False
+        path = habitat_sim.ShortestPath()
+        path.requested_start = pf.snap_point(pos)
+        path.requested_end = g
+        return bool(pf.find_path(path))
 
     # ---------------------------------------------------------------- episode
 

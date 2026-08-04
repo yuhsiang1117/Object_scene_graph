@@ -1,0 +1,33 @@
+# @package _global_
+#
+# A/B TREATMENT: matched_single_floor + the navigable-standoff approach goal.
+# Identical to matched_single_floor (v1, YOLOE-11l @640px, success 0.18, camera
+# 0.88, llm_text, verification off, 7 single-floor scenes x 5 eps) except
+# agent.approach_navigable_goal=true, which places the approach goal at
+# approach_standoff_m from the object toward the agent instead of at the
+# nearest raw-free cell (0.05 m away, inside the object's inflation pocket).
+#
+# Baseline for the A/B: outputs/20260728_055050 (matched_single_floor, SR 40.0%).
+# Same seed/episodes, so the only variable is the approach-goal selection.
+#
+#   python scripts/run_eval.py +experiment=single_floor_navgoal
+defaults:
+  - override /detector: yoloe
+  - override /eval: hm3d_val_v1
+
+agent:
+  success_distance: 0.18
+  approach_navigable_goal: true
+  approach_standoff_m: 0.75
+
+eval:
+  num_episodes: 35
+  max_scene_repeat_episodes: 5
+  content_scenes:
+    - svBbv1Pavdk
+    - ziup5kvtCCR
+    - Nfvxx8J5NCo
+    - mv2HUxq3B53
+    - 5cdEh9F2hJL
+    - QaLdnwvtxbs
+    - Dd4bFSTQ8gi

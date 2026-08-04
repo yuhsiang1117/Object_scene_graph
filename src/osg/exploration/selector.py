@@ -7,9 +7,28 @@ from typing import Dict, List, Optional, Set
 
 import numpy as np
 
-from ..mapping.costmap import UNKNOWN, Costmap2D
+from ..mapping.costmap import OCCUPIED, UNKNOWN, Costmap2D
 from ..mapping.frontier import Frontier
 from ..planning.planner import Planner
+
+
+def _has_line_of_sight(costmap: Costmap2D, a_xy: np.ndarray, b_xy: np.ndarray) -> bool:
+    """True if no OCCUPIED cell lies on the straight segment a->b. A frontier
+    with clear line of sight from the agent has no wall between them, so it is
+    (almost always) in the same room -- less valuable to explore than an
+    occluded, behind-a-doorway frontier that opens a new room."""
+    a = costmap.world_to_grid(a_xy).astype(float)
+    b = costmap.world_to_grid(b_xy).astype(float)
+    n = int(max(abs(b[0] - a[0]), abs(b[1] - a[1]))) + 1
+    t = np.linspace(0.0, 1.0, 2 * n + 1)[:, None]
+    rc = np.rint(a[None, :] + t * (b - a)[None, :]).astype(int)
+    h, w = costmap.grid.shape
+    inb = (rc[:, 0] >= 0) & (rc[:, 0] < h) & (rc[:, 1] >= 0) & (rc[:, 1] < w)
+    rc = rc[inb]
+    if rc.shape[0] <= 2:
+        return True
+    # drop the last sample (the frontier boundary itself borders unknown/occupied)
+    return not (costmap.grid[rc[:-1, 0], rc[:-1, 1]] == OCCUPIED).any()
 
 
 def frontier_goal_xy(f: Frontier, costmap: Costmap2D) -> np.ndarray:
@@ -52,6 +71,9 @@ def select_frontier(
     failed_out: Optional[Set[int]] = None,
     info_gain_weight: float = 0.0,
     info_gain_radius_m: float = 2.5,
+    los_visibility_penalty: float = 1.0,
+    heading_xy: Optional[np.ndarray] = None,
+    continuity_weight: float = 0.0,
 ) -> Optional[Frontier]:
     """Best frontier by P_i / d_i among the top-N scored candidates.
     Candidates whose path planning failed are added to `failed_out` so the
@@ -74,7 +96,23 @@ def select_frontier(
     for f in candidates:
         base = scores.get(f.id, unscored_prior)
         boost = 1.0 + info_gain_weight * (gain[f.id] / gmax) if (gain and gmax > 0) else 1.0
+        # Continuity / momentum: boost frontiers that lie AHEAD of the agent's
+        # current heading, so consecutive frontier goals form a continuous sweep
+        # instead of the greedy argmax ping-ponging across the map (which spends
+        # ~30 steps travelling between far-apart frontiers). align in [0,1] =
+        # how forward the frontier direction is; behind-the-agent frontiers get
+        # no bonus (align clamped at 0), so the agent finishes the current
+        # direction before reversing.
+        if continuity_weight > 0.0 and heading_xy is not None:
+            d = f.centroid_xy - agent_xy
+            n = float(np.linalg.norm(d))
+            align = max(0.0, float(d @ heading_xy) / n) if n > 1e-6 else 0.0
+            boost *= 1.0 + continuity_weight * align
         f.score = base * boost
+        # Down-weight frontiers with clear line of sight from the agent: no wall
+        # between => same room => less likely to open a new room with the target.
+        if los_visibility_penalty < 1.0 and _has_line_of_sight(costmap, agent_xy, f.centroid_xy):
+            f.score *= los_visibility_penalty
     candidates.sort(key=lambda f: -(f.score or 0.0))
     candidates = candidates[:top_n]
 

@@ -1,0 +1,27 @@
+# @package _global_
+#
+# matched_old + VLM verification ON. Isolates a single variable against the
+# matched-config baseline (outputs/20260727_080903, SR 18.5%): whether adding a
+# VLM gate before the terminal STOP recovers the SR lost to confident-wrong-
+# object commitments (scripts/analyze_stages.py attribution: 106/200 episodes
+# reached APPROACH but failed, 87 of them far-misses >2m, 37 stopping on a
+# close/confident but wrong target detection with no verifier to catch them).
+#
+# Everything else is identical to matched_old: ObjectNav v1 episodes, YOLOE-11l
+# @640px, success_distance 0.18, camera height 0.88, llm_text frontier scoring,
+# 200 episodes at 10/scene across all 20 v1 val scenes. Only verification flips
+# off -> nim (meta/llama-3.2-11b-vision-instruct), with candidate-admission
+# gates held at the same loosened values (see configs/verification/nim.yaml).
+#
+#   python scripts/run_eval.py +experiment=matched_verify
+defaults:
+  - override /detector: yoloe
+  - override /eval: hm3d_val_v1
+  - override /verification: nim
+
+agent:
+  success_distance: 0.18
+
+eval:
+  num_episodes: 200
+  max_scene_repeat_episodes: 10

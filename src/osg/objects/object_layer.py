@@ -96,6 +96,8 @@ class ObjectLayer:
             if det.score > track.best_score:
                 track.best_score = det.score
                 track.best_crop = det.crop if det.crop is not None else det.crop_from(frame.rgb)
+                track.best_frame_rgb = frame.rgb  # shared by ref across same-frame tracks
+                track.best_bbox_xyxy = np.asarray(det.bbox_xyxy, dtype=float).copy()
                 x1, y1, x2, y2 = det.bbox_xyxy
                 track.best_bbox_px = float(max(0.0, x2 - x1) * max(0.0, y2 - y1))
                 # The pose this detection was made from is a proven

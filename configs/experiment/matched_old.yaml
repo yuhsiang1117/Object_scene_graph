@@ -1,0 +1,27 @@
+# @package _global_
+#
+# "Matched-config" run: reproduces the OLD ROS system's evaluation conditions
+# so the SR gap can be attributed rather than guessed. Run with:
+#
+#   python scripts/run_eval.py +experiment=matched_old llm=ollama
+#
+# Differences vs the default config.yaml (all three known setup deltas):
+#   1. dataset   -> ObjectNav v1 / HM3D-semantics v0.1, full val  (eval)
+#   2. detector  -> YOLOE-11l @ 640px (large), was yoloe_small 11s @ 512px
+#   3. success   -> success_distance 0.18 m, matching habitat_ros.py (was 0.10)
+#
+# Exploration (llm_text) and verification (off) already match the old
+# text-LLM-frontier / no-VLM-verify terminal, so they are left as-is.
+defaults:
+  - override /detector: yoloe
+  - override /eval: hm3d_val_v1
+
+agent:
+  success_distance: 0.18
+
+eval:
+  # Same scale as the old workspace: all 20 v1 val scenes (scene_index 0-19),
+  # 10 episodes from each = 200 (habitat rotates scenes via
+  # max_scene_repeat_episodes). Set num_episodes: -1 for the full 2000-ep split.
+  num_episodes: 200
+  max_scene_repeat_episodes: 10

@@ -1,0 +1,15 @@
+defaults:
+  - base_hm3d
+
+# Matches the OLD ROS system's benchmark for an apples-to-apples comparison.
+# The old workspace paired ObjectNav HM3D **v1** episodes with **v0.2** scenes
+# (download_objectnav.sh -> v1 zip; download_scenedata.sh -> hm3d_val_v0.2,
+# then symlinked as data/scene_datasets/hm3d). v1 episode scene_ids reference
+# `hm3d/val/...`, so the v0.2 scenes already on disk are exposed via that link:
+#   python scripts/download_data.py --episodes-version v1 --episodes-only
+#   ln -s hm3d_v0.2 data/scene_datasets/hm3d
+# No v0.1 scene download is needed (all 20 v1 val scenes exist in v0.2 val).
+split: val
+dataset_version: v1
+num_episodes: -1
+episodes_path: data/datasets/objectnav/hm3d/v1/{split}/{split}.json.gz

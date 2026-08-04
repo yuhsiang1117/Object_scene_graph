@@ -1,0 +1,38 @@
+# @package _global_
+#
+# matched_old restricted to SINGLE-FLOOR scenes, 5 episodes each. Same config
+# as matched_old (ObjectNav v1, YOLOE-11l @640px, success 0.18, camera 0.88,
+# llm_text scoring, verification off) so results are directly comparable to the
+# full matched runs and the approach-navigation diagnostics.
+#
+# Single-floor only removes the multi-floor confound: the 2D costmap + room
+# segmentation collapse multiple levels into one plane, so on 2-4 floor scenes
+# the agent can be asked to reach a goal on a floor the map cannot represent.
+# Isolating single-floor scenes gives a clean read on the planner-reachability
+# / approach-navigation failures without that confound.
+#
+# Scene list = the single-floor subset (configs/eval/hm3d_val_single_floor.yaml)
+# intersected with the v1 val split: 3 of the 10 measured single-floor scenes
+# (HY1NcmCgn3n, VBzV5z6i1WS, BAbdmeyTvMZ) are not in v1 val, leaving 7.
+# 7 scenes x 5 episodes = 35 episodes (habitat rotates via
+# max_scene_repeat_episodes).
+#
+#   python scripts/run_eval.py +experiment=matched_single_floor
+defaults:
+  - override /detector: yoloe
+  - override /eval: hm3d_val_v1
+
+agent:
+  success_distance: 0.18
+
+eval:
+  num_episodes: 35
+  max_scene_repeat_episodes: 5
+  content_scenes:
+    - svBbv1Pavdk
+    - ziup5kvtCCR
+    - Nfvxx8J5NCo
+    - mv2HUxq3B53
+    - 5cdEh9F2hJL
+    - QaLdnwvtxbs
+    - Dd4bFSTQ8gi

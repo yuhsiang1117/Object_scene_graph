@@ -14,5 +14,4 @@ api_key: ${oc.env:NVIDIA_API_KEY,missing}
 # Text scorer (frontier ranking) = NVIDIA Nemotron Nano 9B v2 (a reasoning
 # model; it emits thinking before the JSON, but extract_json recovers it, ~7s/call).
 text_model: nvidia/nvidia-nemotron-nano-9b-v2
-vlm_model: meta/llama-3.2-11b-vision-instruct
 send_response_format: false

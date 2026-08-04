@@ -1,0 +1,24 @@
+# @package _global_
+#
+# FULL v1 val, 5 episodes/scene (20 scenes = 100 episodes), best aligned config:
+#   - Habitat-navmesh navigation (use_habitat_navmesh) + reachability/retreat fixes
+#   - sweep exploration (nearest + momentum, info_gain=2), LLM-free
+#   - forced-choice VLM verify (verification=nim) -- rejects detector mislabels
+#     (e.g. stool->chair) before committing
+# NOTE: full v1 includes 13 multi-floor scenes the 2D costmap collapses, so SR
+# is dragged below the single-floor number. Run with all debug on.
+#
+#   python scripts/run_eval.py +experiment=full_v1_navmesh eval.debug_frames=true
+defaults:
+  - override /detector: yoloe
+  - override /eval: hm3d_val_v1
+  - override /verification: nim
+  - override /exploration: sweep
+
+agent:
+  success_distance: 0.18
+  use_habitat_navmesh: true
+
+eval:
+  num_episodes: 100
+  max_scene_repeat_episodes: 5

@@ -66,6 +66,13 @@ class ObjectTrack:
     ellipsoid: Ellipsoid
     observations: List[Observation] = field(default_factory=list)
     best_crop: Optional[np.ndarray] = None
+    # Full RGB frame + bbox (x1,y1,x2,y2) of the best detection: the VLM
+    # verifier judges the whole scene with the target boxed (more context than
+    # an isolated crop). Kept alongside best_crop (still used for scene-graph
+    # serialization). Frames are shared by reference across tracks seen in the
+    # same keyframe, so this does not store one full image per track.
+    best_frame_rgb: Optional[np.ndarray] = None
+    best_bbox_xyxy: Optional[np.ndarray] = None
     best_score: float = 0.0
     best_bbox_px: float = 0.0  # bbox area of the best detection, px^2
     best_cam_xy: Optional[np.ndarray] = None  # camera ground-plane pose of the best detection

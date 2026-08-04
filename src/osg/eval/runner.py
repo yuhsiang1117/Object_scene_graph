@@ -18,10 +18,60 @@ from ..exploration.llm_scorer import LLMTextScorer
 from ..llm.client import ChatClient
 from ..mapping.costmap import PLANE
 from .metrics import aggregate, per_category
-from .visualize import save_topdown
+from .visualize import overlay_segmentation, render_costmap_bgr, save_topdown
+
+
+class _DebugVideo:
+    """Per-episode debug video: each frame is [live RGB + YOLOE segmentation
+    overlay | top-down costmap] at every step. The detector is re-run here for
+    visualization only (it does not feed the object layer), so pipeline
+    behaviour / SR is unchanged. Enabled by eval.debug_frames."""
+
+    def __init__(self, cfg, out_dir: Path, episode_id) -> None:
+        import cv2
+
+        from ..mapping.costmap import PLANE as _PLANE
+
+        self._cv2 = cv2
+        self._plane = list(_PLANE)
+        self._cm_w = 480
+        self._h = cfg.eval.rgb_height
+        self._w = cfg.eval.rgb_width + self._cm_w
+        self._traj: list = []
+        path = out_dir / "viz" / "debug" / f"ep{episode_id}.mp4"
+        path.parent.mkdir(parents=True, exist_ok=True)
+        self._vw = cv2.VideoWriter(str(path), cv2.VideoWriter_fourcc(*"mp4v"), 8, (self._w, self._h))
+
+    def write(self, frame, agent, target: str, detector) -> None:
+        cv2 = self._cv2
+        agent_xy = frame.camera_position[self._plane]
+        self._traj.append(agent_xy)
+        dets = detector.detect(frame.rgb)  # viz-only; does not update object layer
+        seg = overlay_segmentation(frame.rgb, dets, target)
+        seg = cv2.resize(seg, (self._w - self._cm_w, self._h))
+        cm = render_costmap_bgr(
+            agent.costmap, agent_xy, self._traj,
+            path_xy=getattr(agent, "_current_path", None),
+            chosen_frontier=getattr(agent, "_current_frontier", None),
+            out_h=self._h,
+        )
+        cm = cv2.resize(cm, (self._cm_w, self._h))
+        panel = cv2.hconcat([seg, cm])
+        cv2.putText(panel, f"{target}  step {len(self._traj)}", (8, 20),
+                    cv2.FONT_HERSHEY_SIMPLEX, 0.55, (255, 255, 255), 2, cv2.LINE_AA)
+        self._vw.write(panel)
+
+    def close(self) -> None:
+        self._vw.release()
 
 
 def build_scorer(cfg) -> AsyncScorer:
+    # Geometric-only exploration (no LLM): nearest frontier weighted by
+    # exploration range (info gain). select_frontier falls back to
+    # unscored_prior for every frontier.
+    if getattr(cfg.exploration, "scorer", "llm_text") in ("nearest", "geometric", "none"):
+        from ..exploration.scorer import NullScorer
+        return AsyncScorer(NullScorer())
     # Old-algorithm pipeline: text-LLM frontier ranking over the scene-graph
     # subgraphs (ObjectSceneGraph_old frontiers_ranking).
     client = ChatClient(
@@ -31,6 +81,29 @@ def build_scorer(cfg) -> AsyncScorer:
     inner = LLMTextScorer(client, cfg.exploration.subgraph_radius_m,
                           cfg.exploration.max_frontiers_per_call)
     return AsyncScorer(inner)
+
+
+def build_verifier(cfg):
+    """VLM candidate verifier, or None when verification is disabled (the
+    old-algorithm terminal: viewpoint pre-position + bbox/depth stop, no VLM).
+
+    The verifier reuses the configured LLM endpoint/key (already NVIDIA NIM in
+    the matched setup) and only swaps in the vision model named by
+    verification.vlm_model -- the text scorer and the vision verifier share one
+    NIM account, differing only by model."""
+    if not cfg.verification.enabled:
+        return None
+    from ..verification.verifier import VLMVerifier
+
+    client = ChatClient(
+        cfg.llm.base_url, cfg.verification.vlm_model, cfg.llm.api_key,
+        cfg.llm.timeout_s, cfg.llm.max_image_px, cfg.llm.send_response_format,
+    )
+    return VLMVerifier(
+        client,
+        accept_confidence=cfg.verification.accept_confidence,
+        choice_mode=getattr(cfg.verification, "choice_mode", True),
+    )
 
 
 def build_detector(cfg):
@@ -79,6 +152,24 @@ def _unload_ollama_models(cfg) -> None:
             pass  # best-effort; ollama may be down in no-LLM ablations
 
 
+def _target_track_fields(agent) -> dict:
+    """Snapshot the committed target track for GT-localization analysis.
+
+    _target_obj_xy is set (in _start_approach) only once a candidate is
+    accepted into APPROACH, so it is None for episodes that never committed to
+    a target (pure exploration failures) -- recorded as None there."""
+    obj_xy = getattr(agent, "_target_obj_xy", None)
+    cand_id = getattr(agent, "_candidate_id", None)
+    track = agent.object_layer.get(cand_id) if cand_id is not None else None
+    best_cam = getattr(track, "best_cam_xy", None) if track is not None else None
+    return {
+        "target_obj_xy": [float(x) for x in obj_xy] if obj_xy is not None else None,
+        "cand_best_cam_xy": [float(x) for x in best_cam] if best_cam is not None else None,
+        "cand_best_score": float(track.best_score) if track is not None else None,
+        "cand_n_obs": int(track.n_obs) if track is not None else None,
+    }
+
+
 def run_eval(cfg) -> dict:
     from ..sim.habitat_env import HabitatObjectNavEnv
 
@@ -89,7 +180,9 @@ def run_eval(cfg) -> dict:
     env = HabitatObjectNavEnv(cfg)
     detector = build_detector(cfg)
     scorer = build_scorer(cfg)
-    verifier = None  # old-algorithm terminal: viewpoint pre-positioning + bbox stop, no VLM verify
+    verifier = build_verifier(cfg)
+    if verifier is not None and cfg.eval.debug_frames:
+        verifier.debug_dir = str(out_dir / "verify_debug")
 
     n_total = len(env.env.episodes)
     n_run = n_total if cfg.eval.num_episodes < 0 else min(cfg.eval.num_episodes, n_total)
@@ -105,6 +198,8 @@ def run_eval(cfg) -> dict:
         if wanted is not None and str(episode.episode_id) not in wanted:
             continue
         target = env.target_category()
+        if verifier is not None:
+            verifier.debug_tag = f"ep{episode.episode_id}"
 
         # scorer/verifier are built once and shared across every episode in
         # this run, so their call/error counters are cumulative — snapshot
@@ -112,6 +207,8 @@ def run_eval(cfg) -> dict:
         # would show the whole run's running total instead of its own.
         llm_calls_before, llm_errors_before = scorer.n_calls, scorer.n_errors
         llm_last_error_before = scorer.last_error
+        verify_calls_before = verifier.n_calls if verifier is not None else 0
+        verify_errors_before = verifier.n_errors if verifier is not None else 0
 
         # frontier.id/room.id both restart from 0/1 each episode (fresh
         # FrontierExtractor/RoomSegmenter per NavAgent below), but the
@@ -127,15 +224,22 @@ def run_eval(cfg) -> dict:
             keyframe_dir=str(out_dir / "keyframes" / f"ep{episode.episode_id}")
             if cfg.eval.save_viz else None,
             profiler=profiler,
+            nav_fn=env.action_to_goal if cfg.agent.use_habitat_navmesh else None,
+            reachable_fn=env.is_reachable if cfg.agent.use_habitat_navmesh else None,
         )
         trajectory = [frame.camera_position[list(PLANE)]]
+        dbg = _DebugVideo(cfg, out_dir, episode.episode_id) if cfg.eval.debug_frames else None
         t0 = time.time()
         steps = 0
         while not env.episode_over:
-            action = agent.act(frame)
+            action = agent.act(frame)  # updates agent.costmap from `frame`
+            if dbg is not None:
+                dbg.write(frame, agent, target, detector)
             frame = env.step(action)
             trajectory.append(frame.camera_position[list(PLANE)])
             steps += 1
+        if dbg is not None:
+            dbg.close()
 
         m = env.metrics()
         rec = {
@@ -153,10 +257,22 @@ def run_eval(cfg) -> dict:
             "llm_last_error": scorer.last_error if scorer.last_error != llm_last_error_before else None,
             "agent_stats": agent.stats,
             "state_log": agent.state_log[:40],
+            "frontier_select_log": agent.frontier_select_log,
             "giveup_log": agent.giveup_log[:50],
             "approach_bbox_log": agent.approach_bbox_log,
             "approach_stop_reason": agent.approach_stop_reason,
+            "approach_diag": agent.approach_diag,
             "final_xy": [float(x) for x in trajectory[-1]],
+            "verify_calls": (verifier.n_calls - verify_calls_before) if verifier is not None else 0,
+            "verify_errors": (verifier.n_errors - verify_errors_before) if verifier is not None else 0,
+            # GT-localization instrumentation: the mapped 3D center (x-z) of the
+            # object track the agent committed to APPROACH, plus that track's
+            # best-detection camera pose and score. d(target_obj_xy, GT goal)
+            # is the scene-graph localization error; d(final_xy, target_obj_xy)
+            # is the residual navigation error -- together they split "stopped
+            # far from goal" into mislocalized-track vs failed-nav vs false-
+            # positive detection (scripts/analyze_localization.py).
+            **_target_track_fields(agent),
         }
         results.append(rec)
         with open(episodes_file, "a") as f:

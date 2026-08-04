@@ -44,6 +44,9 @@ class AgentConfig:
     # fallback for when the mask has no valid depth.
     approach_stop_depth_m: float = 1.0
     approach_stop_bbox_px: float = 40_000.0
+    # Detection-based terminal stop (depth-stop, + bbox fallback). When False the
+    # approach relies solely on navmesh-arrival / deadline to terminate.
+    approach_depth_stop: bool = True
     approach_max_steps: int = 12  # ~3 m of travel at forward_m=0.25
     # Tighter-than-default planner/controller stopping precision for the
     # final APPROACH segment only (P1f). HM3D success is a geodesic
@@ -56,6 +59,35 @@ class AgentConfig:
     # grid discretization.
     approach_goal_tolerance_m: float = 0.12
     approach_arrival_tol_m: float = 0.1
+    # Approach-goal selection. The default (_nearest_free_xy) snaps the goal to
+    # the nearest RAW-free cell to the object center (~0.05 m away), which often
+    # lands in a pocket walled by the object's OCCUPIED cells: the Voronoi
+    # medial axis keeps 0.25 m clearance so it has no node there, and A* (only
+    # OCCUPIED is hard-blocked) cannot enter the enclosed pocket -> planner_no_
+    # path, agent strands ~1.9 m out (scripts/analyze_approach.py: 17/18
+    # path_consumed = planner_no_path, 81% stall >1 m from a free, object-
+    # adjacent goal on a real viewpoint). When approach_navigable_goal is set,
+    # the goal is placed at approach_standoff_m from the object ALONG THE RAY
+    # TOWARD THE AGENT -- the side the object was actually observed from, so it
+    # sits in open, reachable space at roughly the distance successes stop at
+    # (~0.9 m; the depth-stop still fires en route at <=1 m).
+    approach_navigable_goal: bool = False
+    approach_standoff_m: float = 0.75
+    # Drive on Habitat's own navmesh (ShortestPathFollower) instead of the
+    # from-scratch costmap planner + waypoint controller -- mirroring the OLD
+    # ObjectSceneGraph stack, which publishes a goal point and lets Habitat plan
+    # and execute. Perception / scene graph / frontier selection are unchanged;
+    # only path planning + execution (and the terminal approach: navigate to the
+    # object position, then STOP on arrival, like the old /goal_object) switch
+    # to the navmesh. Removes the self-built-costmap failure modes (planner_no_
+    # path, stuck-give-up) that the old system never had. See docs/INVESTIGATION.
+    use_habitat_navmesh: bool = False
+    navmesh_goal_radius: float = 0.1
+    # Max steps to reach a committed target on the navmesh before giving up the
+    # approach. Large because navmesh drives the full distance to the object
+    # (no viewpoint pre-positioning); the 12-step short-leg cap used in costmap
+    # mode would otherwise cut the approach off while the target is still in view.
+    navmesh_approach_steps: int = 200
 
 
 @dataclass
@@ -143,6 +175,16 @@ class ExplorationConfig:
     # normalized against the best candidate each round. 0 weight disables it.
     info_gain_weight: float = 2.0
     info_gain_radius_m: float = 2.5
+    # Continuity / momentum bonus: prefer the next frontier to lie AHEAD of the
+    # agent's current heading, so exploration sweeps continuously instead of the
+    # greedy argmax ping-ponging between far-apart frontiers (~30 steps/trip).
+    # 0 = off; higher = stronger preference for staying the course.
+    continuity_weight: float = 0.0
+    # Line-of-sight visibility down-weighting: multiply the score of frontiers
+    # the agent has clear line of sight to (no wall between => same room) by this
+    # factor, so exploration prefers occluded, behind-a-doorway frontiers that
+    # open new rooms. 1.0 = off; <1.0 penalizes visible/same-room frontiers.
+    los_visibility_penalty: float = 1.0
 
 
 @dataclass
@@ -178,6 +220,31 @@ class VerificationConfig:
     min_evidence: float = 1.0
     ring_radii_m: List[float] = field(default_factory=lambda: [0.8, 1.2, 1.5, 2.0])
     accept_confidence: float = 0.5
+    # Forced-choice verification: instead of asking the VLM "is this a <target>?"
+    # (which it tends to agree with), show it the object and the FULL category
+    # list and make it pick the single best-matching category; accept only if it
+    # picks the target. This catches detector mislabels -- a table YOLOE called a
+    # chair -> VLM picks "table" -> reject -- that a yes/no question waves through.
+    choice_mode: bool = True
+    # Center-then-verify: when a VLM verifier is active and the target is
+    # visible in the live view, turn to bring its detection to the middle of
+    # the camera before calling the VLM, then verify that well-framed live frame
+    # (whole image + red box). Centering gives the VLM a clear, unambiguous view
+    # instead of a target at the frame edge. center_tol_deg is "close enough to
+    # centered" -- >= half the turn angle so a single turn does not overshoot.
+    center_before_verify: bool = True
+    center_tol_deg: float = 16.0
+    center_max_turns: int = 6
+    # Terminal-view verification: instead of (or in addition to) verifying the
+    # track's historical best_crop before APPROACH, verify the LIVE close-up
+    # frame at the moment the agent decides to STOP. The pre-approach best_crop
+    # is category-correct even for false positives (a distant chair-like object
+    # really looks like a chair), so verifying it accepts ~97% and does not
+    # move SR; the terminal close-up is the decisive view and can reject a
+    # false positive right before the commit. When terminal=True the
+    # pre-approach VLM call is skipped (accept) so this isolates the terminal
+    # gate. A rejected terminal STOP blacklists the track and resumes exploring.
+    terminal: bool = False
     # Verification is rare (1-3 calls/episode) and precision-critical: the 3B
     # VLM rejected clear true positives in prompt-lab tests; 7B passed all.
     vlm_model: str = "qwen2.5vl:7b"
@@ -186,7 +253,12 @@ class VerificationConfig:
 @dataclass
 class MappingConfig:
     resolution_m: float = 0.05
-    obstacle_low_m: float = 0.1  # sim depth is noise-free; catch low furniture bases
+    # Lower bound 0.15 (was 0.1): more floor tolerance before slightly-raised
+    # ground (thresholds, rugs, ramps, floor_y drift) reads as an obstacle at
+    # the robot's feet. Ceiling kept at 1.5 (aligning the FULL band to the old
+    # [0.15, 0.88] regressed SR 40% -> 28.6% -- the 0.88 m ceiling, not the
+    # lower bound, was the culprit; see docs/INVESTIGATION.md).
+    obstacle_low_m: float = 0.15
     obstacle_high_m: float = 1.5
     max_range_m: float = 5.0
     depth_stride: int = 4
@@ -200,11 +272,21 @@ class EvalConfig:
     episodes_path: str = "data/datasets/objectnav/hm3d/v2/{split}/{split}.json.gz"
     scenes_dir: str = "data/scene_datasets/"
     num_episodes: int = -1  # -1 = all
+    # >0 forces habitat to move to a new scene after this many episodes, so a
+    # fixed-size subset spans the split instead of draining one scene first.
+    # -1 = habitat default (group by scene, ~10000-step budget per scene).
+    max_scene_repeat_episodes: int = -1
     episode_ids: Optional[List[str]] = None
     # Restrict the eval to specific scene ids (None/["*"] = all). Used by the
     # single-floor preset since the 2D scene graph cannot represent stairs.
     content_scenes: Optional[List[str]] = None
     save_viz: bool = True
+    # Per-step debug video: for each episode write viz/debug/ep<ID>.mp4 whose
+    # frames are [live RGB + YOLOE segmentation overlay | top-down costmap] at
+    # every step. The detector is re-run per step FOR VISUALIZATION ONLY (it
+    # does not feed the object layer -- keyframe detection is unchanged), so SR
+    # is unaffected; it roughly doubles detector load, hence off by default.
+    debug_frames: bool = False
     rgb_width: int = 640
     rgb_height: int = 480
     hfov_deg: float = 79.0

@@ -42,14 +42,39 @@ FRONTIER_IMAGE_NOTE = (
 
 
 VERIFY_SYSTEM = (
-    "You help a robot double-check its object detector. Reject only clearly "
-    "mislabeled objects; partial views or unusual angles of the right "
-    "category count as correct. Answer with JSON only."
+    "You help a robot double-check its object detector. You are shown the full "
+    "camera image with ONE candidate object outlined by a red bounding box. "
+    "Judge only the object inside the red box, using the rest of the scene as "
+    "context. Reject only clearly mislabeled objects; partial views or unusual "
+    "angles of the right category count as correct. Answer with JSON only."
 )
 
-# Describe-then-decide: making the model describe the image first grounds
-# the decision (direct yes/no flipped on borderline crops in prompt-lab
-# tests; the description-anchored variant was correct on all references).
-VERIFY_USER = """First describe what you see, then decide: does the image show a {target},
+# Describe-then-decide: making the model describe the boxed object first grounds
+# the decision (direct yes/no flipped on borderline cases in prompt-lab tests;
+# the description-anchored variant was correct on all references). The full
+# image + red box gives the VLM scene context a bare crop loses.
+VERIFY_USER = """The image has one object outlined by a red bounding box. First describe the
+object inside the red box, then decide: is the object inside the red box a {target},
 even partially or occluded?
 Respond as JSON: {{"description": "<short>", "is_target": true/false, "confidence": <0-1>}}"""
+
+
+# Forced-choice variant: rather than confirm one label (which the VLM tends to
+# agree with), show the full category list and make it commit to the single best
+# match -- a detector mislabel (table called a chair) then gets named correctly
+# and rejected. The candidate categories are the HM3D ObjectNav goal set; "none"
+# lets the VLM reject an object that matches nothing in the list.
+OBJECTNAV_CATEGORIES = ["chair", "bed", "sofa", "toilet", "plant", "tv monitor"]
+
+VERIFY_CHOICE_SYSTEM = (
+    "You help a robot identify an object. You are shown the full camera image "
+    "with ONE object outlined by a red bounding box. From the given list of "
+    "categories, choose the SINGLE category that best matches the object inside "
+    "the red box; if it clearly matches none of them, answer \"none\". Judge only "
+    "the boxed object, using the rest of the scene as context. Answer with JSON only."
+)
+
+VERIFY_CHOICE_USER = """Categories: {categories}.
+First describe the object inside the red bounding box, then choose the single
+best-matching category from the list above (or "none" if it fits none).
+Respond as JSON: {{"description": "<short>", "category": "<one category or none>", "confidence": <0-1>}}"""

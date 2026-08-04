@@ -31,3 +31,17 @@ class FrontierScorer(ABC):
         see FrontierExtractor/RoomSegmenter) must override this, or stale
         entries from a previous, unrelated scene silently leak into the
         current one whenever an id happens to collide. No-op by default."""
+
+
+class NullScorer(FrontierScorer):
+    """No semantic scoring: returns no scores, so select_frontier falls back to
+    unscored_prior for every frontier and selection is purely GEOMETRIC --
+    utility = (1 + info_gain_weight * gain/gain_max) / path_cost, i.e. the
+    nearest frontier that also opens the largest unexplored area. Disables the
+    LLM entirely (no scoring calls, no NIM dependency)."""
+
+    def score(self, frontiers, sg, target, keyframes=None) -> Dict[int, float]:
+        return {}
+
+    def reset(self) -> None:
+        pass

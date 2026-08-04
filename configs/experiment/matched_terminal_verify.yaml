@@ -1,0 +1,27 @@
+# @package _global_
+#
+# matched_old + TERMINAL-view verification. A/B against the matched baseline
+# (verify off: outputs/20260727_135430, SR 19.5%). The only change vs
+# matched_old is that the VLM (NIM llama-3.2-11b-vision) judges the live
+# close-up frame at the STOP decision and can reject a false-positive commit
+# (blacklist + keep exploring). Everything else is identical: ObjectNav v1,
+# YOLOE-11l @640px, success 0.18, camera 0.88, llm_text scoring, loosened
+# candidate gates, 200 episodes at 10/scene across all 20 v1 val scenes.
+#
+# Targets the 38.5% of approach failures attributed to false-positive
+# detections (scripts/analyze_trackloc.py); pre-approach best_crop verification
+# (matched_verify, SR 17.5%) could not catch these because the crop is
+# category-correct.
+#
+#   python scripts/run_eval.py +experiment=matched_terminal_verify
+defaults:
+  - override /detector: yoloe
+  - override /eval: hm3d_val_v1
+  - override /verification: nim_terminal
+
+agent:
+  success_distance: 0.18
+
+eval:
+  num_episodes: 200
+  max_scene_repeat_episodes: 10

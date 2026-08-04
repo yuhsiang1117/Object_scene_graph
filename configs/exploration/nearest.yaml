@@ -1,0 +1,10 @@
+defaults:
+  - base_vlm
+
+# Geometric exploration (no LLM): pick the NEAREST frontier weighted by its
+# exploration range (info gain over unknown cells). select_frontier gives every
+# frontier unscored_prior, so utility = (1 + info_gain_weight*gain/gain_max) /
+# path_cost -- nearest + largest-unexplored-area. Zero LLM scoring calls.
+scorer: nearest
+info_gain_weight: 2.0
+info_gain_radius_m: 2.5
