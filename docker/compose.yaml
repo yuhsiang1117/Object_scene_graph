@@ -1,7 +1,6 @@
 services:
   ollama:
     image: ollama/ollama:latest
-    container_name: ollama
     restart: unless-stopped
     environment:
       - OLLAMA_KEEP_ALIVE=30m
@@ -21,19 +20,17 @@ services:
 
   nav:
     build:
-      context: ..
-      dockerfile: docker/Dockerfile
+      context: .
+      dockerfile: Dockerfile
       args:
         USER_UID: ${UID:-1000}
         USER_GID: ${GID:-1000}
-    container_name: nav
     runtime: nvidia
     depends_on:
       - ollama
     stdin_open: true
     tty: true
-    command: ["sleep", "infinity"]
-    user: "${UID:-1000}:${GID:-1000}"
+    command: ["bash"]
     environment:
       - OLLAMA_HOST=http://ollama:11434
       - NVIDIA_DRIVER_CAPABILITIES=all

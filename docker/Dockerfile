@@ -60,11 +60,7 @@ RUN pip install --no-cache-dir git+https://github.com/ultralytics/CLIP.git
 
 RUN printf '\n# habitat env for `docker exec -it ... bash`\nif [ -z "$CONDA_DEFAULT_ENV" ]; then\n  source /opt/conda/etc/profile.d/conda.sh\n  conda activate habitat\nfi\n' >> /etc/bash.bashrc
 
-# Install Claude CLI (Claude Code)
-RUN --mount=type=cache,target=/var/cache/apt,sharing=private \
-    curl -fsSL https://claude.ai/install.sh | bash
-
-COPY docker/entrypoint.sh /entrypoint.sh
+COPY /entrypoint.sh /entrypoint.sh
 RUN chmod +x /entrypoint.sh
 
 ARG USERNAME=user
@@ -79,6 +75,11 @@ RUN --mount=type=cache,target=/var/cache/apt,sharing=private \
     && rm -rf /var/lib/apt/lists/*
 
 USER $USERNAME
+
+COPY --chown=$USERNAME:$USERNAME \
+     modules/install_claude_code.sh /tmp/install_claude_code.sh
+RUN --mount=type=cache,target=/var/cache/apt,sharing=private \
+    /tmp/install_claude_code.sh && rm /tmp/install_claude_code.sh
 
 WORKDIR /workspace
 ENTRYPOINT ["/entrypoint.sh"]
