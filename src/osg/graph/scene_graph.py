@@ -6,14 +6,27 @@ edges are derived on demand during serialization.
 """
 from __future__ import annotations
 
+from collections import Counter
 from dataclasses import dataclass, field
 from typing import Dict, List, Optional
 
 import numpy as np
 
-from ..mapping.costmap import PLANE, Costmap2D
+from ..mapping.costmap import HEIGHT_AXIS, PLANE, Costmap2D
 from ..objects.object_layer import ObjectLayer
 from ..perception.keyframe import KeyframeRef
+
+
+@dataclass
+class FloorNode:
+    """A storey. The missing middle of the advertised building -> room -> object
+    hierarchy (docs/MULTI_FLOOR.md); ids come from mapping.floors.FloorEstimator
+    and are creation-ordered, so never infer "upstairs" from the id."""
+
+    id: int
+    height_y: float
+    label: Optional[str] = None
+    room_ids: List[int] = field(default_factory=list)
 
 
 @dataclass
@@ -22,6 +35,7 @@ class RoomNode:
     label: Optional[str] = None  # e.g. "bedroom"; set by the LLM, cached
     centroid_xy: np.ndarray = field(default_factory=lambda: np.zeros(2))
     n_cells: int = 0
+    floor_id: int = 0
 
 
 @dataclass
@@ -32,19 +46,30 @@ class ObjectNodeView:
     room_id: int  # 0 = unassigned
     n_obs: int
     best_crop: Optional[np.ndarray] = None
+    floor_id: int = 0
 
 
 class SceneGraph:
     def __init__(self) -> None:
         self.rooms: Dict[int, RoomNode] = {}
         self.objects: List[ObjectNodeView] = []
+        self.floors: Dict[int, FloorNode] = {}
 
     def rebuild(
         self,
         room_labels: np.ndarray,  # (H, W) int32 room-id map (0 = none)
         costmap: Costmap2D,
         object_layer: ObjectLayer,
+        floors=None,  # mapping.floors.FloorEstimator, or None
     ) -> None:
+        """Rebuild the graph over the live object layer.
+
+        `floors` is optional: without it every node lands on floor 0, which is
+        exactly the previous single-floor behaviour. With it, an object's storey
+        comes from its 3D centre height -- the height that used to be discarded
+        here, so a bed upstairs and a bed directly below it were one node's
+        worth of ambiguity to every consumer.
+        """
         prev_room_names = {rid: r.label for rid, r in self.rooms.items()}
         self.rooms = {}
         for rid in np.unique(room_labels):
@@ -76,8 +101,35 @@ class SceneGraph:
                     room_id=room_id,
                     n_obs=track.n_obs,
                     best_crop=track.best_crop,
+                    floor_id=floors.floor_of_height(float(center[HEIGHT_AXIS]))
+                    if floors is not None and floors.levels else 0,
                 )
             )
+
+        self._rebuild_floors(floors)
+
+    def _rebuild_floors(self, floors) -> None:
+        """Attach floor nodes and push each room onto a storey.
+
+        While there is one shared costmap, a room is a 2D region that cannot
+        itself be split by height, so a room takes the storey most of its
+        objects are on. Per-floor room segmentation supersedes this once each
+        floor has its own costmap.
+        """
+        self.floors = {}
+        if floors is None or not floors.levels:
+            return
+        for fid, height in floors.levels.items():
+            self.floors[fid] = FloorNode(id=fid, height_y=height)
+        for rid, room in self.rooms.items():
+            objs = [o for o in self.objects if o.room_id == rid]
+            if objs:
+                room.floor_id = Counter(o.floor_id for o in objs).most_common(1)[0][0]
+            else:
+                room.floor_id = floors.current
+            self.floors.setdefault(
+                room.floor_id, FloorNode(id=room.floor_id, height_y=0.0)
+            ).room_ids.append(rid)
 
     def _nearest_room(self, xy: np.ndarray, max_dist: float = 3.0) -> int:
         best, best_d = 0, max_dist

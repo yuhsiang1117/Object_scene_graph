@@ -39,6 +39,20 @@ the `scripts/analyze_*.py` tools.
   test — it succeeds via one specific trajectory, and *any* exploration change
   perturbs that path and flips the outcome. Evaluate on the full 35-episode
   single-floor set (or 200-episode full set) where perturbations average out.
+- **Runs are NOT reproducible while the VLM verifier is on** (measured
+  2026-08). Two runs of *identical code and config* diverged on 2 of 4
+  episodes (`verify_reject` 3 vs 1; ep0 5 steps/dtg 8.28 vs 240 steps/dtg
+  9.45). The hosted NIM verifier is the only nondeterministic component —
+  `exploration=sweep` uses `NullScorer`, so with `verification=off` the same
+  four episodes reproduce **exactly** (same steps, same `final_xy`).
+
+  This undercuts the same-seed premise above: a small-n A/B with
+  `verification=nim` cannot distinguish a code change from VLM noise. Any A/B
+  meant to prove two configs *equivalent* must run `verification=off`, where
+  the comparison is exact. A/Bs measuring an SR *difference* can keep the
+  verifier but need n large enough to swamp the flips — several of the
+  small-n verification A/Bs in the table below are weaker evidence than their
+  episode counts suggest.
 
 ## Diagnostic tools (`scripts/`)
 

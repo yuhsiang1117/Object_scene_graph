@@ -16,8 +16,9 @@ from ..core.profiler import Profiler
 from ..exploration.async_scorer import AsyncScorer
 from ..exploration.llm_scorer import LLMTextScorer
 from ..llm.client import ChatClient
-from ..mapping.costmap import PLANE
-from .metrics import aggregate, per_category
+from ..mapping.costmap import HEIGHT_AXIS, PLANE
+from .floors import episode_floor_fields
+from .metrics import aggregate, per_category, per_floor_class
 from .visualize import overlay_segmentation, render_costmap_bgr, save_topdown
 
 
@@ -27,7 +28,7 @@ class _DebugVideo:
     visualization only (it does not feed the object layer), so pipeline
     behaviour / SR is unchanged. Enabled by eval.debug_frames."""
 
-    def __init__(self, cfg, out_dir: Path, episode_id) -> None:
+    def __init__(self, cfg, out_dir: Path, tag: str) -> None:
         import cv2
 
         from ..mapping.costmap import PLANE as _PLANE
@@ -38,7 +39,7 @@ class _DebugVideo:
         self._h = cfg.eval.rgb_height
         self._w = cfg.eval.rgb_width + self._cm_w
         self._traj: list = []
-        path = out_dir / "viz" / "debug" / f"ep{episode_id}.mp4"
+        path = out_dir / "viz" / "debug" / f"{tag}.mp4"
         path.parent.mkdir(parents=True, exist_ok=True)
         self._vw = cv2.VideoWriter(str(path), cv2.VideoWriter_fourcc(*"mp4v"), 8, (self._w, self._h))
 
@@ -170,6 +171,51 @@ def _target_track_fields(agent) -> dict:
     }
 
 
+def episode_tag(episode) -> str:
+    """Filesystem-safe, UNIQUE per-episode tag: `<scene>_ep<id>`.
+
+    `episode_id` alone is not unique -- HM3D numbers episodes per scene, so a
+    run spanning scenes collides. Measured on a 100-episode v1 run: 50 episodes
+    yielded only 40 distinct ids, silently overwriting 10 debug videos, top-down
+    maps and keyframe directories (last scene wins). Every per-episode artifact
+    path must include the scene.
+    """
+    scene = str(getattr(episode, "scene_id", "")).split("/")[-1].split(".")[0]
+    return f"{scene}_ep{episode.episode_id}" if scene else f"ep{episode.episode_id}"
+
+
+STAIR_LABELS = ("stairs", "staircase", "stair")
+
+
+def _stair_track_fields(agent) -> dict:
+    """Snapshot the mapped `stairs` tracks.
+
+    `"stairs"` is already in DEFAULT_VOCABULARY (core/config.py), so YOLOE has
+    always been detecting staircases into the object layer -- but nothing has
+    ever consumed or measured them. Stage 4 of the multi-floor plan
+    (docs/MULTI_FLOOR.md) assumes these tracks exist and are usable; this logs
+    the evidence to confirm or falsify that BEFORE the stair-detection work is
+    built on top of it. Cheap: a filter over tracks the layer already holds.
+    """
+    tracks = [
+        t for t in agent.object_layer.tracks(include_blacklisted=True)
+        if str(t.label).lower().replace("_", " ") in STAIR_LABELS
+    ]
+    return {
+        "n_stair_tracks": len(tracks),
+        "stair_tracks": [
+            {
+                "center": [round(float(x), 3) for x in agent.object_layer.center_of(t)],
+                "n_obs": int(t.n_obs),
+                "evidence": round(float(t.evidence), 3),
+                "best_score": round(float(t.best_score), 3),
+                "best_bbox_px": round(float(t.best_bbox_px), 1),
+            }
+            for t in tracks[:20]
+        ],
+    }
+
+
 def run_eval(cfg) -> dict:
     from ..sim.habitat_env import HabitatObjectNavEnv
 
@@ -198,8 +244,9 @@ def run_eval(cfg) -> dict:
         if wanted is not None and str(episode.episode_id) not in wanted:
             continue
         target = env.target_category()
+        ep_tag = episode_tag(episode)
         if verifier is not None:
-            verifier.debug_tag = f"ep{episode.episode_id}"
+            verifier.debug_tag = ep_tag
 
         # scorer/verifier are built once and shared across every episode in
         # this run, so their call/error counters are cumulative — snapshot
@@ -221,14 +268,21 @@ def run_eval(cfg) -> dict:
         profiler = Profiler()
         agent = NavAgent(
             cfg, detector, scorer, verifier, target,
-            keyframe_dir=str(out_dir / "keyframes" / f"ep{episode.episode_id}")
+            keyframe_dir=str(out_dir / "keyframes" / ep_tag)
             if cfg.eval.save_viz else None,
             profiler=profiler,
             nav_fn=env.action_to_goal if cfg.agent.use_habitat_navmesh else None,
             reachable_fn=env.is_reachable if cfg.agent.use_habitat_navmesh else None,
         )
         trajectory = [frame.camera_position[list(PLANE)]]
-        dbg = _DebugVideo(cfg, out_dir, episode.episode_id) if cfg.eval.debug_frames else None
+        # Height is tracked alongside the 2D trajectory (rather than making
+        # `trajectory` 3D) so the analyze_*.py tools keep working unchanged,
+        # while episodes.jsonl finally records which floor the agent was on.
+        # Camera height is subtracted so these are FLOOR heights, directly
+        # comparable to episode.start_position and the goal view points.
+        cam_h = float(cfg.agent.camera_height)
+        trajectory_y = [float(frame.camera_position[HEIGHT_AXIS]) - cam_h]
+        dbg = _DebugVideo(cfg, out_dir, ep_tag) if cfg.eval.debug_frames else None
         t0 = time.time()
         steps = 0
         while not env.episode_over:
@@ -237,6 +291,7 @@ def run_eval(cfg) -> dict:
                 dbg.write(frame, agent, target, detector)
             frame = env.step(action)
             trajectory.append(frame.camera_position[list(PLANE)])
+            trajectory_y.append(float(frame.camera_position[HEIGHT_AXIS]) - cam_h)
             steps += 1
         if dbg is not None:
             dbg.close()
@@ -273,6 +328,22 @@ def run_eval(cfg) -> dict:
             # far from goal" into mislocalized-track vs failed-nav vs false-
             # positive detection (scripts/analyze_localization.py).
             **_target_track_fields(agent),
+            # Floor instrumentation: which floor the goal is on relative to the
+            # start pose, and whether the agent actually changed level. Without
+            # this the single-floor / multi-floor SR split (the dominant
+            # remaining loss, docs/MULTI_FLOOR.md) is not reproducible from
+            # episodes.jsonl.
+            **episode_floor_fields(episode, trajectory_y),
+            **_stair_track_fields(agent),
+            # Online floor estimate (osg/mapping/floors.py). Compare
+            # n_floors_seen against the per-scene navmesh ground truth from
+            # scripts/scene_floors.py to validate the estimator before any
+            # behaviour is allowed to depend on it.
+            "floor_log": agent.floor_log,
+            "n_floors_seen": len(agent.floors.levels),
+            "floor_y_drift": round(float(agent.floor_y_drift), 4),
+            "floor_transitions": len(agent.floors.transitions),
+            "portal_log": agent.portal_log,
         }
         results.append(rec)
         with open(episodes_file, "a") as f:
@@ -283,7 +354,7 @@ def run_eval(cfg) -> dict:
 
         if cfg.eval.save_viz:
             save_topdown(
-                str(out_dir / "viz" / f"ep{episode.episode_id}.png"),
+                str(out_dir / "viz" / f"{ep_tag}.png"),
                 agent.costmap,
                 trajectory,
                 scene_graph=agent.scene_graph,
@@ -307,6 +378,7 @@ def run_eval(cfg) -> dict:
         },
         "metrics": aggregate(results),
         "per_category": per_category(results),
+        "per_floor_class": per_floor_class(results),
         "timing": profiler_all.report(),
         "pipeline_fps": round(profiler_all.fps("control_loop"), 2),
     }

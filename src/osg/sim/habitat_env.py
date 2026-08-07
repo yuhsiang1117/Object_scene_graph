@@ -104,14 +104,29 @@ class HabitatObjectNavEnv:
             )
         return self._follower
 
-    def action_to_goal(self, goal_xy) -> Optional[str]:
-        """Next discrete action to drive toward a ground-plane goal on Habitat's
-        navmesh, or None if arrived (within goal_radius) or the goal is not
-        navigable. Snaps the 2D goal to the nearest navmesh point at the agent's
-        current floor height."""
+    def _goal3d(self, goal, floor_y=None) -> np.ndarray:
+        """Lift a goal to a 3D navmesh query point.
+
+        A 3-vector passes through. A 2-vector gets a height: `floor_y` when the
+        caller knows which storey the goal is on, otherwise the agent's own
+        height -- the historical behaviour, which silently forces every goal
+        onto the agent's current floor. That substitution is why cross-floor
+        targets read as unreachable (see docs/MULTI_FLOOR.md).
+        """
+        g = np.asarray(goal, dtype=float).ravel()
+        if g.size == 3:
+            return g.astype(np.float32)
+        y = float(self.env.sim.get_agent_state().position[1]) if floor_y is None else float(floor_y)
+        return np.array([float(g[0]), y, float(g[1])], dtype=np.float32)
+
+    def action_to_goal(self, goal_xy, floor_y=None) -> Optional[str]:
+        """Next discrete action to drive toward a goal on Habitat's navmesh, or
+        None if arrived (within goal_radius) or the goal is not navigable.
+
+        `goal_xy` is a ground-plane (x, z) pair or a full 3D point; a 2D goal is
+        snapped at `floor_y`, defaulting to the agent's current height."""
         follower = self._ensure_follower()
-        pos = self.env.sim.get_agent_state().position
-        goal3d = np.array([float(goal_xy[0]), float(pos[1]), float(goal_xy[1])], dtype=np.float32)
+        goal3d = self._goal3d(goal_xy, floor_y)
         snapped = self.env.sim.pathfinder.snap_point(goal3d)
         if snapped is None or bool(np.isnan(np.asarray(snapped)).any()):
             return None  # unreachable -> caller treats as "arrived" and re-decides
@@ -123,17 +138,21 @@ class HabitatObjectNavEnv:
             return None  # arrived at goal
         return self._action_name.get(int(a))
 
-    def is_reachable(self, goal_xy) -> bool:
-        """Whether a ground-plane goal is on the same navmesh component as the
-        agent (a geodesic path exists). Targets in sealed/disconnected rooms
-        (closed door or a step in the mesh) are visible but unreachable -- the
-        agent should not commit to them."""
+    def is_reachable(self, goal_xy, floor_y=None) -> bool:
+        """Whether a goal is on the same navmesh component as the agent (a
+        geodesic path exists). Targets in sealed/disconnected rooms (closed door
+        or a step in the mesh) are visible but unreachable -- the agent should
+        not commit to them.
+
+        Pass a 3D goal (or `floor_y`) for anything that may be on another
+        storey: with a bare 2D goal the agent's own height is substituted, so a
+        target one floor up snaps to whatever is under the agent instead and is
+        reported unreachable even when the navmesh connects the two."""
         import habitat_sim
 
         pf = self.env.sim.pathfinder
         pos = self.env.sim.get_agent_state().position
-        goal3d = np.array([float(goal_xy[0]), float(pos[1]), float(goal_xy[1])], dtype=np.float32)
-        g = pf.snap_point(goal3d)
+        g = pf.snap_point(self._goal3d(goal_xy, floor_y))
         if g is None or bool(np.isnan(np.asarray(g)).any()):
             return False
         path = habitat_sim.ShortestPath()

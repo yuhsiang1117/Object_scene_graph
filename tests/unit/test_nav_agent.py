@@ -29,6 +29,7 @@ from osg.core.types import CameraIntrinsics, Detection
 from osg.exploration.async_scorer import AsyncScorer
 from osg.exploration.scorer import FrontierScorer
 from osg.mapping.costmap import FREE, OCCUPIED, UNKNOWN
+from osg.mapping.frontier import Frontier
 from osg.perception.detector import StubDetector
 
 from .conftest import make_camera, make_frame
@@ -54,6 +55,10 @@ def make_cfg(**agent_overrides) -> types.SimpleNamespace:
             frontier_min_cells=8, frontier_dedup_m=1.0,
             unscored_prior=0.3, min_path_cost_m=0.5, top_n_frontiers=5,
             info_gain_weight=2.0, info_gain_radius_m=2.5,
+            # Defaults from ExplorationConfig; the stub must carry every field
+            # _select_new_frontier reads or it fails with AttributeError
+            # rather than testing anything.
+            los_visibility_penalty=1.0, continuity_weight=0.0,
         ),
         scene_graph=types.SimpleNamespace(
             room_min_radius_m=0.9, room_door_width_m=1.2,
@@ -306,7 +311,11 @@ def test_giveup_logged_with_frontier_and_agent_position():
     agent = make_agent()
     _carve_free_square(agent)
     agent.state = State.GOTO_FRONTIER
-    agent._current_frontier = types.SimpleNamespace(centroid_xy=np.array([3.0, 4.0]), id=0)
+    # A real Frontier, not a namespace: the blacklist is floor-scoped, so a
+    # stub missing `.floor` diverges from anything production ever produces.
+    agent._current_frontier = Frontier(
+        id=0, centroid_xy=np.array([3.0, 4.0]), cells=np.zeros((0, 2), dtype=int), size=0
+    )
     agent.step_count = 100
     agent._progress_ref_step = 80  # 20 steps ago, past the 15-step check window
     agent._progress_ref_xy = np.array([0.0, 0.0])  # same as current -> "no progress"
@@ -354,3 +363,41 @@ def test_follow_to_threads_configured_tolerances_to_planner_and_controller():
 
     assert plan_calls == [0.12]
     assert act_calls == [0.1]
+
+
+# --------------------------------------------------------- cross-floor goals
+
+
+def test_portal_goal_keeps_its_target_floor_height():
+    """A portal pursuit runs in GOTO_FRONTIER but targets another storey.
+
+    Regression: `_follow_path` used to decide the snap height from the STATE
+    ("frontier goals are on my floor"), which silently discarded the portal's
+    target height and snapped its (x, z) onto the floor below it. The agent
+    walked to a point under the mezzanine, arrived, never gained height, and
+    the pursuit died as `no_vertical_progress` -- 26 of 35 endings on full v1.
+    """
+    calls = []
+
+    def nav_fn(goal, floor_y=None):
+        calls.append(floor_y)
+        return "move_forward"
+
+    cfg = make_cfg()
+    cfg.agent.use_habitat_navmesh = True
+    agent = NavAgent(cfg, StubDetector(), AsyncScorer(_StubScorer()), None, "chair",
+                     nav_fn=nav_fn)
+    agent.costmap.grid[:, :] = FREE
+
+    # An ordinary frontier goal: own floor, default height.
+    agent.state = State.GOTO_FRONTIER
+    agent._goal_xy = np.array([2.0, 0.0])
+    agent._goal_floor_y_cache = 2.8
+    agent._portal_active = False
+    agent._follow_path(_frame((0.0, 0.0)))
+    assert calls[-1] is None, "a same-floor frontier goal must not carry a height"
+
+    # The same state, but pursuing a portal one storey up.
+    agent._portal_active = True
+    agent._follow_path(_frame((0.0, 0.0)))
+    assert calls[-1] == 2.8, "portal pursuit lost its target floor height"
