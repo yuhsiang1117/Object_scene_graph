@@ -108,7 +108,43 @@ the agent, trajectory, chosen frontier and planned path.
 | Obstacle band lower bound `0.1 → 0.15` (ceiling 1.5) | `mapping.obstacle_low_m=0.15` (current default) | single-floor SR **40%** (= `[0.1,1.5]`) | neutral at scale; safe to keep |
 | LOS-visibility down-weighting | `exploration.los_visibility_penalty=0.5` | 28.6% vs 28.6% (0 gained/0 lost); changed 13/35 trajectories | no SR effect at 0.5 |
 | Hit-count occupancy (2-hit corroboration) | `mapping.occ_hit_threshold=2` (reverted) | SR 42.9% → **20.0%** (net −8) | **regressed** — corroboration weakens real obstacles in noise-free sim |
+| Context/co-occurrence commitment gate | (reverted) | 46.0% → 48.0% (tight) → 45.0% (loose); dtg>3m 22 → 21 → 22; explore-fail 20 → 20 → **23** | **refuted** — the agent commits before the room is mapped, so there is almost no context to consult; loosening barely raised the firing rate (22 → 24) and cost SR/SPL |
 | Speckle filter (clear <3-cell OCCUPIED components) | `mapping.speckle_min_cells=3` | SR 40% → **28.6%** (net −4); no-find 7→7 (no help); 32/35 trajectories changed | **regressed** — in noise-free sim it removes real thin/edge geometry, not noise |
+
+### Context priors cannot gate object commitment (2026-08, refuted)
+
+The largest remaining loss is committing to the wrong object: of 34 approach
+failures on the best full-v1 run, **22 end more than 3 m from any goal** — the
+agent walks confidently to entirely the wrong thing. The VLM verifier cannot
+catch these (78 rejections and they still get through) because they are
+*category-correct wrong instances*. The hypothesis was that **context** could:
+a toilet surrounded by a sofa and a TV is not the bathroom's toilet. Implemented
+as a co-occurrence gate over the scene graph (LLM-free), rejecting a candidate
+when N other objects are mapped nearby and none belong with the target.
+
+| arm | SR | SPL | ctx rejects | dtg>3m | explore-fail |
+|---|---|---|---|---|---|
+| no gate | 46.0 | 0.228 | 0 | 22 | 20 |
+| gate, ≥3 neighbours within 3 m | 48.0 | 0.226 | 22 | 21 | 20 |
+| gate, ≥2 neighbours within 4 m | 45.0 | 0.207 | 24 | 22 | **23** |
+
+**Refuted, and the reason is structural rather than a tuning failure.** Loosening
+the thresholds barely changed the firing rate (22 → 24 rejections) where roughly
+double was expected. The binding constraint is not the neighbour count: it is
+that **the agent commits before the surrounding room is mapped at all**. A
+candidate is committed as soon as its track clears `min_obs`, so at the moment
+of the decision there is almost no context to consult. Forty-six rejections
+across both arms moved the target metric by nothing (22 → 21 → 22), and the
+looser arm converted genuine targets into never-committed episodes
+(explore-fail 20 → 23), costing SR and SPL.
+
+This is also consistent with the annotation ceiling measured earlier: ~69% of
+approach failures are real objects that simply are not the annotated goal, and
+an unannotated toilet in a real bathroom has *perfect* context.
+
+Do not re-attempt as a commitment gate. The one variant not tested is gating at
+the **terminal STOP** decision rather than at commitment — by then the room has
+been mapped and the context actually exists.
 
 **Costmap-noise mitigation is a dead end here.** Sim depth is noise-free, so incomplete-mesh speckle is too rare to justify any obstacle-removal; both hit-count and speckle cost more real geometry than they filter. Keep the hard-write costmap.
 
@@ -249,4 +285,9 @@ the dominant loss, dragging the full-v1 number from ~68% to 42%.
    selection and per-category detection tuning (`tv_monitor`, `toilet`).
 
 Dead ends (do not re-attempt): any form of VLM verification as an SR lever,
-ellipsoid-localization tuning, persistent/regional give-up blocking.
+ellipsoid-localization tuning, persistent/regional give-up blocking,
+**context/co-occurrence priors as a commitment gate** (refuted 2026-08 -- the
+agent commits before the surrounding room is mapped, so there is no context to
+consult; see the section above), and **geometric stair detection via a per-cell
+height gradient** (flat tread interiors fragment a staircase into disconnected
+riser strips -- see docs/MULTI_FLOOR.md).
