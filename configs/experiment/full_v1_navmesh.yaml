@@ -1,12 +1,18 @@
 # @package _global_
 #
-# FULL v1 val, 5 episodes/scene (20 scenes = 100 episodes), best aligned config:
+# FULL v1 val, 5 episodes/scene (20 scenes = 100 episodes), best measured config:
 #   - Habitat-navmesh navigation (use_habitat_navmesh) + reachability/retreat fixes
 #   - sweep exploration (nearest + momentum, info_gain=2), LLM-free
 #   - forced-choice VLM verify (verification=nim) -- rejects detector mislabels
 #     (e.g. stool->chair) before committing
-# NOTE: full v1 includes 13 multi-floor scenes the 2D costmap collapses, so SR
-# is dragged below the single-floor number. Run with all debug on.
+#   - MULTI-FLOOR: per-floor costmaps, 3D navmesh goals, portal-based cross-floor
+#     exploration timed by target-category context (docs/MULTI_FLOOR.md)
+#
+# Measured on full v1 (100 episodes):
+#   flags off                       SR 40.0  SPL 0.200  single 68.6  multi 24.6  cross  0.0
+#   + floors/per-floor maps/3D goal SR 42.0  SPL 0.211  single 68.6  multi 27.7  cross  0.0
+#   + category-timed switching      SR 44.0  SPL 0.217  single 71.4  multi 29.2  cross  0.0
+#   + frontier cost to free cell    SR 46.0  SPL 0.215  single 71.4  multi 32.3  cross  4.2
 #
 #   python scripts/run_eval.py +experiment=full_v1_navmesh eval.debug_frames=true
 defaults:
@@ -18,6 +24,25 @@ defaults:
 agent:
   success_distance: 0.18
   use_habitat_navmesh: true
+  # Snap navmesh goals at the TARGET's floor, not the agent's own height --
+  # without this every cross-floor candidate reads as unreachable.
+  navmesh_3d_goals: true
+
+exploration:
+  # Rank frontiers by a path cost measured to the free-snapped centroid: the
+  # costmap planner often cannot reach an UNKNOWN frontier cell, which collapsed
+  # whole selection rounds (select_none 128 -> 7 per 100 episodes). The agent
+  # still DRIVES to the frontier cell -- moving the drive goal too costs
+  # coverage (single-floor explore-failures 0 -> 3). See MULTI_FLOOR.md.
+  frontier_cost_free_cell: true
+
+floor:
+  enabled: true
+  estimate_only: false
+  per_floor_costmap: true
+  cross_floor: true
+  # floor.stairs stays OFF: the geometric stair detector does not detect
+  # staircases (flat tread interiors fragment the region). See MULTI_FLOOR.md.
 
 eval:
   num_episodes: 100

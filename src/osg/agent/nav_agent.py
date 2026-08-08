@@ -108,6 +108,16 @@ class NavAgent:
         # so the single-floor code path is byte-identical.
         _f = getattr(cfg, "floor", None)
         self._stairs_on = bool(getattr(_f, "stairs", False))
+        # Drive frontier goals to the free-snapped centroid rather than an
+        # UNKNOWN cell. Only meaningful on the navmesh, where unknown space
+        # gets snapped unpredictably; the costmap planner treats unknown as
+        # traversable and is unaffected either way.
+        self._frontier_goal_free = bool(
+            getattr(cfg.exploration, "frontier_goal_free_cell", False)
+        )
+        self._frontier_cost_free = bool(
+            getattr(cfg.exploration, "frontier_cost_free_cell", False)
+        )
         self._cross_floor_on = bool(getattr(_f, "cross_floor", False))
         self._floor_stack = FloorStack(
             resolution_m=cfg.mapping.resolution_m,
@@ -674,6 +684,8 @@ class NavAgent:
                 los_visibility_penalty=self.cfg.exploration.los_visibility_penalty,
                 heading_xy=heading_xy,
                 continuity_weight=self.cfg.exploration.continuity_weight,
+                goal_prefer_free=self._frontier_goal_free,
+                cost_prefer_free=self._frontier_cost_free,
             )
         by_id = {f.id: f for f in frontiers}
         for fid in failed:  # block only the candidates that actually failed
@@ -703,6 +715,8 @@ class NavAgent:
                     los_visibility_penalty=self.cfg.exploration.los_visibility_penalty,
                     heading_xy=heading_xy,
                     continuity_weight=self.cfg.exploration.continuity_weight,
+                    goal_prefer_free=self._frontier_goal_free,
+                    cost_prefer_free=self._frontier_cost_free,
                 )
         # Nothing near left on this floor? Consider leaving it. Checked BEFORE
         # committing to a far frontier, because "the best thing here is 12 m
@@ -724,7 +738,7 @@ class NavAgent:
             len(frontiers),
         ))
         self._current_frontier = best
-        self._plan_to(frame, frontier_goal_xy(best, self.costmap))
+        self._plan_to(frame, frontier_goal_xy(best, self.costmap, self._frontier_goal_free))
         if self._current_path is not None:
             self.state = State.GOTO_FRONTIER
             # A fresh pursuit starts its own 15-step progress window; without
@@ -1095,7 +1109,7 @@ class NavAgent:
 
     def _follow_path(self, frame: FrameData) -> Optional[str]:
         goal = (
-            frontier_goal_xy(self._current_frontier, self.costmap)
+            frontier_goal_xy(self._current_frontier, self.costmap, self._frontier_goal_free)
             if self.state == State.GOTO_FRONTIER and self._current_frontier is not None
             else self._goal_xy
         )

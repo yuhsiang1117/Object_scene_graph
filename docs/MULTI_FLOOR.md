@@ -195,7 +195,25 @@ validated by a single-variable A/B, per the house rules in
 |---|---|---|---|---|---|
 | baseline (all flags off) | 40.0 | 0.200 | 68.6 | 24.6 | **0.0** |
 | + floors, per-floor maps, 3D goals | 42.0 | 0.211 | 68.6 | 27.7 | **0.0** |
-| + category-timed switching | **44.0** | **0.217** | 71.4 | 29.2 | **0.0** |
+| + category-timed switching | 44.0 | 0.217 | 71.4 | 29.2 | **0.0** |
+| + frontier cost to free cell | **46.0** | 0.215 | 71.4 | **32.3** | **4.2** |
+
+### The frontier goal: cost and drive are separate decisions
+
+`select_frontier` ranks candidates with the **costmap planner** even in navmesh
+mode, and `frontier_goal_xy` returned an `UNKNOWN` cell -- which the planner
+frequently cannot reach, collapsing whole selection rounds (`select_none` 128
+per 100 episodes at baseline). Pointing everything at the free-snapped centroid
+fixes that (`select_none` -> 2) but **costs coverage**: the agent then stops at
+the edge of known space instead of pushing into the frontier, so single-floor
+explore-failures went 0 -> 3, mean steps 136 -> 165, and single-floor SR fell
+71.4 -> 60.0 (5 episodes lost, 1 gained -- mechanistic, not verifier noise).
+
+Splitting them keeps both: rank against the free centroid so the planner
+succeeds, keep DRIVING to the frontier cell so coverage is unaffected. The two
+points are a cell or two apart, so ranking barely shifts.
+`exploration.frontier_cost_free_cell` does this and is the recommended setting;
+`frontier_goal_free_cell` (moving the drive goal too) should stay off.
 
 | | baseline | v4 | v5 |
 |---|---|---|---|

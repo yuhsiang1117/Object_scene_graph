@@ -1,7 +1,7 @@
 # Object Scene Graph ObjectNav
 
 Open-vocabulary, object-goal navigation on HM3D ObjectNav (Habitat). A
-from-scratch Python `osg` package: open-vocab perception → a `building → room →
+from-scratch Python `osg` package: open-vocab perception → a `floor → room →
 object` 3D scene graph → frontier exploration → approach + verify. The pipeline
 has two navigation modes and can drive on Habitat's own navmesh (matching the
 old ROS stack) for reliable, multi-floor-capable motion.
@@ -25,11 +25,18 @@ how it got here):
   and unreachable / non-goal instances, then keeps exploring.
 
 > **Status (2026-08):** best config (`+experiment=full_v1_navmesh`) scores
-> **42% SR on full v1** (5 eps/scene, 100 eps) — up from ~18% at the start of
-> the SR-gap investigation. **Single-floor: 68.6%** (above the old ROS stack's
-> 54%); **multi-floor: 27.7%** (the 2D costmap collapses floors — now the
-> dominant remaining loss). See **[docs/INVESTIGATION.md](docs/INVESTIGATION.md)**
-> for every A/B and the prioritized future work.
+> **46% SR on full v1** (5 eps/scene, 100 eps), SPL 0.215 — up from ~18% at the
+> start of the SR-gap investigation. **Single-floor: 71.4%** (above the old ROS
+> stack's 54%); **multi-floor: 32.3%**, up from 24.6% before the multi-floor
+> work. **Cross-floor episodes are 4.2%** (1/24) — off zero for the first time,
+> but still the dominant loss: the agent now reaches other storeys reliably and
+> does not find the target once there.
+>
+> See **[docs/INVESTIGATION.md](docs/INVESTIGATION.md)** for the SR-gap A/Bs and
+> **[docs/MULTI_FLOOR.md](docs/MULTI_FLOOR.md)** for the multi-floor literature
+> survey, results, and two documented negative results. Note from that work:
+> **runs are not reproducible while the VLM verifier is on** — use
+> `verification=off` for any A/B meant to prove two configs equivalent.
 
 ## Quick start
 
@@ -94,7 +101,8 @@ python scripts/run_eval.py +experiment=matched_single_floor \
 Outputs land in `outputs/<timestamp>/`: `summary.json` (SR/SPL + per-module
 FPS + config fingerprint), `episodes.jsonl` (rich per-episode diagnostics),
 `timing.csv`, `viz/*.png` (top-down maps), and — with `eval.debug_frames=true`
-— `viz/debug/ep<ID>.mp4` (per-step RGB+segmentation | costmap).
+— `viz/debug/<scene>_ep<ID>.mp4` (per-step RGB+segmentation | costmap). Artifact
+names carry the scene because HM3D episode ids repeat across scenes.
 
 ### Config groups & experiments
 
@@ -108,6 +116,7 @@ whole preset with `+experiment=name`:
 | `exploration` | `llm_text` (LLM-scored, default), `nearest` (geometric, no LLM), `sweep` (nearest + momentum, no LLM) |
 | `verification` | `nim` (forced-choice VLM, **default**), `nim_terminal` (verify at STOP), `off` |
 | `eval` | `hm3d_val` (v2), `hm3d_val_v1` (v1, matched-to-old), `hm3d_val_single_floor`, `hm3d_val_mini` |
+| `floor` | multi-floor support; all off by default, enabled by `+experiment=full_v1_navmesh` (see docs/MULTI_FLOOR.md) |
 
 Key agent flags (CLI: `agent.<flag>=...`): `use_habitat_navmesh` (drive on the
 navmesh, default off — the `*_navmesh` experiments turn it on),
@@ -121,14 +130,15 @@ sweep + verify, full v1, 5 eps/scene), `matched_navmesh` (single-floor),
 ### Analysis & debugging
 
 The `scripts/analyze_*.py` tools decompose a run's `episodes.jsonl`:
-`analyze_stages.py` (explore vs approach failure), `analyze_localization.py` /
+`analyze_stages.py` (explore vs approach failure), `analyze_floors.py` (SR by
+floor class, floor-estimator audit, stair-track rate), `analyze_localization.py` /
 `analyze_trackloc.py` (stop-pose / mapped-object vs GT), `analyze_approach.py`
 (why the terminal approach failed). Rich per-episode fields include
 `state_log`, `frontier_select_log` (every frontier choice: step, agent xy,
 chosen frontier, path cost), `approach_diag`, and `verify_calls`.
 
 With `eval.debug_frames=true` a run also writes:
-- `viz/debug/ep<ID>.mp4` — per-step **RGB + YOLOE segmentation | costmap** (with
+- `viz/debug/<scene>_ep<ID>.mp4` — per-step **RGB + YOLOE segmentation | costmap** (with
   the chosen frontier and planned path drawn), and
 - `verify_debug/` (when a verifier is active) — the exact **image sent to the
   VLM** (whole frame + red box) plus `index.jsonl` with the VLM's response and
@@ -151,8 +161,9 @@ separately in `timing.csv`.
 
 - `src/osg/` — the pipeline: `perception` (YOLOE, keyframes) → `objects`
   (ellipsoid layer: dual-quadric projection, association, Wasserstein
-  refinement, linking) → `mapping` (costmap, frontiers, room watershed) →
-  `graph` (building/room/object hierarchy + LLM serialization) →
+  refinement, linking) → `mapping` (per-floor costmaps, floor estimation,
+  frontiers, cross-floor portals, room watershed) →
+  `graph` (floor/room/object hierarchy + category priors + LLM serialization) →
   `exploration` (scorers incl. `NullScorer` for geometric, momentum/info-gain
   selector) → `planning` (A*, waypoint controller — used when *not* on the
   navmesh) → `verification` (forced-choice VLM verifier) → `agent` (FSM) →

@@ -190,6 +190,17 @@ class ExplorationConfig:
     # the agent has clear line of sight to (no wall between => same room) by this
     # factor, so exploration prefers occluded, behind-a-doorway frontiers that
     # open new rooms. 1.0 = off; <1.0 penalizes visible/same-room frontiers.
+    # Drive to the frontier's free-snapped centroid instead of an UNKNOWN
+    # frontier cell. On the navmesh, unknown space is snapped by snap_point to
+    # an arbitrary nearby navigable point, so the follower reports
+    # arrived-or-unreachable at once: measured 289 stub-blocks vs 24 give-ups
+    # over 100 episodes, 53% of selections repeating an earlier one, and 2x the
+    # planned distance walked. See exploration/selector.frontier_goal_xy.
+    frontier_goal_free_cell: bool = False
+    # Measure the RANKING path cost to the free centroid while still driving to
+    # the frontier cell. Fixes the planner failures without the coverage loss
+    # that moving the drive goal causes -- see select_frontier.
+    frontier_cost_free_cell: bool = False
     los_visibility_penalty: float = 1.0
 
 
