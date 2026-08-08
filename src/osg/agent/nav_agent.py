@@ -154,6 +154,7 @@ class NavAgent:
                 early_switch_step=getattr(fcfg, "early_switch_step", 30),
                 min_objects_to_judge=getattr(fcfg, "min_objects_to_judge", 8),
                 strong_evidence=getattr(fcfg, "strong_evidence", 2),
+                evidence_patience_steps=getattr(fcfg, "evidence_patience_steps", 120),
             )
             if getattr(fcfg, "cross_floor", False) else None
         )
@@ -792,7 +793,8 @@ class NavAgent:
             self.scene_graph, self._floor_stack.current_id, self.target
         )
         if not self._switch_policy.may_switch(
-            self.step_count, best_path_cost, evidence=evidence, n_objects=n_objects
+            self.step_count, best_path_cost, evidence=evidence, n_objects=n_objects,
+            steps_on_floor=self.step_count - self._floor_stack.current.first_step,
         ):
             return False
 

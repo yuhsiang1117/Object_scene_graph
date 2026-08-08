@@ -125,3 +125,47 @@ def test_flag_off_restores_the_pure_geometric_gate():
     p = policy(use_target_evidence=False)
     assert not p.may_switch(step=40, best_path_cost=1.0, evidence=0, n_objects=20)
     assert p.may_switch(step=200, best_path_cost=None, evidence=5, n_objects=20)
+
+
+# ------------------------------------------- P2: engagement regression fixes
+
+
+def test_one_incidental_companion_no_longer_blocks_an_early_switch():
+    """The regression: requiring evidence == 0 was far too strict. Almost any
+    floor has a single incidental companion object, so cross-floor switch
+    attempts collapsed to 3 of 24 episodes where the looser rule gave 14."""
+    p = policy()
+    assert p.may_switch(step=60, best_path_cost=1.0, evidence=1, n_objects=15)
+
+
+def test_strong_context_still_holds_the_agent_at_first():
+    p = policy()
+    assert not p.may_switch(step=60, best_path_cost=None, evidence=3,
+                            n_objects=15, steps_on_floor=20)
+
+
+def test_strong_context_goes_stale_after_a_long_fruitless_search():
+    """A bathroom on this storey does not mean THIS storey's bathroom has the
+    toilet -- without expiry the 'stay' rule suppressed switching entirely."""
+    p = policy()
+    assert p.may_switch(step=200, best_path_cost=None, evidence=3,
+                        n_objects=15, steps_on_floor=200)
+
+
+def test_the_target_itself_is_never_abandoned():
+    """Evidence carries a +10 bonus when the target CATEGORY is mapped here;
+    no amount of patience should make the agent leave that floor."""
+    p = policy()
+    assert not p.may_switch(step=300, best_path_cost=None, evidence=11,
+                            n_objects=30, steps_on_floor=300)
+
+
+def test_patience_can_be_disabled():
+    p = policy(evidence_patience_steps=0)
+    assert not p.may_switch(step=300, best_path_cost=None, evidence=3,
+                            n_objects=15, steps_on_floor=300)
+
+
+def test_an_unmapped_floor_still_gets_no_early_switch():
+    p = policy()
+    assert not p.may_switch(step=60, best_path_cost=1.0, evidence=0, n_objects=2)

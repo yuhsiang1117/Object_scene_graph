@@ -378,6 +378,11 @@ class FloorConfig:
     min_objects_to_judge: int = 8
     # Distinct context categories that make a floor worth staying on.
     strong_evidence: int = 2
+    # How long strong context may hold the agent on a floor before it is
+    # treated as stale. A bathroom on this storey does not mean THIS storey's
+    # bathroom holds the toilet, and without expiry the "stay" rule suppressed
+    # cross-floor switching almost entirely (3 of 24 episodes, was 14). 0 = never.
+    evidence_patience_steps: int = 120
     portal_deadline_steps: int = 120
     # Vertical travel that counts as "the climb is under way", so the portal
     # goal is held against same-floor frontier re-selection.

@@ -104,6 +104,11 @@ def _merge(portals: Sequence[Portal], merge_m: float) -> List[Portal]:
     return kept
 
 
+# graph.priors adds this much when the target CATEGORY itself is mapped on the
+# floor, so any evidence at or above it means "the target is already here".
+_TARGET_PRESENT = 10
+
+
 class FloorSwitchPolicy:
     """When may the agent leave the storey it is on?
 
@@ -132,6 +137,7 @@ class FloorSwitchPolicy:
         early_switch_step: int = 30,
         min_objects_to_judge: int = 8,
         strong_evidence: int = 2,
+        evidence_patience_steps: int = 120,
     ) -> None:
         self.near_frontier_m = float(near_frontier_m)
         self.min_interval_steps = int(min_interval_steps)
@@ -141,6 +147,7 @@ class FloorSwitchPolicy:
         self.early_switch_step = int(early_switch_step)
         self.min_objects_to_judge = int(min_objects_to_judge)
         self.strong_evidence = int(strong_evidence)
+        self.evidence_patience_steps = int(evidence_patience_steps)
         self.last_switch_step = -10 ** 9
 
     def may_switch(
@@ -149,6 +156,7 @@ class FloorSwitchPolicy:
         best_path_cost: Optional[float],
         evidence: Optional[int] = None,
         n_objects: int = 0,
+        steps_on_floor: int = 0,
     ) -> bool:
         """`evidence` is how many of the target's usual companions are on this
         floor (see graph.priors); None means no usable prior for the category.
@@ -164,20 +172,31 @@ class FloorSwitchPolicy:
             return False
 
         if self.use_target_evidence and evidence is not None:
-            # Enough of this floor mapped to trust the absence, and nothing that
-            # belongs with the target: go now, while there is budget to search
-            # the next floor. This is the whole point -- the geometric rule
-            # cannot fire until the floor is exhausted, which is too late.
-            if (
-                n_objects >= self.min_objects_to_judge
-                and evidence <= 0
-                and step >= self.early_switch_step
-            ):
+            # A mapped instance of the target category itself (evidence carries
+            # a large bonus for it) settles the question: never leave a floor
+            # that has the thing we are looking for on it.
+            if evidence >= _TARGET_PRESENT:
+                return False
+
+            searched = (
+                n_objects >= self.min_objects_to_judge and step >= self.early_switch_step
+            )
+            promising = evidence >= self.strong_evidence
+            # Context said "the target's kind of floor", but a long search here
+            # has turned up nothing. The evidence is stale: a bathroom on this
+            # storey does not mean THIS storey's bathroom has the toilet.
+            stale = (
+                self.evidence_patience_steps > 0
+                and steps_on_floor >= self.evidence_patience_steps
+            )
+
+            # Go now, while there is budget to search the next floor. Requiring
+            # evidence to be exactly zero was far too strict -- almost any floor
+            # has one incidental companion object, so this fired on 3 of 24
+            # cross-floor episodes where the looser rule fired on 14.
+            if searched and (not promising or stale):
                 return True
-            # Conversely, this looks like the target's kind of floor. Stay, even
-            # if the nearest frontier is far -- leaving now would abandon the
-            # most promising storey in the building.
-            if evidence >= self.strong_evidence:
+            if promising and not stale:
                 return False
 
         if step < self.no_switch_before:
