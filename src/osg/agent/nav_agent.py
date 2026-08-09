@@ -274,6 +274,10 @@ class NavAgent:
         self._approach_last_good_xy: Optional[np.ndarray] = None
         self._approach_steps_left = 0
         self._goal_floor_y_cache: Optional[float] = None
+        self._creeping = False
+        self._creep_steps = 0
+        self._creep_ref_xy = np.zeros(2)
+        self._creep_advanced = False
         self.stats = {"plan_ok": 0, "plan_fail": 0, "select_none": 0, "select_ok": 0}
         self.state_log = []
         self.frontier_select_log: list = []
@@ -464,6 +468,16 @@ class NavAgent:
           the deadline.
         """
         agent_xy = frame.camera_position[list(PLANE)]
+        # Never time out while standing on the answer. One episode ended the
+        # run 0.05 m from a goal view point -- well inside the 0.18 m success
+        # radius -- simply because it never pressed STOP (ziup5kvtCCR_ep15,
+        # 500 steps, no stop reason). A timeout scores zero regardless, so
+        # stopping late can only help.
+        budget = getattr(self.cfg.agent, "stop_before_budget", 0)
+        if budget and self.step_count >= self.cfg.agent.max_steps - budget:
+            return self._stop_approach("budget")
+        if self._creeping:
+            return self._do_creep(frame, self._best_target_detection(frame), agent_xy)
         # Track how close the agent gets to its approach goal this episode.
         if self.approach_diag and self._goal_xy is not None:
             dg = float(np.linalg.norm(agent_xy - self._goal_xy))
@@ -532,6 +546,19 @@ class NavAgent:
         self._last_follow_none_reason = None
         action = self._follow_to(frame, self._goal_xy)
         if action is None:  # path consumed or unreachable: as close as it gets
+            # ...except it usually is NOT as close as it gets. The navmesh
+            # reports arrival within goal_radius (0.1 m) of the point it snapped
+            # the object to, and that snapped point can sit most of a metre from
+            # the nearest goal view point: measured, every sub-metre near-miss
+            # on full v1 came from here (dtg 0.26/0.28/0.76/0.81/0.85), while
+            # the depth stop produced none at all. Creeping closes the gap by
+            # walking in until the geometry physically stops the agent.
+            if getattr(self.cfg.agent, "terminal_creep", False) and det is not None:
+                self._creeping = True
+                self._creep_steps = 0
+                self._creep_ref_xy = agent_xy.copy()
+                self._creep_advanced = False
+                return self._do_creep(frame, det, agent_xy)
             self.state = State.DONE
             self.approach_stop_reason = "path_consumed"
             if self.approach_diag is not None:
@@ -540,6 +567,54 @@ class NavAgent:
                     self.approach_diag["plan_fail"] = self.approach_diag.get("plan_fail", 0) + 1
             return STOP_ACTION
         return action
+
+    def _do_creep(self, frame: FrameData, det, agent_xy: np.ndarray) -> str:
+        """Final metre: centre the target and walk in until physically blocked.
+
+        Replaces the fixed depth threshold with "as close as the geometry
+        allows". HM3D scores geodesic distance to a goal VIEW POINT, and view
+        points are tiled densely around the object, so the failure mode is
+        stopping short rather than overshooting -- successes land at a median
+        dtg of 0.040 m while these near-misses sat at 0.26-0.85 m.
+
+        Stops on the first of: no forward progress (the agent is against the
+        object or a wall), the target going out of view, or the step cap.
+        """
+        from ..planning.controller import TURN_LEFT, TURN_RIGHT
+
+        cfg = self.cfg.agent
+        # Only judge progress after a step that was meant to move us; turning
+        # in place legitimately leaves the position unchanged.
+        if self._creep_advanced:
+            moved = float(np.linalg.norm(agent_xy - self._creep_ref_xy))
+            if moved < getattr(cfg, "creep_min_progress_m", 0.05):
+                return self._stop_approach("creep_blocked")
+        self._creep_ref_xy = agent_xy.copy()
+
+        self._creep_steps += 1
+        if self._creep_steps > getattr(cfg, "creep_max_steps", 12):
+            return self._stop_approach("creep_max")
+        if det is None:
+            return self._stop_approach("creep_lost")
+
+        x1, _, x2, _ = det.bbox_xyxy
+        cx = 0.5 * (float(x1) + float(x2))
+        mid = 0.5 * frame.rgb.shape[1]
+        tol = getattr(cfg, "creep_center_tol_px", 60.0)
+        if cx < mid - tol:
+            self._creep_advanced = False
+            return TURN_LEFT
+        if cx > mid + tol:
+            self._creep_advanced = False
+            return TURN_RIGHT
+        self._creep_advanced = True
+        return "move_forward"
+
+    def _stop_approach(self, reason: str) -> str:
+        self.state = State.DONE
+        self.approach_stop_reason = reason
+        self.stats[f"stop_{reason}"] = self.stats.get(f"stop_{reason}", 0) + 1
+        return STOP_ACTION
 
     def _act_inner_post_transition(self, frame: FrameData) -> str:
         """Re-enter EXPLORE logic once after a state transition (no recursion

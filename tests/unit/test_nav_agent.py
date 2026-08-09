@@ -401,3 +401,105 @@ def test_portal_goal_keeps_its_target_floor_height():
     agent._portal_active = True
     agent._follow_path(_frame((0.0, 0.0)))
     assert calls[-1] == 2.8, "portal pursuit lost its target floor height"
+
+
+# ------------------------------------------------- terminal precision (creep)
+
+
+def _creep_cfg():
+    cfg = make_cfg()
+    cfg.agent.max_steps = 500
+    cfg.agent.approach_depth_stop = False
+    cfg.agent.terminal_creep = True
+    cfg.agent.creep_max_steps = 12
+    cfg.agent.creep_min_progress_m = 0.05
+    cfg.agent.creep_center_tol_px = 60.0
+    cfg.agent.stop_before_budget = 3
+    return cfg
+
+
+def _creep_agent():
+    a = make_agent(_creep_cfg())
+    a.state = State.APPROACH
+    a._goal_xy = np.array([5.0, 0.0])
+    a._approach_steps_left = 50
+    a._goto_deadline = 10 ** 9
+    a._creeping = True
+    a._creep_steps = 0
+    a._creep_ref_xy = np.zeros(2)
+    a._creep_advanced = False
+    return a
+
+
+def test_creep_advances_when_target_is_centred():
+    a = _creep_agent()
+    det = _det("chair", (50, 50))
+    det.bbox_xyxy = np.array([310.0, 200.0, 330.0, 260.0])  # centred in 640 px
+    assert a._do_creep(_frame((0.0, 0.0)), det, np.zeros(2)) == "move_forward"
+
+
+def test_creep_turns_toward_an_off_centre_target():
+    a = _creep_agent()
+    det = _det("chair", (50, 50))
+    det.bbox_xyxy = np.array([0.0, 200.0, 40.0, 260.0])  # far left
+    assert a._do_creep(_frame((0.0, 0.0)), det, np.zeros(2)) == "turn_left"
+
+
+def test_creep_stops_when_blocked():
+    """Walking into the object stops the agent; no progress means we are as
+    close as the geometry allows, which is the whole point."""
+    a = _creep_agent()
+    det = _det("chair", (50, 50))
+    det.bbox_xyxy = np.array([310.0, 200.0, 330.0, 260.0])
+    a._do_creep(_frame((0.0, 0.0)), det, np.zeros(2))     # advances
+    assert a._creep_advanced
+    action = a._do_creep(_frame((0.0, 0.0)), det, np.zeros(2))  # did not move
+    assert action == STOP_ACTION
+    assert a.approach_stop_reason == "creep_blocked"
+
+
+def test_turning_is_not_mistaken_for_being_blocked():
+    """Turning in place legitimately leaves the position unchanged."""
+    a = _creep_agent()
+    det = _det("chair", (50, 50))
+    det.bbox_xyxy = np.array([0.0, 200.0, 40.0, 260.0])
+    for _ in range(3):
+        assert a._do_creep(_frame((0.0, 0.0)), det, np.zeros(2)) == "turn_left"
+
+
+def test_creep_stops_when_the_target_is_lost():
+    a = _creep_agent()
+    assert a._do_creep(_frame((0.0, 0.0)), None, np.zeros(2)) == STOP_ACTION
+    assert a.approach_stop_reason == "creep_lost"
+
+
+def test_creep_is_capped():
+    a = _creep_agent()
+    a._creep_steps = 99
+    det = _det("chair", (50, 50))
+    det.bbox_xyxy = np.array([310.0, 200.0, 330.0, 260.0])
+    assert a._do_creep(_frame((0.0, 0.0)), det, np.zeros(2)) == STOP_ACTION
+    assert a.approach_stop_reason == "creep_max"
+
+
+def test_stops_before_the_budget_runs_out():
+    """A timeout scores zero whatever the pose -- one episode ended 0.05 m from
+    a goal view point without ever pressing STOP."""
+    a = make_agent(_creep_cfg())
+    a.state = State.APPROACH
+    a._creeping = False
+    a._goal_xy = np.array([5.0, 0.0])
+    a.step_count = 498  # max_steps 500, stop_before_budget 3
+    assert a._do_approach(_frame((0.0, 0.0))) == STOP_ACTION
+    assert a.approach_stop_reason == "budget"
+
+
+def test_budget_stop_is_off_by_default():
+    a = make_agent()
+    a.state = State.APPROACH
+    a._goal_xy = np.array([5.0, 0.0])
+    a._approach_steps_left = 5
+    a.step_count = 499
+    a.detector.push([_det("chair", (50, 50))])
+    assert a._do_approach(_frame((0.0, 0.0))) != STOP_ACTION or \
+        a.approach_stop_reason != "budget"

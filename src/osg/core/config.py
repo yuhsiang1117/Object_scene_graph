@@ -48,6 +48,18 @@ class AgentConfig:
     # approach relies solely on navmesh-arrival / deadline to terminate.
     approach_depth_stop: bool = True
     approach_max_steps: int = 12  # ~3 m of travel at forward_m=0.25
+    # Terminal creep: after the navmesh reports arrival, centre the target and
+    # walk in until physically blocked, instead of stopping at the snapped
+    # goal. The navmesh's arrival point can sit most of a metre from the
+    # nearest goal view point -- every sub-metre near-miss measured on full v1
+    # came from that stop (dtg 0.26-0.85), while the depth stop produced none.
+    terminal_creep: bool = False
+    creep_max_steps: int = 12
+    creep_min_progress_m: float = 0.05
+    creep_center_tol_px: float = 60.0
+    # STOP this many steps before the budget runs out rather than timing out.
+    # A timeout scores zero whatever the pose, so this is free.
+    stop_before_budget: int = 0
     # Tighter-than-default planner/controller stopping precision for the
     # final APPROACH segment only (P1f). HM3D success is a geodesic
     # distance to a view_point; the general 0.3 m (planner) / 0.2 m

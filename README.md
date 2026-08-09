@@ -23,14 +23,20 @@ how it got here):
   VLM the whole frame with the target boxed and makes it pick the category from
   the goal list; rejects detector mislabels (e.g. a stool detected as a chair)
   and unreachable / non-goal instances, then keeps exploring.
+- **Terminal — creep** (`agent.terminal_creep`): after the navmesh reports
+  arrival, centre the target and walk in until physically blocked, instead of
+  stopping at a fixed range. Converts at 78% vs the old depth stop's 55%.
+- **Multi-floor** (`floor.*`): per-floor costmaps keyed by an online floor
+  estimate, 3D navmesh goals, and portal-based cross-floor exploration timed by
+  target-category context. See **[docs/MULTI_FLOOR.md](docs/MULTI_FLOOR.md)**.
 
 > **Status (2026-08):** best config (`+experiment=full_v1_navmesh`) scores
-> **46% SR on full v1** (5 eps/scene, 100 eps), SPL 0.215 — up from ~18% at the
-> start of the SR-gap investigation. **Single-floor: 71.4%** (above the old ROS
-> stack's 54%); **multi-floor: 32.3%**, up from 24.6% before the multi-floor
-> work. **Cross-floor episodes are 4.2%** (1/24) — off zero for the first time,
-> but still the dominant loss: the agent now reaches other storeys reliably and
-> does not find the target once there.
+> **48% SR on full v1** (5 eps/scene, 100 eps), SPL 0.234 — up from ~18% at the
+> start of the SR-gap investigation. **Single-floor: 68.6%** (above the old ROS
+> stack's 54%); **multi-floor: 36.9%**, up from 24.6% before the multi-floor
+> work; **cross-floor 16.7%**, up from 0%. The remaining losses are committing
+> to category-correct wrong objects (26 episodes end >3 m from any goal) and
+> cross-floor episodes where the agent never sees a portal (14 of 24).
 >
 > See **[docs/INVESTIGATION.md](docs/INVESTIGATION.md)** for the SR-gap A/Bs and
 > **[docs/MULTI_FLOOR.md](docs/MULTI_FLOOR.md)** for the multi-floor literature

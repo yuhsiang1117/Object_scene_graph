@@ -7,12 +7,16 @@
 #     (e.g. stool->chair) before committing
 #   - MULTI-FLOOR: per-floor costmaps, 3D navmesh goals, portal-based cross-floor
 #     exploration timed by target-category context (docs/MULTI_FLOOR.md)
+#   - TERMINAL CREEP instead of the fixed depth stop: after navmesh arrival,
+#     centre the target and walk in until physically blocked
 #
 # Measured on full v1 (100 episodes):
 #   flags off                       SR 40.0  SPL 0.200  single 68.6  multi 24.6  cross  0.0
 #   + floors/per-floor maps/3D goal SR 42.0  SPL 0.211  single 68.6  multi 27.7  cross  0.0
 #   + category-timed switching      SR 44.0  SPL 0.217  single 71.4  multi 29.2  cross  0.0
 #   + frontier cost to free cell    SR 46.0  SPL 0.215  single 71.4  multi 32.3  cross  4.2
+#   + looser floor-switch gate      SR 46.0  SPL 0.228  single 68.6  multi 33.8  cross 16.7
+#   + terminal creep, no depth stop SR 48.0  SPL 0.234  single 68.6  multi 36.9
 #
 #   python scripts/run_eval.py +experiment=full_v1_navmesh eval.debug_frames=true
 defaults:
@@ -24,6 +28,16 @@ defaults:
 agent:
   success_distance: 0.18
   use_habitat_navmesh: true
+  # Terminal precision. The fixed depth stop was NOT the cause of near-misses
+  # (it produced 28 successes and zero sub-metre misses); every sub-metre miss
+  # came from stopping the instant the navmesh reported arrival, up to 0.85 m
+  # from the nearest goal view point. Creeping in until blocked converts at
+  # 78% vs the depth stop's 55%, and cut near-misses 12 -> 7.
+  approach_depth_stop: false
+  terminal_creep: true
+  # A timeout scores zero whatever the pose; one episode ended 0.05 m from a
+  # view point without ever pressing STOP. Stopping 3 steps early is free.
+  stop_before_budget: 3
   # Snap navmesh goals at the TARGET's floor, not the agent's own height --
   # without this every cross-floor candidate reads as unreachable.
   navmesh_3d_goals: true
