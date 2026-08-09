@@ -1,7 +1,8 @@
 # Multi-Floor ObjectNav — Literature Survey and Design (2026-08)
 
 Why `osg` loses most of its SR on multi-floor scenes, what the 2024–2026
-literature does about it, and the design we adopt. Companion to
+literature does about it, and the design we adopt.
+中文的实现结构说明见 **[MULTI_FLOOR_CN.md](MULTI_FLOOR_CN.md)**。 Companion to
 **[INVESTIGATION.md](INVESTIGATION.md)**, whose future-work item #1 this
 addresses.
 

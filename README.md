@@ -28,7 +28,9 @@ how it got here):
   stopping at a fixed range. Converts at 78% vs the old depth stop's 55%.
 - **Multi-floor** (`floor.*`): per-floor costmaps keyed by an online floor
   estimate, 3D navmesh goals, and portal-based cross-floor exploration timed by
-  target-category context. See **[docs/MULTI_FLOOR.md](docs/MULTI_FLOOR.md)**.
+  target-category context. See **[docs/MULTI_FLOOR.md](docs/MULTI_FLOOR.md)**
+  (survey + results) and **[docs/MULTI_FLOOR_CN.md](docs/MULTI_FLOOR_CN.md)**
+  (中文实现结构说明).
 
 > **Status (2026-08):** best config (`+experiment=full_v1_navmesh`) scores
 > **48% SR on full v1** (5 eps/scene, 100 eps), SPL 0.234 — up from ~18% at the
