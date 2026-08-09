@@ -13,3 +13,5 @@ mobileclip_blt.ts
 .vscode/
 .idea/
 .claude
+# third-party repos cloned for reference (ASCENT, etc.)
+relative_works/
