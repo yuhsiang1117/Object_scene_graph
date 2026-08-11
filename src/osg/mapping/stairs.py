@@ -29,7 +29,8 @@ from typing import List, Optional, Sequence, Tuple
 
 import numpy as np
 
-from .costmap import FREE, PLANE, Costmap2D, block_min
+from ..core.geometry import backproject
+from .costmap import FREE, HEIGHT_AXIS, PLANE, Costmap2D, block_min
 
 STAIR_LABELS = ("stairs", "staircase", "stair")
 
@@ -49,6 +50,97 @@ class StairRegion:
     @property
     def rise_m(self) -> float:
         return float(self.high_y - self.low_y)
+
+
+def voxel_downsample(pts: np.ndarray, cell_m: float = 0.15) -> np.ndarray:
+    """One point per occupied voxel.
+
+    Not an optimisation detail -- without it this is unusable. A masked
+    back-projection yields thousands of points per frame and they accumulate
+    across keyframes; single-linkage clustering then runs a neighbour query
+    over hundreds of thousands of points that are all within the link radius
+    of each other, which is quadratic and hung a 3-episode run past 15 minutes.
+    Downsampling to the costmap's own scale loses nothing the clustering could
+    have used.
+    """
+    if pts is None or pts.shape[0] == 0:
+        return np.zeros((0, 3))
+    keys = np.floor(np.asarray(pts, dtype=float) / cell_m).astype(np.int64)
+    _, idx = np.unique(keys, axis=0, return_index=True)
+    return np.asarray(pts, dtype=float)[np.sort(idx)]
+
+
+def stair_points_from_masks(
+    frame,
+    detections,
+    min_score: float = 0.25,
+    min_pixels: int = 200,
+    max_range_m: float = 6.0,
+    stride: int = 2,
+) -> np.ndarray:
+    """World points lying on a detected staircase, from YOLOE's masks.
+
+    This is the signal ASCENT relies on and we were missing. Their detector
+    projects `stair_mask & (seg_mask == STAIR_CLASS_ID)` -- an open-vocab box
+    ANDed with RedNet's per-pixel segmentation -- into the map. YOLOE already
+    produces per-pixel masks in the same forward pass, so one model gives us
+    both halves and no extra weights are needed.
+
+    Why this matters more than the object-layer `stairs` tracks we already had:
+    a track is an ellipsoid CENTRE, which says where a staircase is but nothing
+    about where it goes. The mask's points span the whole visible run, so their
+    height extent tells us there is another storey up there -- and a staircase
+    seen across a room is far easier to observe than the other floor's surface,
+    which is what portals currently require (`portals_seen == 0` in 14 of 24
+    cross-floor episodes).
+
+    Returns an (N, 3) array of world points, empty if nothing qualifies.
+    """
+    if not detections:
+        return np.zeros((0, 3))
+    masks = [
+        d.mask for d in detections
+        if str(d.label).lower().replace("_", " ") in STAIR_LABELS
+        and float(d.score) >= min_score
+        and d.mask is not None
+    ]
+    if not masks:
+        return np.zeros((0, 3))
+    mask = np.zeros_like(masks[0], dtype=bool)
+    for m in masks:
+        mask |= m.astype(bool)
+    if int(mask.sum()) < min_pixels:
+        return np.zeros((0, 3))
+    return voxel_downsample(
+        backproject(
+            frame.depth, frame.intrinsics, frame.T_wc,
+            mask=mask, stride=stride, max_depth=max_range_m,
+        )
+    )
+
+
+def descent_points(frame, floor_y: float, min_drop_m: float = 0.4,
+                   max_drop_m: float = 4.0, max_range_m: float = 6.0,
+                   stride: int = 8) -> np.ndarray:
+    """World points that lie BELOW the current floor -- a descending opening.
+
+    A downward staircase is invisible to a forward-looking obstacle band: the
+    band starts 0.3 m under the agent's feet and the floor simply drops away.
+    ASCENT handles this with a dedicated inverted-depth pass; the same points
+    fall out of an ordinary back-projection if you stop discarding everything
+    under the floor plane, which is what the occupancy band does.
+
+    `min_drop_m` is deliberately well below a storey (0.4 m, not 1.8): from a
+    few metres back only the first metre of a descending flight is in view, so
+    requiring a full storey of visible drop finds nothing.
+    """
+    pts = backproject(
+        frame.depth, frame.intrinsics, frame.T_wc, stride=stride, max_depth=max_range_m
+    )
+    if pts.shape[0] == 0:
+        return np.zeros((0, 3))
+    rel = pts[:, HEIGHT_AXIS] - floor_y
+    return voxel_downsample(pts[(rel <= -min_drop_m) & (rel >= -max_drop_m)])
 
 
 def stair_tracks(object_layer, min_obs: int = 2, min_evidence: float = 1.0) -> List[np.ndarray]:

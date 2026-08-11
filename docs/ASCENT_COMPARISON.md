@@ -181,6 +181,9 @@ with measured co-occurrence.
 
 ## 5. Frontier ranking — they have a value map, we do not
 
+> Expanded in **[EXPLORATION_COMPARISON.md](EXPLORATION_COMPARISON.md)**.
+
+
 ASCENT inherits VLFM's **`ValueMap`**: BLIP-2 image-text similarity between the
 frontier's view and the target, accumulated into a per-floor 2D value grid, used
 to sort frontiers before the LLM ever sees them (`_sort_frontiers_by_value`).

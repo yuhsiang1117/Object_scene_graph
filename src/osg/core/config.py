@@ -395,6 +395,29 @@ class FloorConfig:
     # bathroom holds the toilet, and without expiry the "stay" rule suppressed
     # cross-floor switching almost entirely (3 of 24 episodes, was 14). 0 = never.
     evidence_patience_steps: int = 120
+    # Semantic stair portals from YOLOE's masks. This is the signal ASCENT
+    # relies on (detector AND RedNet segmentation); YOLOE gives both halves in
+    # one forward pass. A staircase is visible across a room, whereas a
+    # height-layer portal needs a line of sight onto the other floor's SURFACE
+    # -- measured, that left portals_seen == 0 in 14 of 24 cross-floor episodes.
+    semantic_stairs: bool = False
+    semantic_stair_min_score: float = 0.25
+    semantic_stair_min_px: int = 200
+    semantic_stair_min_points: int = 60
+    # Points below the current floor = a descending opening, which a
+    # forward-looking obstacle band cannot see (ASCENT uses a dedicated
+    # inverted-depth pass for this).
+    descent_probe: bool = False
+    descent_min_drop_m: float = 0.4
+    descent_min_points: int = 60
+    # Frames of stair/descent points kept; they accumulate across keyframes so
+    # a glimpse from one pose is not lost.
+    stair_point_frames: int = 40
+    # Hard cap on accumulated points: the clustering is superlinear.
+    max_stair_points: int = 4000
+    # Assumed storey height when only part of a flight is visible. From a few
+    # metres back you see the first metre, not the landing.
+    storey_guess_m: float = 2.8
     portal_deadline_steps: int = 120
     # Vertical travel that counts as "the climb is under way", so the portal
     # goal is held against same-floor frontier re-selection.

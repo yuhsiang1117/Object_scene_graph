@@ -26,7 +26,7 @@ from typing import List, Optional, Sequence
 
 import numpy as np
 
-from .costmap import Costmap2D
+from .costmap import HEIGHT_AXIS, PLANE, Costmap2D
 
 
 @dataclass
@@ -87,6 +87,120 @@ def find_portals(
             )
         )
     return _merge(sorted(portals, key=lambda p: -p.n_cells), merge_m)
+
+
+def portals_from_stair_points(
+    points: np.ndarray,
+    floor_y: float,
+    min_points: int = 60,
+    min_rise_m: float = 0.35,
+    storey_guess_m: float = 2.8,
+    cluster_m: float = 1.5,
+) -> List[Portal]:
+    """Turn observed staircase surface points into portals.
+
+    The height-layer portal (`find_portals`) needs to see the *other floor's
+    surface*, which usually means standing where you can already look onto it.
+    A staircase is visible from much further away and from far more poses --
+    measured, the height-layer route left `portals_seen == 0` in 14 of 24
+    cross-floor episodes.
+
+    The target height is an estimate, not an observation: from the bottom of a
+    flight you see the first metre or so, not the landing. We take the highest
+    point actually seen and, if that is less than a storey up, extrapolate to
+    `storey_guess_m`. `snap_point` then puts the goal on whatever navmesh
+    surface is nearest that query, so a wrong guess costs an imprecise goal
+    rather than a wrong floor. Descending flights (highest point below the
+    floor) extrapolate downward the same way.
+    """
+    if points is None or len(points) < min_points:
+        return []
+    pts = np.asarray(points, dtype=float)
+    rel = pts[:, HEIGHT_AXIS] - floor_y
+    up = float(rel.max())
+    down = float(rel.min())
+    going_up = abs(up) >= abs(down)
+    rise = up if going_up else down
+    if abs(rise) < min_rise_m:
+        return []
+
+    # Cluster in the ground plane so two staircases do not merge into one goal.
+    out: List[Portal] = []
+    for centre, n in _cluster_xy(pts[:, list(PLANE)], cluster_m):
+        delta = rise if abs(rise) >= storey_guess_m else (
+            storey_guess_m if going_up else -storey_guess_m
+        )
+        out.append(
+            Portal(
+                centroid_xy=centre,
+                target_y=float(floor_y + delta),
+                n_cells=int(n),
+                delta_y=float(delta),
+            )
+        )
+    return out
+
+
+def find_descent_portals(
+    points: np.ndarray,
+    floor_y: float,
+    min_points: int = 60,
+    storey_guess_m: float = 2.8,
+    cluster_m: float = 1.5,
+) -> List[Portal]:
+    """Portals from points lying below the current floor (see stairs.descent_points).
+
+    A descending opening shows only its first half-metre from a few metres back,
+    so the drop is extrapolated to a storey rather than trusted as measured.
+    """
+    if points is None or len(points) < min_points:
+        return []
+    pts = np.asarray(points, dtype=float)
+    drop = float((pts[:, HEIGHT_AXIS] - floor_y).min())
+    delta = drop if abs(drop) >= storey_guess_m else -storey_guess_m
+    return [
+        Portal(centroid_xy=centre, target_y=float(floor_y + delta),
+               n_cells=int(n), delta_y=float(delta))
+        for centre, n in _cluster_xy(pts[:, list(PLANE)], cluster_m)
+    ]
+
+
+def _cluster_xy(xy: np.ndarray, radius_m: float):
+    """Single-linkage ground-plane clustering; (centroid, count), largest first.
+
+    Single linkage rather than a fixed radius from a seed, because a staircase
+    is ELONGATED: a 2 m flight clustered at a 1.5 m radius splits into two
+    goals, and a longer one into more. Stair points form a dense chain, so
+    linking neighbours within `radius_m` walks the whole flight into one
+    cluster while still separating two staircases in different rooms.
+    """
+    from scipy import ndimage
+
+    if xy.shape[0] == 0:
+        return []
+    # Link on a GRID rather than pairwise. A pairwise neighbour query is
+    # quadratic when the points are dense inside the link radius, which is
+    # exactly the case here -- measured 33 s for 40k points, enough to hang a
+    # run. Occupied cells of side radius_m/2, 8-connected, is the same
+    # single-linkage relation at grid resolution and is linear in the points.
+    cell = max(radius_m / 2.0, 1e-6)
+    ij = np.floor(xy / cell).astype(np.int64)
+    lo = ij.min(axis=0)
+    ij -= lo
+    shape = (int(ij[:, 0].max()) + 3, int(ij[:, 1].max()) + 3)
+    if shape[0] * shape[1] > 4_000_000:  # pathological spread: fall back to one cluster
+        return [(xy.mean(axis=0), int(xy.shape[0]))]
+    occ = np.zeros(shape, dtype=bool)
+    occ[ij[:, 0] + 1, ij[:, 1] + 1] = True
+    lbl, n = ndimage.label(occ, structure=np.ones((3, 3)))
+    if n == 0:
+        return []
+    point_labels = lbl[ij[:, 0] + 1, ij[:, 1] + 1]
+    clusters = [
+        (xy[point_labels == k].mean(axis=0), int((point_labels == k).sum()))
+        for k in range(1, n + 1)
+    ]
+    return sorted(clusters, key=lambda c: -c[1])
 
 
 def _merge(portals: Sequence[Portal], merge_m: float) -> List[Portal]:

@@ -38,8 +38,19 @@ from ..mapping.costmap import PLANE, Costmap2D
 from ..mapping.floor_stack import FloorStack
 from ..mapping.floors import FloorEstimator
 from ..mapping.frontier import Frontier, FrontierExtractor
-from ..mapping.portals import FloorSwitchPolicy, find_portals
-from ..mapping.stairs import apply_stair_mask, detect_stairs, stair_tracks
+from ..mapping.portals import (
+    FloorSwitchPolicy,
+    find_descent_portals,
+    find_portals,
+    portals_from_stair_points,
+)
+from ..mapping.stairs import (
+    apply_stair_mask,
+    descent_points,
+    detect_stairs,
+    stair_points_from_masks,
+    stair_tracks,
+)
 from ..objects.object_layer import ObjectLayer
 from ..perception.detector import Detector
 from ..perception.keyframe import KeyframeSelector, KeyframeStore
@@ -47,6 +58,18 @@ from ..planning.controller import WaypointController
 from ..planning.planner import PlanResult
 from ..planning.voronoi_planner import HybridVoronoiPlanner
 from ..verification.viewpoint import ViewpointPlanner
+
+def _cap_points(buf, limit: int):
+    """Keep the most recent frames within a total point budget. The clustering
+    downstream is superlinear, so an unbounded buffer is a latent hang."""
+    total, out = 0, []
+    for arr in reversed(buf):
+        if total + arr.shape[0] > limit and out:
+            break
+        out.append(arr)
+        total += arr.shape[0]
+    return list(reversed(out))
+
 
 STOP_ACTION = "stop"
 TURN_ACTION = "turn_left"
@@ -234,6 +257,8 @@ class NavAgent:
         self.floor_y_drift = 0.0
         self.stair_regions: list = []
         self.portal_log: list = []
+        self._stair_points: list = []
+        self._descent_points: list = []
         self._portal_active = False
         self._portal_start_y = 0.0
         self._portal_step = 0
@@ -638,6 +663,28 @@ class NavAgent:
             self.object_layer.update(frame, dets)
         self.keyframes.add(frame)
 
+        if self._cross_floor_on:
+            fc = self.cfg.floor
+            floor_y = self.floors.height_of(self._floor_stack.current_id)
+            if getattr(fc, "semantic_stairs", False):
+                sp = stair_points_from_masks(
+                    frame, dets,
+                    min_score=fc.semantic_stair_min_score,
+                    min_pixels=fc.semantic_stair_min_px,
+                )
+                if sp.shape[0]:
+                    self._stair_points.append(sp)
+                    self._stair_points = self._stair_points[-fc.stair_point_frames:]
+                    self._stair_points = _cap_points(self._stair_points, fc.max_stair_points)
+            if getattr(fc, "descent_probe", False):
+                dp = descent_points(
+                    frame, floor_y, min_drop_m=fc.descent_min_drop_m,
+                )
+                if dp.shape[0]:
+                    self._descent_points.append(dp)
+                    self._descent_points = self._descent_points[-fc.stair_point_frames:]
+                    self._descent_points = _cap_points(self._descent_points, fc.max_stair_points)
+
         if self._stairs_on:
             fc = self.cfg.floor
             if self._kf_count % max(1, int(fc.stair_detect_every_kf)) == 1:
@@ -873,12 +920,30 @@ class NavAgent:
         ):
             return False
 
+        fc = self.cfg.floor
         floor_y = self.floors.height_of(self._floor_stack.current_id)
-        portals = find_portals(
+        # Three independent ways to learn another storey exists, in increasing
+        # order of how much has to be visible: a detected staircase (easiest --
+        # visible across a room), a drop-off below the floor, and finally the
+        # other floor's own surface (hardest -- needs a line of sight onto it).
+        portals = []
+        if getattr(fc, "semantic_stairs", False) and self._stair_points:
+            portals += portals_from_stair_points(
+                np.concatenate(self._stair_points), floor_y,
+                min_points=fc.semantic_stair_min_points,
+                storey_guess_m=fc.storey_guess_m,
+            )
+        if getattr(fc, "descent_probe", False) and self._descent_points:
+            portals += find_descent_portals(
+                np.concatenate(self._descent_points), floor_y,
+                min_points=fc.descent_min_points,
+                storey_guess_m=fc.storey_guess_m,
+            )
+        portals += find_portals(
             self.costmap, floor_y,
-            min_delta_m=self.cfg.floor.new_level_m,
-            max_delta_m=self.cfg.floor.portal_max_delta_m,
-            min_cells=self.cfg.floor.portal_min_cells,
+            min_delta_m=fc.new_level_m,
+            max_delta_m=fc.portal_max_delta_m,
+            min_cells=fc.portal_min_cells,
         )
         self.stats["portals_seen"] = max(self.stats.get("portals_seen", 0), len(portals))
         if not portals:
