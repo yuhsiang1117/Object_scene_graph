@@ -88,15 +88,17 @@ attribution was fixed with a per-bearing depth clip, and the term is not swamped
 (12.6% of selections change at weight 2). The changed decisions simply do not
 help: 47 gained / 39 lost, McNemar p = 0.45.
 
-The ceiling is in **our objective**, not the signal. A counterfactual sweep over
-1969 selections shows the semantic term's influence **saturates at 24% even at a
-64× weight** — in the other 76%, one frontier dominates on geometry and nothing
-overturns it. `utility = score / path_cost` with a true planner cost makes
-distance nearly decisive, whereas ASCENT has **no geometric term at all** and can
-therefore let value steer every decision.
+A counterfactual sweep over 1969 selections shows the semantic term's influence
+**saturating at 24% even at a 64× weight** — in the other 76%, one frontier
+dominates on geometry. That looked like the cause, so ASCENT's selection shape
+was implemented (`selection_mode=cascade`: nearest within 3 m, else pure value)
+to lift the ceiling. It did not help: **44.6% vs a 44.6% baseline, 48 gained /
+48 lost, p = 1.00** — 96 episodes changed outcome for zero net effect.
 
-That also retro-explains the symbolic result: our objective leaves almost no room
-for *any* semantic prior. Same ceiling, two different signals. Details in
+So the objective was not the obstacle. The signal answers the wrong question: a
+value map says which *room type* to head toward, while this pipeline loses on
+picking the wrong *instance* after arriving (24.6% of episodes) and on
+reachability behind closed doors (18.6%). Details in
 [ASCENT_GAP.md](ASCENT_GAP.md) §5.
 
 ---
@@ -152,14 +154,17 @@ repeat a frontier we already chose.
 
 This is the cheapest item on the list and needs no new model.
 
-### 4.2 A visual value map — tried, and blocked by our objective
+### 4.2 A visual value map — tried both ways, refuted
 
-**Tested and reverted** (see the update in §2). The encoder is fine and the map
-is fine; the selector cannot use them, because `score / path_cost` caps any
-semantic prior's influence at 24% of decisions. Retrying this needs the objective
-reworked first — either drop `path_cost` from the ranking and re-introduce
-distance as a separate gate, or adopt ASCENT's value-sort-then-choose shape. A
-bigger weight will not do it.
+**Tested and reverted.** The encoder is fine (AUC 0.865), the attribution was
+fixed, and the 24% influence ceiling was then *lifted* by implementing ASCENT's
+cascade (nearest within 3 m, else pure value). Result: **44.6% against a 44.6%
+baseline, 48 gained / 48 lost, p = 1.00**. Full authority, zero effect.
+
+The signal answers the wrong question: a value map says which *room type* to head
+for, while this pipeline's losses are picking the wrong *instance* on arrival
+(24.6% of episodes) and reachability behind closed doors. See
+[ASCENT_GAP.md](ASCENT_GAP.md) §5.
 
 ### 4.3 Frontier images for the decision
 

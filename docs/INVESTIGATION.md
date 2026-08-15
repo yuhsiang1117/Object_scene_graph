@@ -124,9 +124,9 @@ eliminated:
 | swamped by `path_cost` | **no** — 12.6% of selections change at weight 2 |
 | the changed decisions help | **no** — 47 gained / 39 lost on 500 paired episodes, McNemar p = 0.45 |
 
-The binding constraint is **our objective**. A counterfactual sweep over 1969
-selections (which frontier would weight *w* have chosen at this exact state?)
-shows influence saturating at **24% even at a 64× weight**:
+A counterfactual sweep over 1969 selections (which frontier would weight *w*
+have chosen at this exact state?) shows influence saturating at **24% even at a
+64× weight**:
 
 ```
 weight   0.5    1.0    2.0    4.0    8.0   16.0   32.0   64.0
@@ -134,13 +134,42 @@ flips   0.0%   6.7%  12.6%  17.6%  21.0%  22.7%  23.7%  24.1%
 ```
 
 In the other 76% of selections one frontier dominates on geometry — nearer, or
-the only reachable option — and no semantic weight overturns it. `utility =
-score / path_cost` with a true planner cost makes distance nearly decisive.
+the only reachable option — and no semantic weight overturns it.
 
-**This retro-explains the LLM-scoring result above.** That was read as "the LLM
-adds nothing"; the truer reading is that this objective leaves almost no room for
-ANY semantic prior, symbolic or visual. Retrying either needs the objective
-reworked, not a bigger weight.
+**That ceiling was then tested directly, and it is NOT the cause.** ASCENT's
+selection shape was implemented (`exploration.selection_mode=cascade`): take the
+nearest frontier when one is within 3 m, otherwise rank purely by value —
+distance as a gate rather than a divisor, which gives the semantic prior full
+authority exactly when a long trip is being committed to. On the same 500 paired
+episodes:
+
+| | SR | vs baseline | McNemar |
+|---|---|---|---|
+| baseline (`utility`) | 44.6% | — | — |
+| value map, `utility` | 46.2% | +47 / −39 | p = 0.45 |
+| value map, `cascade` | **44.6%** | **+48 / −48** | **p = 1.00** |
+
+Full authority changed **96 episodes' outcomes for exactly zero net effect**. So
+"the objective was in the way" is refuted as an explanation: lifting the ceiling
+changes nothing.
+
+**The signal is good and still does not help, because it answers the wrong
+question.** A value map tells you which ROOM TYPE you are heading toward. Neither
+of our failure modes is a room-choice problem: wrong-object commitment (24.6% of
+episodes) is the agent reaching a plausible room and committing to a real but
+un-annotated instance — room-level guidance cannot separate those and may reach
+them faster — and explore-failures (18.6%, concentrated in `toilet` at 32.2%) are
+reachability behind closed doors, not direction-choice.
+
+A value map is the right tool for "I do not know which way to go". This agent
+mostly knows which way to go and then picks the wrong object when it arrives.
+
+**This also revises the LLM-scoring reading.** The byte-identical trajectories
+were originally read as "the LLM adds nothing", then as "the objective leaves no
+room". Both are now doubtful: the simplest account consistent with all three
+experiments is that frontier-level semantic guidance of any kind — symbolic,
+visual, weighted or gated — does not address what this pipeline actually gets
+wrong.
 
 `scripts/itm_discrimination.py` is kept — it answers "does encoder X tell
 target-in-view from target-absent?" offline, for any future candidate.

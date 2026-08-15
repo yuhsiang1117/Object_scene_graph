@@ -125,17 +125,27 @@ shows the semantic term's influence **saturates at 24%** even at a 64× weight.
 In the other **76% of selections one frontier dominates on geometry** — nearer,
 or the only reachable option — and no semantic weight overturns it.
 
-That ceiling is a property of our *selector*, not of the encoder. `utility =
-score / path_cost` with a true planner cost makes distance nearly decisive.
-ASCENT has **no geometric term at all**: it ranks purely by value and hands the
-top-k to an LLM. Their value map can therefore steer every decision; ours can
-steer at most a quarter of them.
+That ceiling is a property of our *selector*. **It was then tested directly and
+is not the cause.** ASCENT's selection shape was implemented — nearest frontier
+when one is within 3 m, otherwise rank purely by value, i.e. distance as a gate
+rather than a divisor — giving the semantic prior full authority whenever a long
+trip is being committed to. On 500 paired episodes it produced **44.6% against a
+44.6% baseline: 48 gained, 48 lost, McNemar p = 1.00**. Ninety-six episodes
+changed outcome for exactly zero net effect.
 
-This also retro-explains an older finding. `INVESTIGATION.md` records that LLM
-frontier scoring produced byte-identical trajectories to geometric-nearest. That
-was read as "the LLM adds nothing". The truer reading is that **our objective
-leaves almost no room for any semantic prior**, symbolic or visual. Same
-ceiling, two different signals.
+So the honest conclusion is stronger and less flattering than "our objective was
+in the way": **the signal answers the wrong question.** A value map tells you
+which room type you are heading toward, and neither of our failure modes is a
+room-choice problem — wrong-object commitment is picking the wrong *instance*
+inside the right room, and explore-failures are reachability behind closed doors.
+A value map is the right tool for "I do not know which way to go"; this agent
+mostly knows, and then picks wrong on arrival.
+
+This also revises an older reading. `INVESTIGATION.md` records LLM frontier
+scoring producing byte-identical trajectories to geometric-nearest, first read as
+"the LLM adds nothing", later as "the objective leaves no room". The account
+consistent with all three experiments is simpler: frontier-level semantic
+guidance of any kind does not address what this pipeline gets wrong.
 
 ## 6. Honest accounting of what is and is not comparable
 
@@ -157,10 +167,9 @@ perception is worth about that much SR on this benchmark".
    are the whole ballgame. A second detector or a segmentation cross-check on
    the committed instance attacks it directly; `tv_monitor` alone is 281
    episodes at 28.1%.
-2. **Rework the objective so a semantic prior can act (unlocks the value map).**
-   Not a bigger weight — the 24% ceiling is structural. Either drop `path_cost`
-   from the ranking and re-introduce distance as a separate gate, or adopt
-   ASCENT's value-sort-then-choose shape.
+2. ~~Rework the objective so a semantic prior can act.~~ **Done and refuted** —
+   the cascade gives it full authority and yields 44.6% vs 44.6%. Do not spend
+   more here; the item that looked like #2 is not a lever at all.
 3. **Semantic stair segmentation (~+3 points).** Closes most of the remaining
    cross-floor gap. RedNet is small and the failure mode is understood.
 4. **Toilet-style coverage.** 32.2% explore-fail on the second-best category
