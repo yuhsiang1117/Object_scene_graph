@@ -111,6 +111,40 @@ the agent, trajectory, chosen frontier and planned path.
 | Context/co-occurrence commitment gate | (reverted) | 46.0% → 48.0% (tight) → 45.0% (loose); dtg>3m 22 → 21 → 22; explore-fail 20 → 20 → **23** | **refuted** — the agent commits before the room is mapped, so there is almost no context to consult; loosening barely raised the firing rate (22 → 24) and cost SR/SPL |
 | Speckle filter (clear <3-cell OCCUPIED components) | `mapping.speckle_min_cells=3` | SR 40% → **28.6%** (net −4); no-find 7→7 (no help); 32/35 trajectories changed | **regressed** — in noise-free sim it removes real thin/edge geometry, not noise |
 
+### A semantic value map cannot steer this selector (2026-08, refuted)
+
+VLFM/ASCENT rank frontiers by an image-text value map. Implemented with CLIP
+ViT-B/32, measured over ~1500 episodes, reverted. Every candidate explanation was
+eliminated:
+
+| hypothesis | verdict |
+|---|---|
+| encoder too weak | **no** — CLIP separates target-in-view from absent at AUC 0.865 on 120 labelled pairs; BLIP-2 is no better (0.874 contrastive, 0.783 ITM head) |
+| spatial attribution smeared | **fixed** — per-bearing depth clip + range falloff |
+| swamped by `path_cost` | **no** — 12.6% of selections change at weight 2 |
+| the changed decisions help | **no** — 47 gained / 39 lost on 500 paired episodes, McNemar p = 0.45 |
+
+The binding constraint is **our objective**. A counterfactual sweep over 1969
+selections (which frontier would weight *w* have chosen at this exact state?)
+shows influence saturating at **24% even at a 64× weight**:
+
+```
+weight   0.5    1.0    2.0    4.0    8.0   16.0   32.0   64.0
+flips   0.0%   6.7%  12.6%  17.6%  21.0%  22.7%  23.7%  24.1%
+```
+
+In the other 76% of selections one frontier dominates on geometry — nearer, or
+the only reachable option — and no semantic weight overturns it. `utility =
+score / path_cost` with a true planner cost makes distance nearly decisive.
+
+**This retro-explains the LLM-scoring result above.** That was read as "the LLM
+adds nothing"; the truer reading is that this objective leaves almost no room for
+ANY semantic prior, symbolic or visual. Retrying either needs the objective
+reworked, not a bigger weight.
+
+`scripts/itm_discrimination.py` is kept — it answers "does encoder X tell
+target-in-view from target-absent?" offline, for any future candidate.
+
 ### Context priors cannot gate object commitment (2026-08, refuted)
 
 The largest remaining loss is committing to the wrong object: of 34 approach
@@ -286,7 +320,10 @@ the dominant loss, dragging the full-v1 number from ~68% to 42%.
 
 Dead ends (do not re-attempt): any form of VLM verification as an SR lever,
 ellipsoid-localization tuning, persistent/regional give-up blocking,
-**context/co-occurrence priors as a commitment gate** (refuted 2026-08 -- the
+**semantic value maps for frontier ranking** (refuted 2026-08 — the encoder is
+fine; `score / path_cost` caps any semantic prior at 24% of decisions, so rework
+the objective before retrying), **context/co-occurrence priors as a commitment
+gate** (refuted 2026-08 -- the
 agent commits before the surrounding room is mapped, so there is no context to
 consult; see the section above), and **geometric stair detection via a per-cell
 height gradient** (flat tread interiors fragment a staircase into disconnected

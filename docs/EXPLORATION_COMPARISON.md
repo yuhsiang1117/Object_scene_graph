@@ -79,10 +79,25 @@ is a different signal in three ways:
    round-trip, so it never goes stale. Our async LLM scorer dropped in-flight
    requests and its scores arrived too late to change an argmax.
 
-So the honest statement is: *symbolic* frontier scoring is refuted here;
-*visual* frontier scoring is **untested**. Given VLFM alone (value map, no LLM,
-no multi-floor) reports ~52% on HM3D against our 49.8%, the value map is
-plausibly doing much of the work in that gap.
+**Update: visual frontier scoring has now been tested here too, and it also
+fails — but for a different and more interesting reason.** A CLIP value map was
+implemented, measured over ~1500 episodes and reverted. Every candidate
+explanation was eliminated in turn: the encoder discriminates well
+(target-in-view vs absent, AUC 0.865; BLIP-2 is no better at 0.874), the spatial
+attribution was fixed with a per-bearing depth clip, and the term is not swamped
+(12.6% of selections change at weight 2). The changed decisions simply do not
+help: 47 gained / 39 lost, McNemar p = 0.45.
+
+The ceiling is in **our objective**, not the signal. A counterfactual sweep over
+1969 selections shows the semantic term's influence **saturates at 24% even at a
+64× weight** — in the other 76%, one frontier dominates on geometry and nothing
+overturns it. `utility = score / path_cost` with a true planner cost makes
+distance nearly decisive, whereas ASCENT has **no geometric term at all** and can
+therefore let value steer every decision.
+
+That also retro-explains the symbolic result: our objective leaves almost no room
+for *any* semantic prior. Same ceiling, two different signals. Details in
+[ASCENT_GAP.md](ASCENT_GAP.md) §5.
 
 ---
 
@@ -137,13 +152,14 @@ repeat a frontier we already chose.
 
 This is the cheapest item on the list and needs no new model.
 
-### 4.2 A visual value map — the largest but most expensive
+### 4.2 A visual value map — tried, and blocked by our objective
 
-The gap analysis above. Note we already have an image-text encoder resident:
-YOLOE loads `mobileclip_blt.ts` for open-vocab prompts, so CLIP-style cosine
-similarity between the current frame and the target category is available
-without adding a model. That is a weaker encoder than BLIP-2 ITM, but it makes
-the experiment cheap enough to be worth running before committing to BLIP-2.
+**Tested and reverted** (see the update in §2). The encoder is fine and the map
+is fine; the selector cannot use them, because `score / path_cost` caps any
+semantic prior's influence at 24% of decisions. Retrying this needs the objective
+reworked first — either drop `path_cost` from the ranking and re-introduce
+distance as a separate gate, or adopt ASCENT's value-sort-then-choose shape. A
+bigger weight will not do it.
 
 ### 4.3 Frontier images for the decision
 

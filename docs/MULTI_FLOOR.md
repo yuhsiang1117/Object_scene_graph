@@ -190,7 +190,18 @@ Staged, each gated behind a config flag defaulting to current behaviour and
 validated by a single-variable A/B, per the house rules in
 [INVESTIGATION.md](INVESTIGATION.md):
 
-## Results (full v1, 100 episodes, `verification=nim`)
+## Results
+
+**Headline (full v1 val, 2000 episodes, `verification=nim`):** SR **49.8% ±2.2**,
+SPL 0.218. Single-floor scenes 60.9%, multi-floor scenes 43.8%, **cross-floor
+episodes 18.2%** — up from 0.0% before this work.
+
+The per-stage table below is on a 100-episode subset (5 episodes/scene) and is
+kept for the progression it shows, but **that subset is not representative**: it
+read 48.0% where the 2000-episode truth is 49.8%, single-floor 68.6% vs 60.9%,
+multi-floor 36.9% vs 43.8%. Treat the per-stage deltas as directional only.
+
+### Per-stage progression (100-episode subset — see caveat above)
 
 | run | SR | SPL | single-floor | multi-floor | cross-floor |
 |---|---|---|---|---|---|

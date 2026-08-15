@@ -255,12 +255,14 @@ Ranked by expected value against our current bottleneck:
 
 ## 8. Numbers, and why they are not directly comparable
 
-ASCENT reports **65.4% SR / 33.5% SPL on HM3D**; we are at **48.0% / 0.234** on
-full v1. The gap is real but the setups are not aligned:
+ASCENT reports **65.4% SR / 33.5% SPL on HM3D**; we measure **49.8% ±2.2 /
+0.218** on the same 2000-episode v1 val split. **[ASCENT_GAP.md](ASCENT_GAP.md)
+decomposes the 15.6-point gap** — short version: it is dominated by wrong-object
+commitment (24.6% of all episodes), not by multi-floor or exploration.
 
-- **Different episode sets.** They evaluate HM3D v1 val (2000 episodes, all 20
-  scenes); we run 100 episodes at 5/scene. Our own measurements show ±3 episodes
-  of verifier noise at n=100, so our number carries a much wider error bar.
+- **Episode sets now match** (2000 episodes, 20 scenes, same success criterion).
+  An earlier version of this section quoted 48.0% from a 100-episode subset that
+  turned out unrepresentative by up to 8 points on the splits.
 - **Different perception stack.** ASCENT runs BLIP-2 + D-FINE + Grounding-DINO +
   Mobile-SAM + RedNet + Qwen2.5-7B. We run one YOLOE model and a VLM verifier,
   targeting a 6 GB laptop profile.
@@ -269,7 +271,8 @@ full v1. The gap is real but the setups are not aligned:
   the absolute against a differently-configured system.
 
 The one number that *is* comparable in spirit: ASCENT reports **33.3% SR on
-cross-floor episodes** where VLFM gets 0.4%. We are at **16.7%** (4/24) from a
-starting point of 0.0%. Same direction, half the distance, with the gap
-concentrated exactly where §3 predicts — finding the staircase in the first
-place.
+cross-floor episodes** where VLFM gets 0.4%. We measure **18.2%** on 411
+cross-floor episodes, from a starting point of 0.0%. Same direction, about half
+the distance, with the gap concentrated exactly where §3 predicts — finding the
+staircase in the first place. Closing it entirely would be worth only ~+3.1
+points overall, however; see [ASCENT_GAP.md](ASCENT_GAP.md) §4.

@@ -33,18 +33,28 @@ how it got here):
   (中文实现结构说明).
 
 > **Status (2026-08):** best config (`+experiment=full_v1_navmesh`) scores
-> **48% SR on full v1** (5 eps/scene, 100 eps), SPL 0.234 — up from ~18% at the
-> start of the SR-gap investigation. **Single-floor: 68.6%** (above the old ROS
-> stack's 54%); **multi-floor: 36.9%**, up from 24.6% before the multi-floor
-> work; **cross-floor 16.7%**, up from 0%. The remaining losses are committing
-> to category-correct wrong objects (26 episodes end >3 m from any goal) and
-> cross-floor episodes where the agent never sees a portal (14 of 24).
+> **49.8% SR ±2.2 / SPL 0.218** on the **full HM3D v1 val (2000 episodes, 20
+> scenes)** — up from ~18% at the start of the SR-gap investigation. Splits:
+> single-floor scenes 60.9%, multi-floor scenes 43.8%, cross-floor episodes
+> **18.2%** (up from 0.0% before the multi-floor work).
 >
-> See **[docs/INVESTIGATION.md](docs/INVESTIGATION.md)** for the SR-gap A/Bs and
-> **[docs/MULTI_FLOOR.md](docs/MULTI_FLOOR.md)** for the multi-floor literature
-> survey, results, and two documented negative results. Note from that work:
-> **runs are not reproducible while the VLM verifier is on** — use
-> `verification=off` for any A/B meant to prove two configs equivalent.
+> Earlier numbers in these docs quoted a 100-episode subset (5/scene). That
+> subset read 48.0% where the truth is 49.8%, with per-split errors up to 8
+> points — **do not trust A/Bs run at n=100 here**; with a nondeterministic
+> verifier nothing under ~1000 episodes resolves less than about 5 points.
+>
+> **The dominant remaining loss is committing to the wrong object: 492 of 2000
+> episodes (24.6%) end more than 3 m from any goal.** See
+> **[docs/ASCENT_GAP.md](docs/ASCENT_GAP.md)** for the full decomposition and
+> why this pipeline sits 15.6 points below ASCENT's reported 65.4%.
+>
+> See **[docs/INVESTIGATION.md](docs/INVESTIGATION.md)** for the SR-gap A/Bs,
+> **[docs/MULTI_FLOOR.md](docs/MULTI_FLOOR.md)** for the multi-floor work
+> (中文: **[MULTI_FLOOR_CN.md](docs/MULTI_FLOOR_CN.md)**), and
+> **[docs/EXPLORATION_COMPARISON.md](docs/EXPLORATION_COMPARISON.md)** for the
+> frontier-selection comparison. Note: **runs are not reproducible while the VLM
+> verifier is on** — use `verification=off` for any A/B meant to prove two
+> configs equivalent.
 
 ## Quick start
 
