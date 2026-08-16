@@ -221,17 +221,35 @@ reports 2.0-2.7), geometric best kept 55.9% of the time against 33% chance. On
 the 58 episodes where it changed a decision SR went 41.4% → 32.8%; on the 42
 where it was inert, 27 → 25 (the verifier noise floor).
 
-**It breaks the sweep.** Section 3 of this document lists our momentum term as
-the largest exploration win in the project's history (+8.5 SR), and ASCENT's fine
-step overrides the geometric argmax with a pick that ignores momentum and
-distance both — so every override interrupts a pursuit mid-flight. ASCENT has no
-momentum term to break. Five of the nine lost episodes ended as explore-failures,
+**The harm is directional, not distance** — measured, not assumed. Overridden
+goals are the same distance away (5.23 m vs 5.41 m for the ones geometry kept)
+and pursued just as long (40.1 vs 42.2 steps), and aggregate trajectory stats
+barely move (revisit 41% → 42%). The agent goes the same distance in a worse
+direction. What the override discards is §3's **momentum** term — the largest
+exploration win in this project's history, +8.5 SR — and **info gain**. ASCENT
+has neither to lose. Five of the nine lost episodes ended as explore-failures,
 having never committed to any target.
 
-The Places365 excuse was measured and does not hold: over 91 logged area
-descriptions, 0% carried a room label but 100% carried objects (mean 9.8 each),
-no decision had identical options, and mean pairwise Jaccard between option
-object-sets was 0.48.
+**The deeper reason the semantic signal is weak here: we describe the wrong side
+of the frontier.** A frontier is the boundary of *unknown* space, but our
+description is `objects_near(centroid, 3 m)` over the scene graph, which contains
+only already-observed objects — the *explored* side. The prompt reports what the
+agent has walked past, not what lies beyond the boundary it is choosing. ASCENT's
+value map is painted through the camera cone pointing **into** unobserved space,
+and its frontier crop shows the view *toward* the frontier.
+
+The measured consequence, over 32 real decisions (91 descriptions): **33% of the
+option union is shared by every option**, 31% of decisions had all options
+sharing ≥50% of their objects, and mean pairwise Jaccard was 0.48. Adjacent
+frontiers on the same room's boundary inherit the same mapped furniture — the
+most common described objects are `picture, cabinet, desk, shelf, bed, pillow,
+sofa, rug, mirror, lamp, door`. Many of these "decisions" are coin flips dressed
+as reasoning, and a coin flip loses to a tuned geometric argmax.
+
+So the Places365 gap is real but not the whole story: 0 of 91 descriptions
+carried a room label, while 100% carried objects (mean 9.8 each). The model was
+not starved of context — it was given plenty of context about the wrong region,
+inside a few-shot template whose load-bearing field was empty every time.
 
 ### 4.4 Frontier images for the decision
 

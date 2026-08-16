@@ -119,18 +119,51 @@ episode** (ASCENT reports 2.0-2.7), and the model kept the geometric best 55.9%
 of the time against a 33% chance rate. On the 58 episodes where it changed a
 decision, SR went 41.4% → 32.8%; on the 42 where it was inert, 27 → 25 (noise).
 
-It fails by **breaking the sweep**. `continuity_weight=2.0` is worth +8.5 SR here
-and ASCENT's fine step overrides the geometric argmax with a choice that ignores
-momentum and distance both. ASCENT has no momentum term to break. The failure
-mode shifts accordingly: explore-failures 18 → 22, with five of the nine losses
-ending having never committed to any target, while wrong-object commits are
-unchanged (25 → 24).
+**The harm is directional, not distance.** Overridden goals turn out to be the
+same distance away and pursued just as long as the ones geometry picked:
 
-The obvious excuse — that our areas lack ASCENT's Places365 room type — was
-measured and rejected: across 91 logged descriptions, 0% carried a room label
-but **100% carried objects, mean 9.8 each**, no decision had identical options,
-and mean pairwise Jaccard between option object-sets was 0.48. The model had
-real context and still made worse choices.
+| selections | n | chosen path cost | steps to next selection |
+|---|---|---|---|
+| not asked (something within 3 m) | 363 | 2.06 m | 20.6 |
+| asked, kept geometric | 114 | 5.41 m | 42.2 |
+| asked, **overridden** | 90 | **5.23 m** | 40.1 |
+
+Aggregate trajectory statistics are unchanged too (revisit 41% → 42%,
+selections/episode 5.9 → 5.7). The agent does not wander further or thrash; it
+goes the same distance in a worse direction. What the override actually discards
+is **momentum** (`continuity_weight=2.0`, worth +8.5 SR here) and **info gain** —
+ASCENT has neither term to lose. Failure mode shifts accordingly: explore-fails
+18 → 22, five of the nine losses never committing to any target, wrong-object
+commits unchanged (25 → 24).
+
+**Why the semantic choice is weak here: we describe the wrong side of the
+frontier.** A frontier is the boundary of unknown space, and our area
+description is `objects_near(centroid, 3 m)` over the scene graph — which by
+construction contains only **already-observed** objects, i.e. the *explored*
+side. The prompt therefore says what the agent has walked past, not what lies
+beyond the boundary it is choosing. ASCENT does not have this problem: its value
+map is painted through the camera cone pointing **into** unobserved space, and
+its frontier crop shows the view *toward* the frontier.
+
+Measured over 32 real decisions (91 descriptions), the consequence is options
+that barely differ:
+
+- **33% of the option union is shared by every option** (median 33%)
+- **31% of decisions had all options sharing >= 50%** of their objects
+- mean pairwise Jaccard 0.48
+- the most common described objects are `picture, cabinet, desk, shelf, bed,
+  pillow, sofa, rug, mirror, lamp, door` — generic furniture, not discriminative
+
+Adjacent frontiers on the same room's boundary inherit the same mapped
+furniture, so a large share of these "decisions" are coin flips dressed as
+reasoning — and a coin flip is strictly worse than a tuned geometric argmax.
+
+The Places365 excuse is thus half true and worth stating precisely: **0 of 91**
+descriptions carried a room label (against ASCENT's Places365 type), while 100%
+carried objects, mean 9.8 each. The model was not starved of context — it was
+given plentiful context about the wrong region, inside a few-shot template whose
+load-bearing field (`"a bathroom containing objects: …"`) was empty every single
+time.
 
 *Caveat:* n = 100, where this repo's own rule is not to trust A/Bs below ~1000
 episodes. The pairing and the 42-episode inert control (which flipped by 2,
