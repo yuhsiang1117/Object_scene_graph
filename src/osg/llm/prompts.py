@@ -78,3 +78,98 @@ VERIFY_CHOICE_USER = """Categories: {categories}.
 First describe the object inside the red bounding box, then choose the single
 best-matching category from the list above (or "none" if it fits none).
 Respond as JSON: {{"description": "<short>", "category": "<one category or none>", "confidence": <0-1>}}"""
+
+
+# ---------------------------------------------------------------------------
+# ASCENT coarse-to-fine reasoning (arXiv 2505.23019, ascent/llm_planner.py).
+#
+# Ported close to the original, including the one-shot example and the
+# `{"Index": ..., "Reason": ...}` reply shape -- the example is doing real work
+# for small instruct models, which otherwise return prose or a bare integer.
+# Two deviations, both forced by what our pipeline can observe:
+#
+#   * ASCENT's area room type comes from Places365 scene classification of the
+#     frame the frontier was seen in. We have no scene classifier, so the room
+#     is our LLM-cached room label when one exists and "unknown room" otherwise,
+#     and the object list carries the discriminative load.
+#   * ASCENT dedupes candidate areas by SSIM over the frontier crops. We have no
+#     per-frontier crop in the text path; frontier extraction already merges
+#     adjacent cells into one component, which covers the same duplicate case.
+# ---------------------------------------------------------------------------
+
+AREA_CHOICE_SYSTEM = (
+    "You select the optimal area for a robot to explore next, based on prior "
+    "probabilistic data and environmental context. Answer with JSON only."
+)
+
+AREA_CHOICE_USER = """You need to select the optimal area based on prior probabilistic data and environmental context.
+You need to answer the question in the following JSON format:
+Example Input:
+{{
+    "Goal": "toilet",
+    "Prior Probabilities between Room Type and Goal Object": [
+        "Bathroom": 90.0%,
+        "Bedroom": 10.0%,
+    ],
+    "Area Descriptions": [
+        "Area 1": "a bathroom containing objects: shower, towel",
+        "Area 2": "a bedroom containing objects: bed, nightstand",
+        "Area 3": "a garage containing objects: car",
+    ]
+}}
+Example Response:
+{{"Index": "1", "Reason": "Shower and towel in Bathroom indicate toilet location, with high probability (90.0%)."}}
+Now answer question:
+Input:
+{{
+    "Goal": "{goal}",
+    "Prior Probabilities between Room Type and Goal Object": [
+{room_priors}
+    ],
+    "Area Descriptions": [
+{areas}
+    ]
+}}"""
+
+FLOOR_CHOICE_SYSTEM = (
+    "You select the optimal floor for a robot to search next, based on prior "
+    "probabilistic data and environmental context. Answer with JSON only."
+)
+
+FLOOR_CHOICE_USER = """You need to select the optimal floor based on prior probabilistic data and environmental context.
+You need to answer the question in the following JSON format:
+Example Input:
+{{
+    "Goal": "bed",
+    "Prior Probabilities between Floor and Goal Object": [
+        "Floor 1": 10.0%,
+        "Floor 2": 10.0%,
+        "Floor 3": 80.0%,
+    ],
+    "Prior Probabilities between Room Type and Goal Object": [
+        "Bedroom": 80.0%,
+        "Living room": 15.0%,
+        "Bathroom": 5.0%,
+    ],
+    "Floor Descriptions": [
+        "Floor 1": "Current floor. There are room types: hall, living room, containing objects: tv, sofa",
+        "Floor 2": "Other floor. There are room types: bathroom containing objects: shower, towel. You do not need to explore this floor again",
+        "Floor 3": "Other floor. There are room types: unknown rooms containing objects: unknown objects",
+    ]
+}}
+Example Response:
+{{"Index": "3", "Reason": "The bedroom is most likely to be on the Floor 3, and the room types and object types on the Floor 1 and Floor 2 are not directly related to the target object bed, especially it do not need to explore Floor 2 again."}}
+Now answer question:
+Input:
+{{
+    "Goal": "{goal}",
+    "Prior Probabilities between Floor and Goal Object": [
+{floor_priors}
+    ],
+    "Prior Probabilities between Room Type and Goal Object": [
+{room_priors}
+    ],
+    "Floor Descriptions": [
+{floors}
+    ]
+}}"""

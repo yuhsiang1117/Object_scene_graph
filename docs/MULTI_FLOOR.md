@@ -462,6 +462,30 @@ What Stage 4 did land, and is worth keeping: the per-cell height layer
 exemption (without which any FREE relabel is undone by the next frame), and
 `StairEdge` records on `FloorStack`.
 
+### An LLM floor choice does not beat the co-occurrence table (2026-08, refuted)
+
+The one place `INVESTIGATION.md` predicted the retired LLM lever might still pay
+was *floor-level* guidance, and ASCENT agrees — its coarse step asks a 7B model
+which storey to search. Implemented as `floor.llm_floor_choice` (see
+`exploration/coarse_to_fine.py`): the model sees each storey's room types,
+mapped objects, an explored flag, and HM3D-train floor priors, and answers with
+a storey — including the option to **stay**, which `graph/priors.py` structurally
+cannot express because it judges the current floor alone and never compares
+storeys.
+
+It fired 18 times across the 24 cross-floor episodes of a 100-episode run,
+moving 11 and vetoing 7, with zero call errors. **Cross-floor SR went 20.8% →
+8.3%** (5 successes → 2). That is three episodes and well inside noise at n=24,
+so read it as "no evidence of benefit", not as a measured harm — but it was run
+alongside the fine-grained area choice, which cost 7 SR points overall, and
+nothing here argues for keeping either. Full accounting in
+[ASCENT_GAP.md](ASCENT_GAP.md) and [INVESTIGATION.md](INVESTIGATION.md).
+
+The cheap conclusion stands: the binding constraint on cross-floor episodes is
+still **seeing a portal at all** (14 of 24 episodes never do), not choosing
+correctly between storeys once several are known. Reasoning better about a floor
+you cannot detect buys nothing.
+
 ### Biggest risk
 
 **A multi-flight staircase landing looks exactly like a new floor** to any

@@ -111,6 +111,82 @@ the agent, trajectory, chosen frontier and planned path.
 | Context/co-occurrence commitment gate | (reverted) | 46.0% → 48.0% (tight) → 45.0% (loose); dtg>3m 22 → 21 → 22; explore-fail 20 → 20 → **23** | **refuted** — the agent commits before the room is mapped, so there is almost no context to consult; loosening barely raised the firing rate (22 → 24) and cost SR/SPL |
 | Speckle filter (clear <3-cell OCCUPIED components) | `mapping.speckle_min_cells=3` | SR 40% → **28.6%** (net −4); no-find 7→7 (no help); 32/35 trajectories changed | **regressed** — in noise-free sim it removes real thin/edge geometry, not noise |
 
+### ASCENT's coarse-to-fine LLM reasoning makes this pipeline worse (2026-08, refuted)
+
+Ported faithfully from `ascent/llm_planner.py` as `exploration/coarse_to_fine.py`:
+an LLM picks the **storey** (per-floor room/object summaries + HM3D-train floor
+priors, may answer "stay"), then the **area** (top-3 frontiers described by room
+type + mapped objects, asked only when nothing is within 3 m). Both ASCENT prior
+tables transcribed rather than imported. 100 paired episodes:
+
+| | baseline | + coarse-to-fine |
+|---|---|---|
+| SR | **51.0%** | **44.0%** |
+| SPL | 0.240 | 0.227 |
+| cross-floor (24) | 20.8% | 8.3% |
+| explore-fail | 18 | **22** |
+| wrong-object (>3 m) | 25 | 24 |
+
+2 gained / 9 lost, McNemar p = 0.065.
+
+**The mechanism was healthy, which is what makes this a real result** and not a
+repeat of the endpoint outage that killed the first attempt (see below): 157
+calls, **zero errors**, **2.49 calls/episode** — inside ASCENT's reported
+2.0-2.7 — and the LLM kept the geometric best 55.9% of the time where uniform
+choice over 3 options would be 33%. It was discriminating, not guessing.
+
+The damage lands exactly where it acted:
+
+| | n | baseline | +ctf |
+|---|---|---|---|
+| episodes the LLM changed | 58 | 41.4% | **32.8%** |
+| episodes it was inert | 42 | 27 succ | 25 succ |
+
+The inert half moves by 2 — that is this pipeline's VLM-verifier noise floor.
+Seven of the nine losses are on episodes the LLM steered, and five of the nine
+became **explore-failures**: the agent never committed to anything and ran out
+of budget.
+
+**Why it hurts here and not in ASCENT.** Our objective carries a momentum term
+(`continuity_weight=2.0`), the single largest exploration win in this project's
+history (+8.5 SR). ASCENT's fine step overrides the geometric argmax with a pick
+that ignores momentum *and* distance, so every override interrupts the sweep.
+ASCENT can afford this because it has no momentum term to break — its value map
+is direction-agnostic. Note where the two semantic-authority experiments land:
+the cascade gave 44.6%, this gives 44.0%.
+
+**The obvious confound was measured and does not explain it.** ASCENT's areas
+carry a Places365 room type; ours do not. Over 91 area descriptions logged on a
+15-episode debug run:
+
+- **0% carried a room label** — the Places365 gap is total
+- **100% carried objects**, mean **9.8 objects** per area
+- **0 of 32 decisions** had identical options; mean pairwise Jaccard between the
+  option object-sets was 0.48, with 17% of pairs clearly disjoint
+
+So the model was given rich, distinguishable object context and still degraded
+the trajectory. The missing room label is a real deviation, but it is not the
+reason: the object list is the discriminative part and it was present.
+
+**Caveat, held to this repo's own standard.** The README warns not to trust
+A/Bs at n=100, because with a nondeterministic verifier nothing under ~1000
+episodes resolves less than about 5 points — and this is a 7-point delta at
+n=100 with p = 0.065. Two things make it stronger than the raw n suggests but
+neither makes it conclusive: the comparison is **paired** on identical episodes,
+and the 42 episodes the LLM never touched act as an **internal control**,
+flipping by 2 where the 58 it steered flipped by 7 against. The claim this
+supports is "no evidence of benefit, and a clear signal of harm concentrated
+where it acted" — not a precise −7.0. A confirming run would need ~500+
+episodes; that was judged not worth the compute given the direction.
+
+**Methodological note worth keeping.** The first attempt at this A/B was
+scrapped: the hosted endpoint began stalling and every call burned
+`timeout_s`x3 (~6 min) before falling back to the geometric choice. It would
+have completed and reported a null indistinguishable from baseline *because it
+would have been baseline*. Any A/B on a network-dependent component must record
+per-episode call and error counts and be checked before the SR is read.
+`ctf_calls`/`ctf_errors` in `episodes.jsonl` exist for this.
+
 ### Frontier stickiness: the 40% revisit rate was not a defect (2026-08, reverted)
 
 ASCENT disables a frontier after 20 steps in which the **distance to it** has not

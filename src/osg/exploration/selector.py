@@ -93,6 +93,7 @@ def select_frontier(
     continuity_weight: float = 0.0,
     goal_prefer_free: bool = False,
     cost_prefer_free: bool = False,
+    ranked_out: Optional[List[Frontier]] = None,
 ) -> Optional[Frontier]:
     """Best frontier by P_i / d_i among the top-N scored candidates.
     Candidates whose path planning failed are added to `failed_out` so the
@@ -136,6 +137,7 @@ def select_frontier(
     candidates = candidates[:top_n]
 
     best, best_util = None, -1.0
+    reachable: List[tuple] = []
     for f in candidates:
         # The RANKING cost may be measured to a different point than the agent
         # will drive to, and usually should be. Planning to an UNKNOWN cell
@@ -157,6 +159,12 @@ def select_frontier(
             continue
         f.path_cost = max(result.cost, min_path_cost_m)
         util = (f.score or 0.0) / f.path_cost
+        reachable.append((util, f))
         if util > best_util:
             best, best_util = f, util
+    if ranked_out is not None:
+        # Utility order, best first -- the candidate list a semantic re-rank
+        # (exploration/coarse_to_fine) chooses among. Only path-reachable
+        # frontiers appear, so a choice from this list is always drivable.
+        ranked_out.extend(f for _, f in sorted(reachable, key=lambda uf: -uf[0]))
     return best

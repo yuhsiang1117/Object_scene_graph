@@ -246,12 +246,25 @@ Ranked by expected value against our current bottleneck:
    look-down probe we specified in Stage 4e and never built.
 3. **`Per_Category_Region_Per_Cat_Votes.csv`.** Drop-in replacement for our
    hand-written co-occurrence table, dataset-derived and full-vocabulary.
-4. **A floor-level prior** (`P(target on floor k | N floors)`). We have nothing
-   here and it is exactly the signal our switch gate lacks.
-5. **Frontier stickiness / disable-on-no-progress.** Our lever #4, already
-   implemented there with sensible constants.
-6. **A visual value map.** Larger change; the honest note is that our "LLM is
-   redundant" finding does not cover it.
+4. ~~**A floor-level prior** (`P(target on floor k | N floors)`).~~ **Done —
+   transcribed into `exploration/coarse_to_fine.FLOOR_PRIORS` and used by the
+   LLM floor choice. Refuted as part of the coarse-to-fine result below.**
+5. ~~**Frontier stickiness / disable-on-no-progress.**~~ **Done and reverted** —
+   fires 3x as often as our give-up net and moves nothing (26 gained / 22 lost,
+   p = 0.67). See [EXPLORATION_COMPARISON.md](EXPLORATION_COMPARISON.md) §4.1.
+6. ~~**A visual value map.**~~ **Done and refuted** — CLIP value map, then
+   ASCENT's cascade selection to give it full authority: 44.6% vs 44.6%,
+   p = 1.00. See [ASCENT_GAP.md](ASCENT_GAP.md) §5.
+7. ~~**Coarse-to-fine LLM reasoning.**~~ **Done, and it is the only borrowing
+   that actively hurt: SR 51.0 → 44.0** on 100 paired episodes (2 gained / 9
+   lost, p = 0.065), with the mechanism verifiably healthy (2.49 calls/episode,
+   zero errors). It overrides our momentum term, which is worth +8.5 SR here and
+   which ASCENT does not have. See [ASCENT_GAP.md](ASCENT_GAP.md).
+
+**Status of this list: items 3-7 have all been implemented and measured, and
+none of them helped.** What remains untried is items 1 and 2 — both *perception*,
+not reasoning. That is the same conclusion [ASCENT_GAP.md](ASCENT_GAP.md) reaches
+from the failure decomposition, arrived at independently.
 
 ## 8. Numbers, and why they are not directly comparable
 

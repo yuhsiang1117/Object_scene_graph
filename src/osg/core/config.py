@@ -214,6 +214,30 @@ class ExplorationConfig:
     # that moving the drive goal causes -- see select_frontier.
     frontier_cost_free_cell: bool = False
     los_visibility_penalty: float = 1.0
+    # ASCENT's FINE reasoning step (exploration/coarse_to_fine.py): when the
+    # geometric argmax is further than `ctf_nearby_m`, describe the top
+    # `ctf_topk` frontiers by room type + visible objects and let the LLM pick.
+    # The gate is the point -- a frontier three metres away is not worth a
+    # network round-trip, which is how ASCENT holds ~2-3 calls per episode.
+    coarse_to_fine: bool = False
+    ctf_nearby_m: float = 3.0
+    ctf_topk: int = 3
+    # Text model for the two reasoning calls; "" reuses llm.text_model.
+    # Measured on 12 constructed decisions (scratch benchmark, 2026-08-16):
+    #   nemotron-nano-9b-v2 (llm.text_model)  area 7/8  floor 4/4  8.9 s/call
+    #   meta/llama-3.1-8b-instruct            area 8/8  floor 3/4  0.71 s/call
+    # Equal accuracy, 12x faster -- and latency is not a convenience here: a
+    # first attempt at this A/B died when the hosted endpoint began stalling
+    # under load and every call burned timeout_s x3 (~6 min) before falling
+    # back to the geometric choice, which would have measured the outage
+    # instead of the method. llama-3.1-8b is also the closest available match
+    # to ASCENT's Qwen2.5-7B (~8B, no reasoning phase); NIM carries no Qwen.
+    ctf_model: str = ""
+    # Deliberately far below llm.timeout_s. At 0.7 s/call a stall is a dead
+    # endpoint, not a slow answer, and should be abandoned cheaply.
+    ctf_timeout_s: float = 30.0
+    # Radius around a frontier whose mapped objects describe it to the LLM.
+    ctf_context_radius_m: float = 3.0
 
 
 @dataclass
@@ -418,6 +442,15 @@ class FloorConfig:
     # Assumed storey height when only part of a flight is visible. From a few
     # metres back you see the first metre, not the landing.
     storey_guess_m: float = 2.8
+    # ASCENT's COARSE reasoning step: once the geometric/context gate wants to
+    # leave, ask an LLM WHICH storey to search, given per-floor room+object
+    # summaries and HM3D-train floor priors. It may also answer "stay", which
+    # is the half our fixed co-occurrence table cannot express -- priors.py
+    # judges the current floor in isolation and never compares storeys.
+    llm_floor_choice: bool = False
+    # ASCENT's MULTI_FLOOR_ASK_STEP_THRESHOLD / FLOOR_EXP_STEP_THRESHOLD.
+    floor_ask_interval: int = 60
+    floor_min_steps_on_floor: int = 100
     portal_deadline_steps: int = 120
     # Vertical travel that counts as "the climb is under way", so the portal
     # goal is held against same-floor frontier re-selection.

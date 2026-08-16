@@ -84,6 +84,36 @@ def build_scorer(cfg) -> AsyncScorer:
     return AsyncScorer(inner)
 
 
+def build_ctf_planner(cfg):
+    """ASCENT's coarse-to-fine LLM planner, or None when neither level is on.
+
+    Shares the text endpoint with the frontier scorer -- these are the same kind
+    of question asked at a coarser grain, and ASCENT's whole efficiency claim is
+    that asking them rarely is what makes an LLM affordable in the loop.
+    """
+    from ..exploration.coarse_to_fine import CoarseToFinePlanner
+
+    fine = bool(getattr(cfg.exploration, "coarse_to_fine", False))
+    coarse = bool(getattr(cfg.floor, "llm_floor_choice", False))
+    if not (fine or coarse):
+        return None
+    client = ChatClient(
+        cfg.llm.base_url,
+        getattr(cfg.exploration, "ctf_model", "") or cfg.llm.text_model,
+        cfg.llm.api_key,
+        getattr(cfg.exploration, "ctf_timeout_s", cfg.llm.timeout_s),
+        cfg.llm.max_image_px,
+        cfg.llm.send_response_format,
+    )
+    return CoarseToFinePlanner(
+        client,
+        nearby_m=getattr(cfg.exploration, "ctf_nearby_m", 3.0),
+        topk=getattr(cfg.exploration, "ctf_topk", 3),
+        floor_ask_interval=getattr(cfg.floor, "floor_ask_interval", 60),
+        floor_min_steps_on_floor=getattr(cfg.floor, "floor_min_steps_on_floor", 100),
+    )
+
+
 def build_verifier(cfg):
     """VLM candidate verifier, or None when verification is disabled (the
     old-algorithm terminal: viewpoint pre-position + bbox/depth stop, no VLM).
@@ -227,6 +257,7 @@ def run_eval(cfg) -> dict:
     detector = build_detector(cfg)
     scorer = build_scorer(cfg)
     verifier = build_verifier(cfg)
+    ctf = build_ctf_planner(cfg)
     if verifier is not None and cfg.eval.debug_frames:
         verifier.debug_dir = str(out_dir / "verify_debug")
 
@@ -264,6 +295,8 @@ def run_eval(cfg) -> dict:
         # silently inherit a stale score/room-label from a previous,
         # unrelated scene the moment an id collides.
         scorer.reset()
+        if ctf is not None:
+            ctf.reset()  # per-episode call counts and the floor-ask interval
 
         profiler = Profiler()
         agent = NavAgent(
@@ -273,6 +306,7 @@ def run_eval(cfg) -> dict:
             profiler=profiler,
             nav_fn=env.action_to_goal if cfg.agent.use_habitat_navmesh else None,
             reachable_fn=env.is_reachable if cfg.agent.use_habitat_navmesh else None,
+            ctf_planner=ctf,
         )
         trajectory = [frame.camera_position[list(PLANE)]]
         # Height is tracked alongside the 2D trajectory (rather than making
@@ -309,6 +343,11 @@ def run_eval(cfg) -> dict:
             "control_fps": round(profiler.fps("control_loop"), 2),
             "llm_calls": scorer.n_calls - llm_calls_before,
             "llm_errors": scorer.n_errors - llm_errors_before,
+            # ASCENT's headline efficiency claim is calls PER EPISODE (2.0-2.7
+            # vs 35-149), so it has to be recorded per episode to be checkable.
+            "ctf_calls": ctf.calls if ctf is not None else 0,
+            "ctf_errors": ctf.errors if ctf is not None else 0,
+            "ctf_log": ctf.log if ctf is not None else [],
             "llm_last_error": scorer.last_error if scorer.last_error != llm_last_error_before else None,
             "agent_stats": agent.stats,
             "state_log": agent.state_log[:40],

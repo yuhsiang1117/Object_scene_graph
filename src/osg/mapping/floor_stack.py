@@ -104,6 +104,11 @@ class FloorStack:
     def current(self) -> FloorLayer:
         return self.layer(self.current_id)
 
+    def visited_ids(self) -> List[int]:
+        """Storeys the agent has actually stood on. Layers are created lazily on
+        first visit, so the key set is the visit record."""
+        return sorted(self._layers)
+
     @property
     def costmap(self) -> Costmap2D:
         """The seam: consumers receive an ordinary 2D costmap and never learn

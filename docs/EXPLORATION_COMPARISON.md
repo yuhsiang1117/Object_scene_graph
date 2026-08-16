@@ -101,6 +101,17 @@ picking the wrong *instance* after arriving (24.6% of episodes) and on
 reachability behind closed doors (18.6%). Details in
 [ASCENT_GAP.md](ASCENT_GAP.md) §5.
 
+**And the symbolic path has now been retested at ASCENT's own grain.** The three
+distinctions above were the reasons to expect a different outcome from the old
+"LLM is redundant" result. Two of them have since been removed: §4.3 gives an LLM
+the same *coarse-to-fine* decision structure ASCENT uses, on object-label context
+that is dense (9.8 objects per area) and genuinely distinguishable — and it loses
+7 SR points. Only the first distinction, **visual vs symbolic**, is still
+untested, and the CLIP value map result above already shows the visual signal
+failing on its own terms. The honest summary is that frontier-level semantic
+guidance has now failed here in symbolic form, in visual form, and in ASCENT's
+own two-level form.
+
 ---
 
 ## 3. What we have that they do not
@@ -188,11 +199,48 @@ for, while this pipeline's losses are picking the wrong *instance* on arrival
 (24.6% of episodes) and reachability behind closed doors. See
 [ASCENT_GAP.md](ASCENT_GAP.md) §5.
 
-### 4.3 Frontier images for the decision
+### 4.3 Coarse-to-fine LLM reasoning — implemented, and it HURT
+
+The one borrowing on this list that did not come back null.
+`exploration/coarse_to_fine.py` ports `ascent/llm_planner.py`: the LLM picks the
+**storey** first (per-floor room/object summaries, HM3D-train floor priors, may
+answer "stay"), then the **area** among the top-3 frontiers — and only when
+nothing is within `ctf_nearby_m=3.0`, which is the gate that keeps ASCENT at
+2-3 calls per episode instead of 35-149.
+
+| | baseline | + coarse-to-fine |
+|---|---|---|
+| SR | **51.0%** | **44.0%** (2 gained / 9 lost, p = 0.065) |
+| SPL | 0.240 | 0.227 |
+| cross-floor | 20.8% | 8.3% |
+| explore-fail | 18 | **22** |
+| wrong-object (>3 m) | 25 | 24 |
+
+It was not an outage: 157 calls, **zero errors**, **2.49 calls/episode** (ASCENT
+reports 2.0-2.7), geometric best kept 55.9% of the time against 33% chance. On
+the 58 episodes where it changed a decision SR went 41.4% → 32.8%; on the 42
+where it was inert, 27 → 25 (the verifier noise floor).
+
+**It breaks the sweep.** Section 3 of this document lists our momentum term as
+the largest exploration win in the project's history (+8.5 SR), and ASCENT's fine
+step overrides the geometric argmax with a pick that ignores momentum and
+distance both — so every override interrupts a pursuit mid-flight. ASCENT has no
+momentum term to break. Five of the nine lost episodes ended as explore-failures,
+having never committed to any target.
+
+The Places365 excuse was measured and does not hold: over 91 logged area
+descriptions, 0% carried a room label but 100% carried objects (mean 9.8 each),
+no decision had identical options, and mean pairwise Jaccard between option
+object-sets was 0.48.
+
+### 4.4 Frontier images for the decision
 
 `extract_frontiers_with_image` crops the RGB region each frontier was observed
 from and hands those to the LLM. Even without a value map, this changes what a
 semantic scorer can see — our `to_prompt_text` gives it object labels only.
+**Untested**, and the weakest remaining candidate on this list: §4.3 shows the
+LLM already fails with good *symbolic* context, so the case for it rests
+entirely on images carrying something object labels do not.
 
 ---
 
@@ -225,7 +273,21 @@ quantity. ASCENT's is a **semantic** policy — a persistent visual value map �
 with anti-thrash rules that measure the right one, and no geometric terms at
 all.
 
-The two are close to complementary. The cheapest useful step is to take their
-stickiness rule (progress toward the goal, not movement) into our selector; the
-highest-ceiling one is a value map, which our existing "LLM is redundant"
-finding does **not** rule out because that test used symbolic input.
+They looked close to complementary. They are not: **all four transplants have now
+been run here and none helped.**
+
+| borrowing | result |
+|---|---|
+| value map (CLIP) | null — 47 gained / 39 lost, p = 0.45 |
+| cascade selection (distance as gate) | null — 48/48, p = 1.00 |
+| frontier stickiness | null — 26/22, p = 0.67, revisit rate unmoved |
+| coarse-to-fine LLM reasoning | **−7 SR** — 2/9, p = 0.065 |
+
+The reading that survives all four: our selector is not missing semantics, it is
+**already tuned around geometry that works**, and each transplant degrades it by
+overriding path cost, momentum, or both. Everything ASCENT gains at this layer,
+it gains relative to a selector that had no momentum term to lose.
+
+That closes the exploration side. The remaining gap to ASCENT lives in perception
+— 492 of 2000 episodes ending >3 m from any goal — not in where the agent decides
+to go. See [ASCENT_GAP.md](ASCENT_GAP.md).

@@ -109,6 +109,33 @@ one failed for a *structural* reason, not for want of tuning.
 | BLIP-2 value map | CLIP ViT-B/32 value map | **refuted** — see below |
 | context reasoning for instance choice | co-occurrence commitment gate | **refuted** — the agent commits before the room is mapped, so there is no context to consult |
 | ASCENT's anti-thrash rules | frontier stickiness (distance-stall + repeat-selection disable) | **reverted** — fires 3x as often as our give-up net and moves nothing, including the 47% revisit rate that motivated it; that rate turned out to be normal boundary-recession, not thrash |
+| Qwen2.5-7B coarse-to-fine reasoning | LLM floor choice + LLM area choice, ASCENT's prompts and priors | **refuted, and it is the only borrowing that actively HURT** — SR 51.0 → 44.0 on 100 paired episodes (2 gained / 9 lost, p = 0.065). See below |
+
+### Coarse-to-fine is the one that made things worse
+
+Everything else on this list was null. This one cost 7 points, and the mechanism
+was demonstrably working while it did: 157 calls, zero errors, **2.49 calls per
+episode** (ASCENT reports 2.0-2.7), and the model kept the geometric best 55.9%
+of the time against a 33% chance rate. On the 58 episodes where it changed a
+decision, SR went 41.4% → 32.8%; on the 42 where it was inert, 27 → 25 (noise).
+
+It fails by **breaking the sweep**. `continuity_weight=2.0` is worth +8.5 SR here
+and ASCENT's fine step overrides the geometric argmax with a choice that ignores
+momentum and distance both. ASCENT has no momentum term to break. The failure
+mode shifts accordingly: explore-failures 18 → 22, with five of the nine losses
+ending having never committed to any target, while wrong-object commits are
+unchanged (25 → 24).
+
+The obvious excuse — that our areas lack ASCENT's Places365 room type — was
+measured and rejected: across 91 logged descriptions, 0% carried a room label
+but **100% carried objects, mean 9.8 each**, no decision had identical options,
+and mean pairwise Jaccard between option object-sets was 0.48. The model had
+real context and still made worse choices.
+
+*Caveat:* n = 100, where this repo's own rule is not to trust A/Bs below ~1000
+episodes. The pairing and the 42-episode inert control (which flipped by 2,
+against 7 on the 58 it steered) make the direction credible; the magnitude is
+not. Read it as "no benefit, harm where it acts", not as exactly −7.0.
 
 ### The value map is the most thoroughly eliminated
 
@@ -179,9 +206,11 @@ perception is worth about that much SR on this benchmark".
 **Item 1 is now the only large lever left standing.** Item 2 was tested and
 refuted; item 3 is the one this project already invested in and is worth ~+3
 points. Every *exploration*-side idea borrowed from ASCENT — value map, cascade
-selection, frontier stickiness — has now been implemented and measured here, and
-none moved SR. That is itself the finding: on this pipeline the exploration layer
-is not where the deficit lives.
+selection, frontier stickiness, and finally coarse-to-fine LLM reasoning — has
+now been implemented and measured here. None moved SR and the last one cost 7
+points. That is itself the finding: on this pipeline the exploration layer is not
+where the deficit lives, and it is already well enough tuned that borrowed
+semantic guidance is a net liability rather than a missing ingredient.
 
 The pattern across all of them is worth stating plainly, because it kept
 recurring: **the mechanism worked every time and the outcome never followed.**

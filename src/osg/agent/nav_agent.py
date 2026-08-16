@@ -97,11 +97,20 @@ class NavAgent:
         profiler: Optional[Profiler] = None,
         nav_fn=None,
         reachable_fn=None,
+        ctf_planner=None,
     ) -> None:
         self.cfg = cfg
         self.detector = detector
         self.scorer = scorer
         self.verifier = verifier
+        # ASCENT's coarse-to-fine LLM reasoning (exploration/coarse_to_fine).
+        # Held only if at least one of its two levels is enabled, so an agent
+        # built with a planner but both flags off never calls out.
+        _fine = bool(getattr(cfg.exploration, "coarse_to_fine", False))
+        _coarse = bool(getattr(getattr(cfg, "floor", None), "llm_floor_choice", False))
+        self._ctf = ctf_planner if (_fine or _coarse) else None
+        self._ctf_fine = self._ctf is not None and _fine
+        self._ctf_coarse = self._ctf is not None and _coarse
         # Habitat-navmesh driving (old-stack alignment): nav_fn(goal_xy) returns
         # the next discrete action toward goal_xy on Habitat's navmesh, or None
         # when arrived/unreachable. When set, it replaces the costmap planner +
@@ -790,6 +799,7 @@ class NavAgent:
         agent_xy = frame.camera_position[list(PLANE)]
         heading_xy = self._heading_xy(frame)
         failed: set = set()
+        ranked: list = []
         with self.profiler.timeit("frontier_select"):
             best = select_frontier(
                 frontiers,
@@ -809,6 +819,7 @@ class NavAgent:
                 continuity_weight=self.cfg.exploration.continuity_weight,
                 goal_prefer_free=self._frontier_goal_free,
                 cost_prefer_free=self._frontier_cost_free,
+                ranked_out=ranked,
             )
         by_id = {f.id: f for f in frontiers}
         for fid in failed:  # block only the candidates that actually failed
@@ -850,6 +861,10 @@ class NavAgent:
         if best is None or best.path_cost is None:
             self.stats["select_none"] += 1
             return
+        # ASCENT's FINE step: nothing near is left, so which direction is worth
+        # the walk? Only reached when the geometric argmax is far -- a frontier
+        # inside ctf_nearby_m is taken without asking.
+        best = self._ctf_choose_area(best, ranked)
         self.stats["select_ok"] += 1
         # Per-selection trace (step, agent xy, chosen frontier xy, path cost,
         # #frontiers) for exploration-efficiency debugging. See scripts.
@@ -872,6 +887,114 @@ class NavAgent:
             self._progress_ref_xy = agent_xy.copy()
         else:
             self._block_frontier(best, 50)
+
+    # ------------------------------------------------------ coarse-to-fine
+
+    def _describe_area(self, f) -> "Area":
+        """One frontier as ASCENT's LLM sees it: a room type plus the objects
+        mapped around it.
+
+        ASCENT reads the room off a Places365 classification of the frame the
+        frontier was observed in. We have no scene classifier, so the room is
+        the LLM-cached label of the room the frontier falls in when there is
+        one, and the objects carry the discriminative load otherwise.
+        """
+        from ..exploration.coarse_to_fine import Area
+
+        room = self.scene_graph.room_of_point(f.centroid_xy)
+        near = self.scene_graph.objects_near(
+            f.centroid_xy, getattr(self.cfg.exploration, "ctf_context_radius_m", 3.0)
+        )
+        # Deduplicate: three chairs read as one fact, and a long list of
+        # repeats crowds out the rest of the room in the prompt.
+        labels = sorted({o.label.replace("_", " ") for o in near})
+        return Area(room=(room.label if room and room.label else "unknown room"),
+                    objects=labels)
+
+    def _ctf_choose_area(self, best, ranked: list):
+        """Let the LLM re-rank the top-k reachable frontiers; `best` unchanged
+        when the gate does not fire or the call fails."""
+        if not self._ctf_fine or best is None:
+            return best
+        topk = int(getattr(self.cfg.exploration, "ctf_topk", 3))
+        cands = [f for f in ranked if f.path_cost is not None][:topk]
+        if not self._ctf.should_ask_area(best.path_cost, len(cands)):
+            return best
+        areas = [self._describe_area(f) for f in cands]
+        idx = self._ctf.choose_area(self.target, areas, step=self.step_count)
+        chosen = cands[idx] if 0 <= idx < len(cands) else best
+        self.stats["ctf_area_asked"] = self.stats.get("ctf_area_asked", 0) + 1
+        if chosen is not best:
+            self.stats["ctf_area_changed"] = self.stats.get("ctf_area_changed", 0) + 1
+        return chosen
+
+    def _floor_descriptions(self, portals):
+        """Every storey we know of, bottom-up, as ASCENT describes them.
+
+        Storeys come from the floor estimator's committed levels plus the
+        target heights of any portal we can currently see -- an unvisited floor
+        has to be in the list for the LLM to be able to choose it, and it is
+        exactly the interesting one.
+        """
+        from ..exploration.coarse_to_fine import FloorDesc
+
+        levels = dict(self.floors.levels)
+        heights = list(levels.values())
+        # Portal targets that match no committed level are storeys we have seen
+        # but never stood on. Keyed by height so two portals onto the same floor
+        # do not become two floors.
+        for p in portals or []:
+            if not any(abs(h - p.target_y) <= self.cfg.floor.level_tol_m for h in heights):
+                heights.append(float(p.target_y))
+        order = sorted(heights)
+        cur_y = self.floors.height_of(self._floor_stack.current_id)
+        descs, current_index = [], 1
+        for i, h in enumerate(order):
+            fid = next((f for f, hh in levels.items() if abs(hh - h) <= 1e-6), None)
+            is_cur = abs(h - cur_y) <= self.cfg.floor.level_tol_m
+            if is_cur:
+                current_index = i + 1
+            objs = [o for o in self.scene_graph.objects if o.floor_id == fid] if fid is not None else []
+            rooms = sorted({
+                r.label for r in self.scene_graph.rooms.values()
+                if r.floor_id == fid and r.label
+            }) if fid is not None else []
+            descs.append(FloorDesc(
+                index=i + 1,
+                is_current=is_cur,
+                rooms=rooms,
+                objects=sorted({o.label.replace("_", " ") for o in objs}),
+                # "Nothing near left to explore" is the same condition that got
+                # us here, so a floor we have left is a floor we finished with.
+                fully_explored=(not is_cur and fid is not None
+                                and fid in self._floor_stack.visited_ids()),
+            ))
+        return descs, current_index, order
+
+    def _ctf_choose_floor(self, portals, steps_on_floor: int):
+        """ASCENT's COARSE step. Returns the target height to prefer, or None to
+        keep the existing (unvisited, then nearest) portal ordering.
+
+        Raises nothing and never blocks the switch on an LLM failure -- a dead
+        endpoint must leave the geometric behaviour exactly as it was.
+        """
+        if not self._ctf_coarse:
+            return None
+        descs, current_index, heights = self._floor_descriptions(portals)
+        if not self._ctf.should_ask_floor(self.step_count, len(descs), steps_on_floor):
+            return None
+        choice = self._ctf.choose_floor(
+            self.target, descs, current_index, step=self.step_count
+        )
+        self.stats["ctf_floor_asked"] = self.stats.get("ctf_floor_asked", 0) + 1
+        if choice == current_index:
+            # The LLM's veto: this storey still looks like the right one. Our
+            # co-occurrence table (graph/priors) cannot express this -- it
+            # judges the current floor alone and never compares storeys.
+            self.stats["ctf_floor_stay"] = self.stats.get("ctf_floor_stay", 0) + 1
+            return "stay"
+        self.stats["ctf_floor_move"] = self.stats.get("ctf_floor_move", 0) + 1
+        return heights[choice - 1]
 
     def _portal_pursuit_ok(self, frame: FrameData) -> bool:
         """Should the agent keep driving to its portal instead of re-exploring?
@@ -950,6 +1073,14 @@ class NavAgent:
             return False
 
         agent_xy = frame.camera_position[list(PLANE)]
+        # ASCENT's coarse step gets to answer BEFORE the geometric ordering,
+        # because "which storey" is the decision and the portal is only how you
+        # get there. It may also veto the switch outright.
+        want_y = self._ctf_choose_floor(
+            portals, self.step_count - self._floor_stack.current.first_step
+        )
+        if want_y == "stay":
+            return False
         # Prefer a storey we have NOT searched, then the nearest. Nearest-only
         # let the agent bounce back onto a floor it had already given up on --
         # 4-5 transitions in some episodes, paying the travel cost each time.
@@ -960,7 +1091,10 @@ class NavAgent:
                 abs(h - p.target_y) <= self.cfg.floor.level_tol_m for h in levels.values()
             )
 
-        portals.sort(key=lambda p: (not unvisited(p),
+        def not_chosen(p):
+            return want_y is None or abs(float(p.target_y) - float(want_y)) > self.cfg.floor.level_tol_m
+
+        portals.sort(key=lambda p: (not_chosen(p), not unvisited(p),
                                     float(np.linalg.norm(p.centroid_xy - agent_xy))))
         target = portals[0]
         if self._reachable_fn is not None and not self._reachable_fn(
