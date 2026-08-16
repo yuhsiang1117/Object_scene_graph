@@ -133,7 +133,7 @@ the decisions.
 Ranked by expected value against our measured failures
 (2000-episode run: SR 49.8%, 40% frontier re-selection rate, 275 stub-blocks).
 
-### 4.1 Frontier stickiness — directly addresses a measured defect
+### 4.1 Frontier stickiness — implemented, and the defect was misdiagnosed
 
 ```python
 STICKY_FRONTIER_DISTANCE_THRESHOLD = 0.3   # metres
@@ -146,13 +146,35 @@ pursued it for 20 steps **without the distance to it changing by more than
 0.3 m**, and disables any frontier selected 20 times non-consecutively.
 
 Ours blacklists by *location* (within 0.6 m of an abandoned point) and gives up
-after 15 steps without 0.2 m of *movement*. The difference matters: ASCENT
-measures progress **toward the goal**, we measure movement **at all**. An agent
-circling a room is moving fine and getting no closer — we keep going, they
-disable it. Our re-selection rate is **40%**, i.e. two in five selections
-repeat a frontier we already chose.
+after 15 steps without 0.2 m of *movement*. The distinction is real — ASCENT
+measures progress **toward the goal**, we measure movement **at all**, and an
+agent circling a room satisfies ours while satisfying nothing useful.
 
-This is the cheapest item on the list and needs no new model.
+**Implemented and reverted.** Both mechanisms (disable after 20 steps without
+closing 0.3 m; disable a location selected 20 times) on 500 paired episodes:
+
+| | baseline | + stickiness |
+|---|---|---|
+| SR | 44.6% | 45.4% (26 gained / 22 lost, p = 0.67) |
+| **revisit rate** | **47%** | **46%** |
+| steps to success | 160 | 167 |
+
+It fires hard — **266 stick-disables + 54 repeat-disables against 108
+give-ups**, three times the reach of the existing net — and moves nothing,
+including its own target metric.
+
+**The defect was misdiagnosed.** The "40% of selections repeat a frontier we
+already chose" figure was read as thrashing. But as the agent advances into
+unexplored space the frontier boundary *recedes*, so re-selecting near a previous
+choice is usually correct: you walked partway, the boundary moved, you continued.
+That is frontier-following working, not pathology — which is why disabling those
+pursuits made steps-to-success slightly *worse*. (A second, smaller flaw: blocks
+are keyed within 0.6 m while the revisit metric counts 1.5 m, so many "revisits"
+were never blockable anyway.)
+
+Not fully refuted — a variant that also required no information gain before
+disabling might behave differently — but nothing here justifies the two
+parameters and the extra code path.
 
 ### 4.2 A visual value map — tried both ways, refuted
 

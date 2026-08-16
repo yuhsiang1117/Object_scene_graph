@@ -111,6 +111,37 @@ the agent, trajectory, chosen frontier and planned path.
 | Context/co-occurrence commitment gate | (reverted) | 46.0% → 48.0% (tight) → 45.0% (loose); dtg>3m 22 → 21 → 22; explore-fail 20 → 20 → **23** | **refuted** — the agent commits before the room is mapped, so there is almost no context to consult; loosening barely raised the firing rate (22 → 24) and cost SR/SPL |
 | Speckle filter (clear <3-cell OCCUPIED components) | `mapping.speckle_min_cells=3` | SR 40% → **28.6%** (net −4); no-find 7→7 (no help); 32/35 trajectories changed | **regressed** — in noise-free sim it removes real thin/edge geometry, not noise |
 
+### Frontier stickiness: the 40% revisit rate was not a defect (2026-08, reverted)
+
+ASCENT disables a frontier after 20 steps in which the **distance to it** has not
+fallen by 0.3 m, and disables any location selected 20 times. Ours only gives up
+after 15 steps without 0.2 m of *movement*, so an agent circling a room — moving
+fine, approaching nothing — is never caught. Both ASCENT mechanisms were
+implemented and measured on 500 paired episodes:
+
+| | baseline | + stickiness |
+|---|---|---|
+| SR | 44.6% | 45.4% (26 gained / 22 lost, McNemar p = 0.67) |
+| **revisit rate** | **47%** | **46%** |
+| steps to success | 160 | 167 |
+| timeouts | 113 | 118 |
+
+It fired **266 stick-disables + 54 repeat-disables against 108 give-ups** — three
+times the reach of the existing net — and changed nothing, *including the metric
+that motivated it*.
+
+**The premise was wrong.** "40% of selections land within 1.5 m of a frontier
+already chosen" was read as thrashing. But as the agent advances the frontier
+boundary recedes, so re-selecting nearby is usually the correct continuation of
+the same pursuit — walked partway, boundary moved, carry on. Disabling those is
+why steps-to-success got *worse*. A secondary mismatch: blocks are keyed within
+0.6 m while the metric counts 1.5 m, so many counted "revisits" were never
+blockable.
+
+Lesson for future diagnostics here: a high rate of *similar* consecutive choices
+is not by itself evidence of thrash in a frontier explorer. Distinguish
+"re-selected the same place and never got closer" from "the boundary moved".
+
 ### A semantic value map cannot steer this selector (2026-08, refuted)
 
 VLFM/ASCENT rank frontiers by an image-text value map. Implemented with CLIP

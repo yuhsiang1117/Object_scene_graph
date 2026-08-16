@@ -108,6 +108,7 @@ one failed for a *structural* reason, not for want of tuning.
 | RedNet stair segmentation | YOLOE stair masks + portals | partial — blind cross-floor episodes 14 → 11, but over-triggering broke two working episodes |
 | BLIP-2 value map | CLIP ViT-B/32 value map | **refuted** — see below |
 | context reasoning for instance choice | co-occurrence commitment gate | **refuted** — the agent commits before the room is mapped, so there is no context to consult |
+| ASCENT's anti-thrash rules | frontier stickiness (distance-stall + repeat-selection disable) | **reverted** — fires 3x as often as our give-up net and moves nothing, including the 47% revisit rate that motivated it; that rate turned out to be normal boundary-recession, not thrash |
 
 ### The value map is the most thoroughly eliminated
 
@@ -175,5 +176,17 @@ perception is worth about that much SR on this benchmark".
 4. **Toilet-style coverage.** 32.2% explore-fail on the second-best category
    suggests a specific, tractable "closed door / small room" problem.
 
-Items 1 and 2 are where the gap lives. Item 3 is the one this project already
-invested in, and is now the smallest of the three.
+**Item 1 is now the only large lever left standing.** Item 2 was tested and
+refuted; item 3 is the one this project already invested in and is worth ~+3
+points. Every *exploration*-side idea borrowed from ASCENT — value map, cascade
+selection, frontier stickiness — has now been implemented and measured here, and
+none moved SR. That is itself the finding: on this pipeline the exploration layer
+is not where the deficit lives.
+
+The pattern across all of them is worth stating plainly, because it kept
+recurring: **the mechanism worked every time and the outcome never followed.**
+Portals found, floors crossed, values painted, frontiers disabled — all
+verifiable in the logs, none visible in SR. The one change in this whole effort
+that did move a metric it was aimed at was terminal creep (78% vs 55% conversion
+at the stop decision), and that one touched *what the agent does on arrival*,
+not where it decides to go.
