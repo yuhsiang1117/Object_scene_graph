@@ -34,14 +34,29 @@ services:
     environment:
       - OLLAMA_HOST=http://ollama:11434
       - NVIDIA_DRIVER_CAPABILITIES=all
+      - NVIDIA_VISIBLE_DEVICES=all
       - PYTORCH_CUDA_ALLOC_CONF=expandable_segments:True
       - HOME=/tmp
       - YOLO_CONFIG_DIR=/tmp/Ultralytics
       - NVIDIA_API_KEY=${NVIDIA_API_KEY}
+      # --- x11: GUI tools inside the container (the Rerun 3D viewer) ---------
+      # Inherit the host's DISPLAY. Empty when the host has no X session, which
+      # is harmless: GUI apps then fail with "Failed to open connection to X
+      # server" and everything headless keeps working.
+      - DISPLAY=${DISPLAY:-}
+      - XDG_RUNTIME_DIR=/tmp
+      - XAUTHORITY=/tmp/.Xauthority
     volumes:
       - ..:/workspace
       - weights-cache:/workspace/data/weights
       - ../outputs:/workspace/outputs
+      # Mount X11 server
+      - /tmp/.X11-unix:/tmp/.X11-unix
+        # X11-unix is mounted to allow GUI applications to display on host.
+      - $HOME/.Xauthority:/tmp/.Xauthority
+        # Xauthority is mounted to allow X11 forwarding for remote display.
+      # Mount Direct Rendering Infrastructure (DRI) for hardware acceleration support such as OpenGL.
+      - /dev/dri:/dev/dri
     deploy:
       resources:
         reservations:

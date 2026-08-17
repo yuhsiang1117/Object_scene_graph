@@ -1,0 +1,42 @@
+# @package _global_
+#
+# Single-scene run: HM3D val scene 00891-cvZr5TUy5C5, all 99 episodes.
+#
+# Inherits every flag from full_v1_navmesh (the best measured config) and only
+# narrows the episode set, so any A/B against the full-split numbers isolates
+# the scene and nothing else.
+#
+# Why this scene is worth iterating on -- measured on the 2000-episode v1 run
+# (outputs/v1_full2000), this scene alone:
+#
+#   episodes            99        SR 31.3%   SPL 0.122   (split-wide: 49.8 / 0.218)
+#   cross-floor         38 (38%)  SR  7.9%   (3/38)      (split-wide: 20.6% of eps)
+#   same-floor          61        SR 45.9%
+#   decomposition       31 success | 40 wrong-object >3 m | 23 explore-fail | 5 near
+#   storeys observed    1 in 63 eps, 2 in 26, 3 in 10
+#
+# So it is roughly TWICE as multi-floor as the split average and scores 18
+# points below it -- both failure modes are over-represented, which makes it a
+# fast signal for stair/portal work AND for wrong-object work. Targets are
+# evenly spread (toilet 20, chair 18, sofa 17, tv_monitor 16, bed 15, plant 13).
+#
+# CAVEAT: 99 episodes on ONE scene is a debugging instrument, not an
+# experiment. Single-scene results do not transfer -- the 100-episode
+# stratified subset already misread the split by up to 8 points per class (see
+# README), and this is narrower still. Use it to see whether a mechanism FIRES
+# and what it does; confirm any SR claim on the full split.
+#
+#   python scripts/run_eval.py +experiment=scene_cvZr5TUy5C5
+#   python scripts/run_eval.py +experiment=scene_cvZr5TUy5C5 eval.debug_frames=true
+defaults:
+  - full_v1_navmesh
+  - _self_
+
+eval:
+  content_scenes:
+    - cvZr5TUy5C5
+  # full_v1_navmesh caps at 100 episodes and rotates scenes every 5 to spread a
+  # fixed-size run across the split. Both must be undone here: there is only one
+  # scene, and we want all 99 of its episodes.
+  num_episodes: -1
+  max_scene_repeat_episodes: -1
