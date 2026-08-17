@@ -164,6 +164,50 @@ With `eval.debug_frames=true` a run also writes:
 
 See **[docs/INVESTIGATION.md](docs/INVESTIGATION.md)** for the full story.
 
+### 3D scene-graph inspection (re-simulation)
+
+`viz/debug/*.mp4` is a fixed two-panel view (RGB beside a top-down costmap)
+and can't be rotated or queried. `scripts/inspect_scene_graph.py` instead
+**replays one episode** — it re-runs the agent from scratch outside the eval
+loop, so it is not part of `run_eval.py` output — and writes a Rerun `.rrd`
+recording: object ellipsoids with true axes/orientation, one costmap plane
+per storey at its own height, the 3D trajectory, portals, and goal view
+points, all on a scrubbable timeline:
+
+```bash
+pip install "rerun-sdk" "numpy<2"          # the pin matters, see below
+python scripts/inspect_scene_graph.py +experiment=scene_cvZr5TUy5C5
+rerun outputs/inspect/<tag>.rrd            # on your own machine, not the container
+```
+
+`--episode-index N` picks which episode in the (filtered) episode list to
+replay (default 0), `--max-steps N` stops early, `--floor-every N` controls
+how often costmap planes are logged (they dominate file size), and any
+Hydra override can be stacked after the experiment, e.g.
+`floor.semantic_stairs=true`.
+
+The container is headless, so nothing renders there — copy the `.rrd` out
+and open it with the Rerun viewer on your own machine. **The numpy pin is
+not optional:** unpinned, pip resolves `rerun-sdk` to a build that requires
+numpy>=2, but habitat-sim in this environment is pinned to numpy 1.26.4 and
+does not support NumPy 2.0 — installing it breaks the simulator, not just
+the viewer.
+
+`--gltf` writes a single self-contained `.glb` instead (ellipsoids as scaled
+UV spheres, storeys as textured quads) via `trimesh` — final state only, no
+timeline, but viewable in Blender / the VS Code glTF extension / any online
+viewer without the Rerun/numpy dependency:
+
+```bash
+python scripts/inspect_scene_graph.py +experiment=scene_cvZr5TUy5C5 --gltf
+```
+
+Note: the exported object geometry comes from `agent.object_layer`
+(`ObjectTrack.ellipsoid`), not from `graph/serialize.to_json` — the scene
+graph's `ObjectNodeView` only carries a `center`, no shape. Logging both is
+deliberate: where the scene-graph node and the underlying track disagree is
+exactly where association or Wasserstein refinement has gone wrong.
+
 ## Hardware profiles
 
 | | detector | VLM | fits |
@@ -191,5 +235,6 @@ separately in `timing.csv`.
   `action_to_goal`, `is_reachable`) — the latter is the current best.
 - `configs/` — Hydra groups; `configs/experiment/*` are composable presets.
 - `scripts/` — eval entry (`run_eval.py`), data/weights download,
-  `analyze_*.py` diagnostics, keyframe/video tools.
+  `analyze_*.py` diagnostics, keyframe/video tools, `inspect_scene_graph.py`
+  (3D re-simulation of one episode into a Rerun `.rrd` / glTF `.glb`).
 - `tests/unit` — synthetic-data tests, no GPU; `tests/integration` — `-m sim`.
