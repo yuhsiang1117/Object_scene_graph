@@ -958,6 +958,56 @@ against 0.06 m for the bowl and 0.01 m for the can, and it never converts. A goa
 from the truth is outside the 0.18 m success radius before the agent takes a step, so its
 ellipsoid centre -- not its detection -- is what needs work.
 
+### Making cross-anchor usable: the mechanism now runs, and it still fails
+
+Cross-anchor was 0/9 with every episode stopping at 29-58 steps, 440+ unspent. Three
+things were in the way, and removing the first two exposed the third as the real one.
+
+**1. The absence gate ended the episode.** The check ran on whichever frame the arrival
+sweep finished on -- after a full circle, the arrival heading again, which need not face
+the object -- so the agent swept right past a ghost and concluded nothing. Gating instead
+on "was it expected at *any* heading of the sweep" turned 7 of 9 episodes from stopping at
+~45 steps into abandoning and searching for 500, inspecting 7-9 surfaces each. The
+mechanism works now.
+
+**2. The candidate gates were not the blocker, though they looked like one.** One episode
+did map the relocated bowl -- 0.04 m from its true pose -- and never proposed it, which
+pointed at `min_obs`. Relaxing `min_obs`, `min_evidence` and `min_bbox_px` changed nothing:
+in most runs the search never detects the object at its new pose at all, so there is no
+track to gate. The single mapped case was a one-off.
+
+**3. The prior does not rank the destination high enough to be reached.** Measured offline
+over all nine cross-anchor relocations against the accumulated map's 112 container
+surfaces:
+
+| | median rank of the true destination | in the top 8 (what an episode inspects) |
+|---|---|---|
+| with proximity to the last known pose | 32 of 112 | **0 of 9** |
+| without it | 20 of 112 | **3 of 9** |
+
+Proximity encodes "displacements are usually short", and going to the old place and
+finding nothing *refutes that premise* -- worse, the surfaces it favours are exactly the
+ones just ruled out. Dropping the term once absence is confirmed is now implemented and
+is a real improvement in ranking. It did not produce a success: with ~8 surfaces inspected
+per 500-step episode and the destination sitting around 20th, the arithmetic does not
+close.
+
+**So cross-anchor remains 0/9, and the reason is now quantitative rather than mysterious.**
+Closing it needs one of three things, in rough order of expected value:
+
+- **Fewer candidates.** The map holds 112 container surfaces for a six-object scene. That
+  is where the search cost goes, and much of it is spurious containers from a permissive
+  membership rule. Halving the candidate set is worth more than any prior improvement.
+- **Room-level reasoning.** The prior scores surfaces independently; it never asks which
+  *room* the object is likely in. A cross-anchor move usually crosses rooms, and
+  `graph/priors.py` already has room-level machinery used for floor selection.
+- **More steps.** 500 steps is roughly 125 m of travel; inspecting 20 surfaces properly
+  needs perhaps twice that. Worth measuring before it is worth optimising.
+
+Enabling the search also costs the other conditions -- overall SR fell 0.238 to 0.143,
+because the permissive absence gate false-abandons on correct maps. That trade is real and
+should be settled by a better absence sensor rather than by a threshold.
+
 ---
 
 ## Phase 4 — C4 change log

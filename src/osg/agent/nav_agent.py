@@ -392,6 +392,8 @@ class NavAgent:
         self._approach_at_viewpoint = False
         self._scan_turns_left = 0
         self._scan_expected = 0
+        # Set once the agent has been to the last known place and found nothing.
+        self._target_confirmed_moved = False
         self.search_log_events: List[dict] = []
         self.goal_commit_log: List[dict] = []
         self._disbelieved: set = set()
@@ -993,8 +995,20 @@ class NavAgent:
         return surface
 
     def _last_known_target_xy(self):
-        """Where the target was last believed to be -- objects are moved by
-        someone doing a task, so short displacements dominate long ones."""
+        """Where the target was last believed to be, or None once it is known to
+        have left there.
+
+        Proximity encodes "objects are moved by someone doing a task, so short
+        displacements dominate". That holds until the agent goes and confirms
+        the object is NOT at its old place -- after which the premise the term
+        rests on has been refuted, and the surfaces it favours are exactly the
+        ones just ruled out. Measured on nine cross-anchor episodes: keeping the
+        term ranks the true destination 32nd of 112 surfaces on median, and puts
+        it in the top 8 (what one episode inspects) in 0 of 9. Dropping it once
+        absence is confirmed gives median 20 and 3 of 9.
+        """
+        if self._target_confirmed_moved:
+            return None
         best = None
         for track in self.object_layer.tracks(include_blacklisted=True):
             if str(track.label).lower().replace("_", " ") != str(self.target).lower().replace("_", " "):
@@ -1234,6 +1248,21 @@ class NavAgent:
             return None
         if self._scan_turns_left <= 0:
             return None
+        # Record whether the object was EXPECTED at any heading of the sweep.
+        # The decision below used to test only the frame the sweep ended on --
+        # after a full circle, the arrival heading again, which need not face
+        # the object -- so the agent arrived at a ghost, swept right past it and
+        # concluded nothing. Measured: all nine cross-anchor episodes stopped at
+        # 29-58 steps with 440+ unspent, and the re-search never ran once.
+        pf = self.object_layer.presence_filter
+        track = (
+            self.object_layer.get(self._candidate_id)
+            if self._candidate_id is not None else None
+        )
+        if pf is not None and track is not None:
+            if pf.expectation(track, frame, center_only=True) is not None:
+                self._scan_expected += 1
+
         # Note what is deliberately NOT done here: applying a negative reading
         # per sweep frame. Twelve looks at the same object from the same pose
         # are not twelve independent observations -- same range, same lighting,
@@ -1297,7 +1326,8 @@ class NavAgent:
         # size, occlusion -- C1 already answers this). A VLM that answered about
         # the region has already looked, so its answer stands on its own.
         if not asked_vlm and getattr(vc, "absence_requires_expectation", True):
-            if pf.expectation(track, frame, center_only=True) is None:
+            # A sweep that expected to see it at ANY heading has looked at it.
+            if self._scan_expected == 0 and pf.expectation(track, frame, center_only=True) is None:
                 self.stats["absence_not_expected"] = self.stats.get("absence_not_expected", 0) + 1
                 return None
 
@@ -1323,6 +1353,7 @@ class NavAgent:
         self.object_layer.blacklist(track.id)
         self._candidate_id = None
         self._target_obj_xy = None
+        self._target_confirmed_moved = True
         self.state = State.EXPLORE
         return TURN_ACTION
 

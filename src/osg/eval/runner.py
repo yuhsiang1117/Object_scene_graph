@@ -436,6 +436,14 @@ def run_eval(cfg) -> dict:
                     "label": str(t.label),
                     "center": [float(v) for v in agent.object_layer.center_of(t)],
                     "p": round(float(t.presence.p), 4),
+                    # Why a track was or was not proposable: the candidate gates
+                    # read exactly these, and without them a track that sits in
+                    # the map at the right place but never becomes a goal is
+                    # undiagnosable from the record.
+                    "n_obs": int(t.n_obs),
+                    "best_score": round(float(t.best_score), 3),
+                    "best_bbox_px": round(float(t.best_bbox_px), 1),
+                    "evidence": round(float(t.evidence), 3),
                 }
                 for t in agent.object_layer.tracks()
                 if str(t.label).lower().replace("_", " ") == str(target).lower().replace("_", " ")

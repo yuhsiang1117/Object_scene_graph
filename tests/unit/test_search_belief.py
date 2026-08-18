@@ -229,3 +229,18 @@ def test_the_planner_samples_the_same_rings_the_benchmark_does():
 
     assert list(VerificationConfig().ring_radii_m) == list(YCBAuthoredConfig().viewpoint_radii_m)
     assert ViewpointPlanner(list(VerificationConfig().ring_radii_m)).ring_radii == [0.8, 1.2, 1.5, 2.0]
+
+
+def test_proximity_is_dropped_once_the_object_is_known_to_have_moved():
+    """Proximity encodes "displacements are usually short". Going to the old
+    place and finding nothing refutes the premise -- and the surfaces the term
+    favours are the ones just ruled out. Measured over nine cross-anchor
+    episodes: keeping it ranks the true destination 32nd of 112 on median and
+    in the top 8 in 0 of 9; dropping it gives 20 and 3 of 9."""
+    ghost = np.zeros(2)
+    far = np.array([9.0, 0.0])
+    with_prox = container_prior("bowl", "table", 0.75, 0.6, far, last_known_xy=ghost)
+    without = container_prior("bowl", "table", 0.75, 0.6, far, last_known_xy=None)
+    assert without > with_prox
+    near = container_prior("bowl", "table", 0.75, 0.6, np.array([0.5, 0.0]), last_known_xy=None)
+    assert near == pytest.approx(without), "with no last-known pose, distance stops mattering"

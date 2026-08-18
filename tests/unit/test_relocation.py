@@ -317,3 +317,19 @@ def test_by_default_an_unseen_target_is_always_abandoned():
 
     assert VerificationConfig().abandon_below_p == 1.0
     assert _Filter().miss(recall=0.5) < 1.0
+
+
+def test_a_sweep_that_ever_expected_the_object_counts_as_having_looked():
+    """Measured: judging by the frame the sweep ENDS on -- after a full circle,
+    the arrival heading again -- meant all nine cross-anchor episodes stopped at
+    29-58 steps with 440+ unspent, and the re-search never ran once. Expecting
+    it at any heading of the sweep is what 'looked at it' means."""
+    class _Agent:
+        def __init__(self, scanned): self._scan_expected = scanned
+        def blocked(self, expected_now):
+            # mirrors NavAgent._absence_at_arrival's gate
+            return self._scan_expected == 0 and not expected_now
+
+    assert _Agent(0).blocked(expected_now=False) is True
+    assert _Agent(3).blocked(expected_now=False) is False, "the sweep saw the place"
+    assert _Agent(0).blocked(expected_now=True) is False
