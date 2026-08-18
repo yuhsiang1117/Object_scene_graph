@@ -20,7 +20,7 @@ from ..exploration.llm_scorer import LLMTextScorer
 from ..llm.client import ChatClient
 from ..mapping.costmap import HEIGHT_AXIS, PLANE
 from .floors import episode_floor_fields
-from .metrics import aggregate, per_category, per_floor_class
+from .metrics import aggregate, per_category, per_floor_class, dynamic_summary
 from .visualize import overlay_segmentation, render_costmap_bgr, save_topdown
 
 
@@ -346,6 +346,12 @@ def run_eval(cfg) -> dict:
 
         m = env.metrics()
         authored = _authored_episode_metadata(episode)
+        # The env knows things the episode record cannot: whether a relocation
+        # fired, when, and whether the agent was looking at the time.
+        if hasattr(env, "episode_metadata"):
+            live = env.episode_metadata()
+            if isinstance(live, dict):
+                authored = {**authored, **live}
         rec = {
             "episode_id": str(episode.episode_id),
             "scene": authored.get("scene", str(episode.scene_id).split("/")[-1]),
@@ -362,6 +368,21 @@ def run_eval(cfg) -> dict:
             "llm_errors": scorer.n_errors - llm_errors_before,
             "llm_last_error": scorer.last_error if scorer.last_error != llm_last_error_before else None,
             "agent_stats": agent.stats,
+            # Phase 2 dynamic-scene evidence: when beliefs flipped, what the
+            # agent believed when it committed to a goal, and what it still
+            # believed about the target at the end.
+            "presence_events": agent.presence_events,
+            "goal_commit_log": agent.goal_commit_log,
+            "target_tracks": [
+                {
+                    "track_id": int(t.id),
+                    "label": str(t.label),
+                    "center": [float(v) for v in agent.object_layer.center_of(t)],
+                    "p": round(float(t.presence.p), 4),
+                }
+                for t in agent.object_layer.tracks()
+                if str(t.label).lower().replace("_", " ") == str(target).lower().replace("_", " ")
+            ],
             "state_log": agent.state_log[:40],
             "frontier_select_log": agent.frontier_select_log,
             "giveup_log": agent.giveup_log[:50],
@@ -429,6 +450,7 @@ def run_eval(cfg) -> dict:
             "success_distance": cfg.agent.success_distance,
         },
         "metrics": aggregate(results),
+        "dynamic": dynamic_summary(results),
         "per_category": per_category(results),
         "per_floor_class": per_floor_class(results),
         "timing": profiler_all.report(),

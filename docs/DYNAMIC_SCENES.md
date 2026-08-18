@@ -299,6 +299,41 @@ update in the system defensible, and no dynamic-mapping paper I know of shows on
 
 **Goal:** make change *observable*, so the mechanism can be measured rather than inferred.
 
+> **Status: mid-episode relocation done (2026-08-18); paired-layout episodes not started.**
+> 13 new unit tests; 266 unit + 2 integration green. A relocation episode now starts the
+> world in the paired **static** layout while its goals sit at the **after** poses, so the
+> object moves during the episode and success is still scored where the object ends up.
+> `ycb.relocate_at_step=-1` by default, so every existing run is untouched.
+> `dynamic_summary` reports belief latency, stale-goal rate and ghost rate.
+>
+> **The collector has authored no dynamic layouts**, so
+> `scripts/author_relocation_layout.py` synthesises a `cross_anchor` one by permuting the
+> authored poses across anchors — every pose is one a human already placed and validated,
+> and the file is written through the ordinary schema so the existing validator checks it.
+> An `in_anchor` layout cannot be synthesised this way: it needs a second pose on the
+> *same* surface, which cannot be borrowed from another object and cannot be invented
+> without the anchor's extent. That one has to come from the collector.
+>
+> **Finding 1 — the metric is starved by perception, not by the protocol.** Across 3
+> relocation episodes the relocation fired correctly (step 60, all 6 objects moved), but
+> `belief_latency.flip_rate = 0.0`: the agent had mapped the target in 1 of 3 episodes and
+> committed to a goal in none, so there was no target belief to flip. YCB objects are too
+> small for the current detector at exploration range. Validating belief latency needs
+> either furniture-scale relocation targets or better YCB detection — it is not something
+> Phase 3 can paper over.
+>
+> **Finding 2 — false disbelief on static furniture, which is R1 arriving early.** In the
+> same 3 episodes, **21 belief flips fired on objects that never moved** (lamp ×5,
+> picture ×5, curtain ×4, mirror ×3, and one each of refrigerator, rug, cabinet, door).
+> Only the 6 YCB objects were relocated, so every one of those is either a detector miss
+> the filter over-trusted or a track whose ellipsoid centre is wrong enough that the
+> expectation looks at the wrong pixels. **Fix this before Phase 3**: a search posterior
+> that consumes wrongly-collapsed beliefs will confidently search the wrong places. The
+> levers are the ones R1 already names — require a minimum accumulated expected-detection
+> mass before a belief may collapse, demand k independent viewpoints rather than k
+> keyframes, and stop trusting a constant recall of 0.6 for classes the detector is
+> actually poor at.
+
 `YCBAuthoredNavEnv.reset()` injects one layout per episode
 (`src/osg/sim/ycb_env.py:491`). That reproduces DualMap's protocol — map, change the
 world offline, query — which measures only stale-memory recovery. Belief latency cannot

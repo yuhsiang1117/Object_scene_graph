@@ -312,6 +312,13 @@ class NavAgent:
         self._approach_steps_left = 0
         self._goal_floor_y_cache: Optional[float] = None
         self.stats = {"plan_ok": 0, "plan_fail": 0, "select_none": 0, "select_ok": 0}
+        # Phase 2 instrumentation (docs/DYNAMIC_SCENES.md): when the map STOPPED
+        # believing in something, and what it believed at the moment it
+        # committed to a goal. Belief latency and stale-goal rate are computed
+        # from these two logs plus the relocation step the env records.
+        self.presence_events: List[dict] = []
+        self.goal_commit_log: List[dict] = []
+        self._disbelieved: set = set()
         self.state_log = []
         self.frontier_select_log: list = []
         self.giveup_log: list = []
@@ -611,6 +618,23 @@ class NavAgent:
             self.stats["presence_disbelieved"] = sum(
                 1 for t in self.object_layer.tracks() if t.presence.p < 0.1
             )
+            for track in self.object_layer.tracks():
+                if track.presence.p >= 0.1 or track.id in self._disbelieved:
+                    continue
+                # First crossing only: the step here is what "belief latency"
+                # is measured against, so a belief that dips, recovers and dips
+                # again must not reset the clock.
+                self._disbelieved.add(track.id)
+                self.presence_events.append(
+                    {
+                        "step": int(self.step_count),
+                        "track_id": int(track.id),
+                        "label": str(track.label),
+                        "center": [float(v) for v in self.object_layer.center_of(track)],
+                        "p": round(float(track.presence.p), 4),
+                        "n_missed": int(track.presence.n_missed),
+                    }
+                )
 
         if self._stairs_on:
             fc = self.cfg.floor
@@ -971,6 +995,7 @@ class NavAgent:
                     self._candidate_id = None
                     self.stats["verify_reject"] = self.stats.get("verify_reject", 0) + 1
                     return
+            self._log_goal_commit(track)
             self._start_approach(obj_xy, floor_y=self._goal_floor_y(obj_center))
             return
 
@@ -985,6 +1010,21 @@ class NavAgent:
         self.state = State.GOTO_VERIFY_VIEW
         self._current_path = None
         self._goto_deadline = self.step_count + 80
+
+    def _log_goal_commit(self, track) -> None:
+        """What the map believed at the moment it committed. A commit to a
+        track the agent has already looked for and failed to find is a stale
+        goal -- the failure DualMap's ignore list exists to paper over."""
+        self.goal_commit_log.append(
+            {
+                "step": int(self.step_count),
+                "track_id": int(track.id),
+                "label": str(track.label),
+                "p": round(float(track.presence.p), 4),
+                "n_missed": int(track.presence.n_missed),
+                "center": [float(v) for v in self.object_layer.center_of(track)],
+            }
+        )
 
     def _do_verification(self, frame: FrameData) -> str:
         track = self.object_layer.get(self._candidate_id) if self._candidate_id is not None else None

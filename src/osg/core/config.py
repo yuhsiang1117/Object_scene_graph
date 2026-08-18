@@ -506,6 +506,21 @@ class YCBAuthoredConfig:
     starts_per_target: int = 1
     seed: int = 42
     manifest_cache_dir: str = "outputs/ycb_manifests"
+    # Mid-episode relocation (docs/DYNAMIC_SCENES.md, Phase 2). -1 disables it
+    # and every episode behaves exactly as before. When enabled, an episode
+    # whose layout is a dynamic one starts the world in the paired STATIC
+    # layout and moves the objects to the episode's own poses at this step --
+    # so the goals are where the object ends up, and the change is something
+    # the agent can witness rather than wake up to.
+    relocate_at_step: int = -1
+    # `in_view` waits until the target is actually visible from the current
+    # pose, `out_of_view` waits until it is not, `any` fires immediately. The
+    # two conditions measure different things: in_view is the clean test of
+    # negative evidence, out_of_view tests whether the search recovers.
+    relocate_when: str = "any"
+    # If the visibility condition never comes true, relocate anyway this many
+    # steps later, rather than silently turning the episode into a static one.
+    relocate_deadline_steps: int = 120
     target_labels: Dict[str, str] = field(
         default_factory=lambda: dict(YCB_TARGET_LABELS)
     )

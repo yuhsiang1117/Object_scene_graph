@@ -362,6 +362,84 @@ def _dynamic_file(root: Path, layout_index: int) -> Path | None:
     return candidates[0] if candidates else None
 
 
+@dataclass(frozen=True)
+class RelocationPair:
+    """A before/after layout pair: the same objects, moved.
+
+    Phase 2 of docs/DYNAMIC_SCENES.md. The point of a pair is that the change
+    can be made to happen DURING an episode, in or out of the agent's view, so
+    "how long did the map take to notice" becomes measurable. DualMap's protocol
+    -- map, change the world offline, query -- can only measure recovery from a
+    map that was already stale, never the noticing itself.
+    """
+
+    before: AuthoredLayout
+    after: AuthoredLayout
+
+    @property
+    def kind(self) -> str:
+        """`in_anchor` or `cross_anchor`, taken from the destination layout."""
+        return self.after.layout_type
+
+    @property
+    def scene_name(self) -> str:
+        return self.before.scene_name
+
+    def moved_semantic_ids(self) -> Tuple[int, ...]:
+        """Objects whose pose actually differs between the two layouts.
+
+        The schema requires every object to be relocated, but comparing poses
+        rather than trusting `relocated_semantic_ids` keeps this honest against
+        a hand-edited layout.
+        """
+        after_by_id = {obj.semantic_id: obj for obj in self.after.objects}
+        moved = []
+        for obj in self.before.objects:
+            other = after_by_id.get(obj.semantic_id)
+            if other is None:
+                continue
+            if any(abs(a - b) > 1e-6 for a, b in zip(obj.translation, other.translation)):
+                moved.append(obj.semantic_id)
+        return tuple(sorted(moved))
+
+    def destination_of(self, semantic_id: int) -> AuthoredObject:
+        for obj in self.after.objects:
+            if obj.semantic_id == semantic_id:
+                return obj
+        raise YCBLayoutError(
+            f"{semantic_id} is not placed in {self.after.layout_id}"
+        )
+
+
+def relocation_pairs(layouts: Sequence[AuthoredLayout]) -> Tuple[RelocationPair, ...]:
+    """Pair every dynamic layout with the static layout of its own scene.
+
+    Discovery already guarantees a dynamic layout is consistent with its static
+    reference (same objects, same mesh, same semantic-ID mapping), so pairing is
+    only a scene-level join -- but it must be a join, not a zip: a selection can
+    contain several scenes and several dynamic indices at once.
+    """
+    static_by_scene = {
+        layout.scene_name: layout
+        for layout in layouts
+        if layout.layout_type == "static"
+    }
+    pairs = []
+    for layout in layouts:
+        if layout.layout_type == "static":
+            continue
+        before = static_by_scene.get(layout.scene_name)
+        if before is None:
+            # Selecting a dynamic layout without its static counterpart is a
+            # user error worth naming: there is no "before" to change FROM.
+            raise YCBLayoutError(
+                f"{layout.layout_id} has no static layout in the selection; add "
+                f"'static' to ycb.layout_types to build relocation pairs"
+            )
+        pairs.append(RelocationPair(before=before, after=layout))
+    return tuple(sorted(pairs, key=lambda p: (p.scene_name, p.after.layout_id)))
+
+
 def discover_authored_layouts(
     *,
     layout_root: Path,

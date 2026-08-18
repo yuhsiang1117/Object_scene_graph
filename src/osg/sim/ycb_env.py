@@ -6,7 +6,7 @@ import hashlib
 import json
 import math
 from pathlib import Path
-from typing import Any, Dict, Iterable, List, Mapping, Sequence, Tuple
+from typing import Any, Dict, Iterable, List, Mapping, Optional, Sequence, Tuple
 
 import numpy as np
 
@@ -14,8 +14,10 @@ from .habitat_env import HabitatObjectNavEnv, make_objectnav_config
 from .ycb_layouts import (
     AuthoredLayout,
     LayoutDiscovery,
+    RelocationPair,
     YCBLayoutError,
     discover_authored_layouts,
+    relocation_pairs,
 )
 
 
@@ -184,6 +186,42 @@ def inject_layout_objects(sim, layout: AuthoredLayout) -> List[Any]:
         rigid.motion_type = habitat_sim.physics.MotionType.STATIC
         added.append(rigid)
     return added
+
+
+def apply_layout_transforms(objects: List[Any], layout: AuthoredLayout) -> List[int]:
+    """Move already-placed rigid objects to another layout's poses.
+
+    The same object ids, moved -- not a fresh injection. That distinction is the
+    whole point of a mid-episode relocation: the simulator state, the agent, its
+    map and its beliefs all survive, so the change is something the robot can
+    WITNESS rather than something it wakes up to.
+
+    Returns the semantic ids that actually moved.
+    """
+    import magnum as mn
+
+    by_id = {}
+    for rigid in objects:
+        try:
+            by_id[int(rigid.semantic_id)] = rigid
+        except (AttributeError, TypeError, ValueError):
+            continue
+
+    moved = []
+    for authored in layout.objects:
+        rigid = by_id.get(int(authored.semantic_id))
+        if rigid is None:
+            raise YCBLayoutError(
+                f"cannot relocate {authored.semantic_id}: not present in the running scene"
+            )
+        before = np.array([rigid.translation.x, rigid.translation.y, rigid.translation.z])
+        rigid.translation = mn.Vector3(*authored.translation)
+        rigid.rotation = mn.Quaternion(
+            mn.Vector3(*authored.rotation[:3]), authored.rotation[3]
+        )
+        if float(np.linalg.norm(before - np.asarray(authored.translation, float))) > 1e-6:
+            moved.append(int(authored.semantic_id))
+    return moved
 
 
 class _ManifestSimulator:
@@ -463,6 +501,32 @@ def _make_dataset(prepared: PreparedYCB, layout_by_key: Mapping[Tuple[str, str],
     return dataset
 
 
+class _RelocationPolicy:
+    """When, and under what visibility, a relocation fires."""
+
+    def __init__(self, cfg, layouts: Sequence[AuthoredLayout]) -> None:
+        ycb = cfg.ycb
+        self.at_step = int(getattr(ycb, "relocate_at_step", -1))
+        self.when = str(getattr(ycb, "relocate_when", "any"))
+        self.deadline_steps = int(getattr(ycb, "relocate_deadline_steps", 120))
+        self.enabled = self.at_step >= 0
+        self._pairs: Dict[Tuple[str, str], RelocationPair] = {}
+        if not self.enabled:
+            return
+        for pair in relocation_pairs(layouts):
+            self._pairs[(pair.after.scene_name, pair.after.layout_id)] = pair
+
+    def pair_for(self, key: Tuple[str, str]) -> Optional[RelocationPair]:
+        return self._pairs.get(key) if self.enabled else None
+
+    def condition_met(self, in_view: bool) -> bool:
+        if self.when == "in_view":
+            return in_view
+        if self.when == "out_of_view":
+            return not in_view
+        return True
+
+
 class YCBAuthoredNavEnv(HabitatObjectNavEnv):
     """ObjectNav-compatible environment backed by authored rigid-object layouts."""
 
@@ -474,6 +538,7 @@ class YCBAuthoredNavEnv(HabitatObjectNavEnv):
             (layout.scene_name, layout.layout_id): layout
             for layout in self.prepared.discovery.layouts
         }
+        self._relocation = _RelocationPolicy(cfg, self.prepared.discovery.layouts)
         dataset = _make_dataset(self.prepared, self._layout_by_key)
         self._hab_cfg = make_objectnav_config(cfg)
         self.env = habitat.Env(config=self._hab_cfg, dataset=dataset)
@@ -495,15 +560,105 @@ class YCBAuthoredNavEnv(HabitatObjectNavEnv):
         layout = self._layout_by_key.get(key)
         if layout is None:
             raise YCBLayoutError(f"episode references unknown authored layout {key}")
-        self._active_objects = inject_layout_objects(self.env.sim, layout)
+
+        # A relocation episode starts the world in the BEFORE layout while its
+        # goals sit at the AFTER poses: the agent maps the old world, watches
+        # (or misses) the change, and is scored on finding the object where it
+        # now is. Injecting the episode's own layout would make the change
+        # unobservable, which is exactly DualMap's protocol.
+        self._pair = self._relocation.pair_for(key)
+        start_layout = self._pair.before if self._pair is not None else layout
+        self._active_objects = inject_layout_objects(self.env.sim, start_layout)
+        self._relocated_at = None
+        self._relocated_in_view = None
+        self._relocated_ids: List[int] = []
+
         observations = self.env.sim.get_observations_at()
         if observations is None:
             raise RuntimeError("failed to refresh observations after YCB object injection")
         self._frame_id = 0
         return self._to_frame(observations)
 
+    def step(self, action: str):
+        frame = super().step(action)
+        self._maybe_relocate(frame)
+        return frame
+
+    # ------------------------------------------------------------ relocation
+
+    def _maybe_relocate(self, frame) -> None:
+        if self._pair is None or self._relocated_at is not None:
+            return
+        policy = self._relocation
+        if self._frame_id < policy.at_step:
+            return
+        in_view = self._target_in_view(frame)
+        overdue = self._frame_id >= policy.at_step + policy.deadline_steps
+        if not overdue and not policy.condition_met(in_view):
+            return
+        self._relocated_ids = apply_layout_transforms(self._active_objects, self._pair.after)
+        self._relocated_at = int(self._frame_id)
+        self._relocated_in_view = bool(in_view)
+
+    def _target_in_view(self, frame) -> bool:
+        """Is the episode's target visible from the current pose right now?
+
+        Deliberately the same question the presence filter asks, answered from
+        ground truth: frustum, range, then a depth read at the object's pixel so
+        an object behind a wall does not count as witnessed.
+        """
+        info = (getattr(self.current_episode, "info", None) or {}).get("ycb", {})
+        target_id = info.get("target_semantic_id")
+        position = None
+        for authored in (self._pair.before.objects if self._pair else ()):
+            if target_id is not None and int(authored.semantic_id) == int(target_id):
+                position = np.asarray(authored.translation, dtype=float)
+                break
+        if position is None:
+            return False
+
+        T_cw = frame.T_cw
+        p_cam = T_cw[:3, :3] @ position + T_cw[:3, 3]
+        z = float(p_cam[2])
+        if not (0.3 <= z <= 6.0):
+            return False
+        K = frame.intrinsics.K()
+        uvw = K @ p_cam
+        u, v = float(uvw[0] / z), float(uvw[1] / z)
+        h, w = frame.depth.shape
+        if not (0 <= u < w and 0 <= v < h):
+            return False
+        measured = float(frame.depth[int(v), int(u)])
+        if measured <= 1e-3:
+            return False
+        return abs(measured - z) <= 0.5
+
     def episode_metadata(self) -> Dict[str, Any]:
-        return dict((getattr(self.current_episode, "info", None) or {}).get("ycb", {}))
+        meta = dict((getattr(self.current_episode, "info", None) or {}).get("ycb", {}))
+        if self._pair is not None:
+            target_id = meta.get("target_semantic_id")
+            origin = destination = None
+            for authored in self._pair.before.objects:
+                if target_id is not None and int(authored.semantic_id) == int(target_id):
+                    origin = list(authored.translation)
+                    break
+            for authored in self._pair.after.objects:
+                if target_id is not None and int(authored.semantic_id) == int(target_id):
+                    destination = list(authored.translation)
+                    break
+            meta["relocation"] = {
+                "kind": self._pair.kind,
+                "from_layout": self._pair.before.layout_id,
+                "to_layout": self._pair.after.layout_id,
+                "step": self._relocated_at,
+                "in_view": self._relocated_in_view,
+                "moved_semantic_ids": list(self._relocated_ids),
+                # Where the target USED to be: ghost rate is "does the map still
+                # believe it is here", so the metric needs the old pose.
+                "origin_position": origin,
+                "destination_position": destination,
+            }
+        return meta
 
     def benchmark_metadata(self) -> Dict[str, Any]:
         return {
