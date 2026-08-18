@@ -96,3 +96,73 @@ def floor_target_evidence(
 
     evidence = len(seen) + (10 if has_target else 0)
     return evidence, n
+
+
+# ---------------------------------------------------------- search posterior
+# Where does an object of this class REST? CATEGORY_CONTEXT above answers "what
+# else is in the room", which is the right question for choosing a storey and
+# the wrong one for choosing a surface. These two tables answer "which surface",
+# and they are what turns "not here" into "then look there" (Phase 3).
+
+# Container categories a class is plausibly found on, best first. Deliberately
+# small and inspectable; anything absent falls back to LLM affinity when it is
+# enabled, and to a flat prior when it is not.
+CONTAINER_AFFINITY = {
+    "bowl": ["table", "counter", "desk", "cabinet", "shelf", "sink"],
+    "mug": ["table", "counter", "desk", "shelf", "cabinet", "sink"],
+    "plate": ["table", "counter", "cabinet", "shelf", "sink"],
+    "cup": ["table", "counter", "desk", "shelf"],
+    "bottle": ["table", "counter", "desk", "shelf", "refrigerator"],
+    "cracker box": ["counter", "table", "shelf", "cabinet", "desk"],
+    "tomato soup can": ["counter", "shelf", "cabinet", "table"],
+    "pitcher": ["counter", "table", "shelf", "cabinet"],
+    "scissors": ["desk", "table", "cabinet", "shelf", "counter"],
+    "banana": ["counter", "table", "bowl", "shelf"],
+    "book": ["desk", "table", "shelf", "nightstand", "bed"],
+    "pillow": ["bed", "sofa", "bench"],
+}
+
+# What a class needs from a surface: (min top height, max top height, min area).
+# Read straight off the container geometry the scene graph already computes, so
+# a mug is not proposed on the floor and a bowl is not proposed on a shelf at
+# head height. Generous bands -- this is a prior, not a constraint.
+AFFORDANCE = {
+    "bowl": (0.4, 1.3, 0.06),
+    "mug": (0.4, 1.3, 0.04),
+    "plate": (0.4, 1.3, 0.06),
+    "cracker box": (0.3, 1.4, 0.06),
+    "tomato soup can": (0.3, 1.4, 0.04),
+    "pitcher": (0.4, 1.3, 0.06),
+    "scissors": (0.4, 1.4, 0.04),
+    "banana": (0.4, 1.3, 0.04),
+    "book": (0.2, 1.6, 0.04),
+    "pillow": (0.2, 0.9, 0.15),
+}
+DEFAULT_AFFORDANCE = (0.15, 1.6, 0.03)
+
+
+def affinity_scores(target: str, source=None) -> dict:
+    """{container category: weight in (0, 1]}, best first, or {} if unknown.
+
+    `source` is an optional callable (an LLM affinity provider) consulted only
+    when the static table has no entry -- the table stays authoritative so a
+    model cannot quietly rewrite a prior someone chose deliberately.
+    """
+    key = _norm(target)
+    ranked = CONTAINER_AFFINITY.get(key)
+    if ranked is None and source is not None:
+        ranked = source(key)
+    if not ranked:
+        return {}
+    n = len(ranked)
+    return {_norm(c): 1.0 - 0.5 * i / max(n - 1, 1) for i, c in enumerate(ranked)}
+
+
+def affords(target: str, top_h: float, area_m2: float) -> float:
+    """Can a surface at this height and size hold this class? 1.0 or 0.0.
+
+    Binary on purpose: a shelf at 1.9 m is not a slightly worse place to look
+    for a bowl, it is not a place to look for a bowl.
+    """
+    h_min, h_max, a_min = AFFORDANCE.get(_norm(target), DEFAULT_AFFORDANCE)
+    return 1.0 if (h_min <= top_h <= h_max and area_m2 >= a_min) else 0.0

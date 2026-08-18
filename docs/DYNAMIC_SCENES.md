@@ -615,6 +615,62 @@ max-scored anchor carries a bias term that depends only on how much has ever bee
 agent barely looked at. Take `d(x)` from the fitted recall model evaluated at the
 viewpoint actually planned, not a constant.
 
+### C3 — the search index, implemented and measured
+
+**Status: implemented (2026-08-18), not yet winning episodes.** 12 new unit tests; 322
+unit + 2 integration green. Off by default (`exploration.search_posterior=false`).
+
+Mapped surfaces now compete with frontiers under one index, `b*d/c`, which is the index
+`select_frontier` already computed — C3 widened the candidate set rather than adding an
+objective or a planner. `b(x)` is affordance (binary: a shelf at head height is not a
+worse place to look for a bowl, it is not a place) times affinity times proximity to the
+object's last believed pose; `d(x)` is 0.8, the measured detection rate; `c(x)` is the
+planner's geodesic cost. A visit multiplies belief by `(1 - d)` rather than zeroing it,
+so a surface glanced at from four metres stays plausible — the distinction DualMap's
+ignore list cannot make, and which it discards at query end regardless.
+
+The provided text model (`nvidia/nemotron-3.5-lightning-30b-a3b`) supplies affinities for
+targets `graph/priors.py` has no entry for — every YCB target. One call per unknown class,
+cached to `outputs/affinity_cache.json`, so a run is deterministic after the first and the
+priors the agent used can be read and diffed afterwards. The static table always wins where
+it has an entry: a model must not quietly rewrite a prior someone chose deliberately.
+**The model is text-only** (multimodal disabled on this endpoint), so it cannot serve C5's
+absence check.
+
+Cross-anchor, bowl moved 6.84 m, stale map, 500 steps:
+
+| | final distance to goal | surfaces inspected |
+|---|---|---|
+| no posterior | 12.15 m | — |
+| posterior, first version | 12.45 m | 7 (none actually inspected) |
+| + commit until arrival | 6.88 m | 7 |
+| + proximity floor, surfaces preferred | 5.73 m | 13 |
+| + unlisted-category weight | **5.28 m** | 10, all plausible |
+
+**No episode succeeds yet, and the honest reading is that this is now a budget and
+parameter question rather than a mechanism one.** Three defects the runs exposed, each
+fixed and each worth recording:
+
+- Surfaces were marked searched five steps after selection, because the selection guard
+  re-runs every five steps and the mark fired whether or not the agent had arrived. It
+  visited seven surfaces and inspected none. The agent now stays committed to a surface
+  until it arrives or spends its budget, and a surface it never reached earns only a
+  quarter of the search credit — spending full belief on it would retire exactly the
+  places that were never looked at.
+- A pure `exp(-d/L)` proximity prior says an object that moved 7 m is almost impossible,
+  when cross-anchor moves here average 5 m. It also punishes distance twice, since the
+  cost term already divides by path length. The prior now floors at 0.2: a mixture of
+  "moved nearby" and "moved anywhere".
+- A category absent from a ranking we *have* was scored 0.5, tying the lowest genuinely
+  plausible surface — so a bed and a sofa ranked with a sink as places to look for a bowl,
+  and the agent went to both. Absent from a known ranking now ranks below all of it, while
+  having no ranking at all still leaves every surface equally plausible.
+
+What is left is a sweep of `search_frontier_weight` and the step budget over the full
+episode set, not more single-episode tuning: a 500-step budget to re-find an object 6.84 m
+away among 43 candidate surfaces is tight, and one episode cannot separate a good policy
+from a lucky one.
+
 ---
 
 ## Phase 4 — C4 change log

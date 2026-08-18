@@ -238,6 +238,36 @@ class ExplorationConfig:
     max_frontiers_per_call: int = 4
     unscored_prior: float = 0.3
     min_path_cost_m: float = 0.5
+    # Search posterior (docs/DYNAMIC_SCENES.md, C3). Off by default: it changes
+    # where the agent goes, so it must be an explicit A/B. When on, mapped
+    # surfaces compete with frontiers under ONE index, b*d/c, so exploring and
+    # re-searching stop being separate subsystems.
+    search_posterior: bool = False
+    # d(x): chance a visit to a surface would find the target if it is there.
+    # Taken from the same measured detection rate as the presence filter's
+    # absence recall (0.812 over 6790 logged expectations).
+    search_detect_prob: float = 0.8
+    # Length scale for "things are moved short distances": b decays as
+    # exp(-d/L) from where the object was last believed to be.
+    search_proximity_len_m: float = 4.0
+    # Scales a frontier's utility against a surface's, i.e. the price of
+    # preferring unmapped space over a plausible surface. Must be non-zero or
+    # the agent stops exploring once its surfaces are exhausted.
+    search_frontier_weight: float = 1.0
+    # Ask the text LLM where a class of object gets put down, for targets the
+    # static table in graph/priors.py does not cover (every YCB target). Cached
+    # to disk, so a run is deterministic after the first and the priors used are
+    # inspectable afterwards.
+    # How close counts as having inspected a surface, and how long to stay
+    # committed to reaching one before giving up on it.
+    search_arrival_m: float = 1.2
+    search_max_steps: int = 60
+    # Credit for a surface the agent set off towards but never reached: it has
+    # barely been ruled out, and spending full belief on it would retire the
+    # very surfaces that were never inspected.
+    search_unreached_credit: float = 0.25
+    affinity_llm: bool = False
+    affinity_cache: str = "outputs/affinity_cache.json"
     # Information-gain weighting: boost frontiers that expose more unknown area
     # (estimated as the count of UNKNOWN costmap cells within info_gain_radius_m
     # of the frontier), so exploration commits to directions that open large

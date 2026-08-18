@@ -31,6 +31,11 @@ import numpy as np
 from ..core.profiler import Profiler
 from ..core.types import Detection, FrameData
 from ..exploration.async_scorer import AsyncScorer
+from ..exploration.search_belief import (
+    InspectionLog,
+    build_container_candidates,
+    select_candidate,
+)
 from ..exploration.selector import frontier_goal_xy, select_frontier
 from ..graph.priors import floor_target_evidence
 from ..graph.scene_graph import SceneGraph
@@ -80,6 +85,33 @@ def target_vocabulary(target: str, vocabulary) -> List[str]:
             continue
         out.append(text)
     return out
+
+
+def _make_affinity(cfg):
+    """Where does this class of object get put down? None unless asked for.
+
+    graph/priors.py has a hand-written table for the categories this project
+    has cared about; every YCB target is missing from it, and a prior of "no
+    idea" makes the search posterior fall back to a flat weight over every
+    surface in the house -- the undirected wandering C3 exists to replace.
+    """
+    ec = getattr(cfg, "exploration", None)
+    if ec is None or not getattr(ec, "affinity_llm", False):
+        return None
+    from ..graph.containers import CONTAINER_CATEGORIES
+    from ..llm.affinity import AffinityProvider
+    from ..llm.client import ChatClient
+
+    client = None
+    if getattr(cfg.llm, "api_key", ""):
+        client = ChatClient(
+            cfg.llm.base_url, cfg.llm.text_model, cfg.llm.api_key,
+            cfg.llm.timeout_s, cfg.llm.max_image_px, cfg.llm.send_response_format,
+        )
+    return AffinityProvider(
+        client, sorted(CONTAINER_CATEGORIES),
+        cache_path=str(getattr(ec, "affinity_cache", "") or "") or None,
+    )
 
 
 def _make_presence_filter(cfg):
@@ -259,6 +291,7 @@ class NavAgent:
         )
         self.controller = WaypointController(forward_m=cfg.agent.forward_m)
         self.viewpoint_planner = ViewpointPlanner(list(cfg.verification.ring_radii_m))
+        self._affinity = _make_affinity(cfg)
 
         self.reset(target_category)
 
@@ -349,6 +382,14 @@ class NavAgent:
         # committed to a goal. Belief latency and stale-goal rate are computed
         # from these two logs plus the relocation step the env records.
         self.presence_events: List[dict] = []
+        # What has already been searched, and how well (C3). A visit multiplies
+        # a surface's belief by (1 - d) rather than zeroing it, so a place
+        # glanced at from four metres stays plausible and one inspected closely
+        # mostly stops being -- the distinction an ignore list cannot make.
+        self._search_log = InspectionLog()
+        self._search_container: Optional[int] = None
+        self._search_started_step = 0
+        self.search_log_events: List[dict] = []
         self.goal_commit_log: List[dict] = []
         self._disbelieved: set = set()
         self.state_log = []
@@ -765,6 +806,21 @@ class NavAgent:
         if self.step_count - self._last_select_step < 5:
             return
         self._last_select_step = self.step_count
+        # A surface is only searched once the agent has actually got there.
+        # Marking it on the next selection round instead -- which fires every 5
+        # steps -- spent belief on places the agent had merely set off towards,
+        # so it visited seven surfaces in 500 steps and inspected none of them.
+        if self._search_container is not None:
+            agent_xy = frame.camera_position[list(PLANE)]
+            arrived = (
+                self._goal_xy is not None
+                and float(np.linalg.norm(agent_xy - self._goal_xy))
+                <= float(getattr(self.cfg.exploration, "search_arrival_m", 1.2))
+            )
+            spent = self.step_count - self._search_started_step
+            if not arrived and spent < int(getattr(self.cfg.exploration, "search_max_steps", 60)):
+                return  # still on the way: stay committed to this surface
+            self._mark_surface_searched(arrived=arrived)
         with self.profiler.timeit("frontier_extract"):
             frontiers = self.frontier_extractor.extract(
                 self.costmap, frame.camera_position[list(PLANE)],
@@ -805,6 +861,26 @@ class NavAgent:
         by_id = {f.id: f for f in frontiers}
         for fid in failed:  # block only the candidates that actually failed
             self._block_frontier(by_id.get(fid), 50)
+
+        surface = self._select_surface(agent_xy, best)
+        if surface is not None:
+            self._goal_xy = surface.goal_xy
+            self._search_container = int(surface.ref_id)
+            self._search_started_step = self.step_count
+            self._current_path = None
+            self._goal_frontier = None
+            self.stats["search_surface"] = self.stats.get("search_surface", 0) + 1
+            self.search_log_events.append(
+                {
+                    "step": int(self.step_count),
+                    "container_id": int(surface.ref_id),
+                    "label": surface.label,
+                    "prior": round(float(surface.prior), 4),
+                    "path_cost": round(float(surface.path_cost or 0.0), 2),
+                    "utility": round(float(surface.utility or 0.0), 5),
+                }
+            )
+            return
         if best is None or best.path_cost is None:
             # Every frontier was blocked (a give-up/plan-fail cascade in
             # cluttered scenes leaves nothing selectable) -- rather than turn in
@@ -864,6 +940,83 @@ class NavAgent:
             self._progress_ref_xy = agent_xy.copy()
         else:
             self._block_frontier(best, 50)
+
+    def _select_surface(self, agent_xy, best_frontier):
+        """The best mapped surface, if it beats the best frontier on b*d/c.
+
+        Both sides are the same index -- `select_frontier` already returns
+        score/path_cost -- so the comparison is like for like, with
+        search_frontier_weight naming the one judgement call: what unmapped
+        space is worth against a plausible surface.
+        """
+        cfg = self.cfg.exploration
+        if not getattr(cfg, "search_posterior", False):
+            return None
+        if not getattr(self.scene_graph, "containers", None):
+            return None
+        cands = build_container_candidates(
+            self.scene_graph,
+            self.target,
+            self._search_log,
+            detect_prob=float(getattr(cfg, "search_detect_prob", 0.8)),
+            last_known_xy=self._last_known_target_xy(),
+            proximity_len_m=float(getattr(cfg, "search_proximity_len_m", 4.0)),
+            plane=PLANE,
+            affinity_source=self._affinity,
+        )
+        if not cands:
+            return None
+        surface = select_candidate(
+            cands, self.planner, self.costmap, agent_xy,
+            top_n=int(getattr(cfg, "top_n_frontiers", 5)),
+            min_path_cost_m=float(getattr(cfg, "min_path_cost_m", 0.5)),
+        )
+        if surface is None or surface.utility is None:
+            return None
+        beta = float(getattr(cfg, "search_frontier_weight", 1.0))
+        if best_frontier is not None and best_frontier.path_cost:
+            frontier_util = beta * (best_frontier.score or 0.0) / best_frontier.path_cost
+            if frontier_util >= surface.utility:
+                return None
+        return surface
+
+    def _last_known_target_xy(self):
+        """Where the target was last believed to be -- objects are moved by
+        someone doing a task, so short displacements dominate long ones."""
+        best = None
+        for track in self.object_layer.tracks(include_blacklisted=True):
+            if str(track.label).lower().replace("_", " ") != str(self.target).lower().replace("_", " "):
+                continue
+            if best is None or track.presence.n_expected > best.presence.n_expected:
+                best = track
+        if best is None:
+            return None
+        return self.object_layer.center_of(best)[list(PLANE)]
+
+    def _mark_surface_searched(self, arrived: bool = True) -> None:
+        """Arriving at a surface without the target is a look that did not find
+        it -- worth (1 - d), not worth zero and not worth nothing.
+
+        Giving up on the way there is a much weaker look, and is scored as such:
+        a place the agent never reached has barely been ruled out, and spending
+        full belief on it would retire the very surfaces it failed to inspect.
+        """
+        if self._search_container is None:
+            return
+        d = float(getattr(self.cfg.exploration, "search_detect_prob", 0.8))
+        if not arrived:
+            d *= float(getattr(self.cfg.exploration, "search_unreached_credit", 0.25))
+        remaining = self._search_log.searched(self._search_container, d)
+        self.search_log_events.append(
+            {
+                "step": int(self.step_count),
+                "container_id": int(self._search_container),
+                "searched": True,
+                "arrived": bool(arrived),
+                "belief_factor": round(remaining, 4),
+            }
+        )
+        self._search_container = None
 
     def _portal_pursuit_ok(self, frame: FrameData) -> bool:
         """Should the agent keep driving to its portal instead of re-exploring?

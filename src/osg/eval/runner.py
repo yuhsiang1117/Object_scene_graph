@@ -428,6 +428,7 @@ def run_eval(cfg) -> dict:
             # believed about the target at the end.
             "prior_map": map_note,
             "presence_events": agent.presence_events,
+            "search_log_events": agent.search_log_events,
             "goal_commit_log": agent.goal_commit_log,
             "target_tracks": [
                 {
