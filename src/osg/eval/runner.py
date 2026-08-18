@@ -173,6 +173,47 @@ def _target_track_fields(agent) -> dict:
     }
 
 
+def authored_scene(episode) -> str:
+    return str(_authored_episode_metadata(episode).get("scene", "scene"))
+
+
+def _map_path(root: str, scene: str) -> Path:
+    return Path(str(root)) / f"{_safe_tag(scene)}.json"
+
+
+def _save_map(cfg, agent, episode) -> None:
+    """Pass 1: keep the map this episode built, keyed by scene."""
+    root = str(getattr(cfg.ycb, "map_out", "") or "")
+    if not root:
+        return
+    from ..graph.map_store import save_map
+
+    authored = _authored_episode_metadata(episode)
+    save_map(
+        _map_path(root, authored_scene(episode)),
+        agent,
+        scene=authored_scene(episode),
+        layout_id=str(authored.get("layout_id", "")),
+    )
+
+
+def _load_prior_map(cfg, agent, scene: str) -> Optional[dict]:
+    """Pass 2: start from the map pass 1 built, not from an empty one."""
+    root = str(getattr(cfg.ycb, "map_in", "") or "")
+    if not root:
+        return None
+    from ..graph.map_store import apply_map, load_map
+
+    path = _map_path(root, scene)
+    blob = load_map(path)
+    n = apply_map(agent, blob)
+    return {
+        "path": str(path),
+        "from_layout": str(blob.get("layout_id", "")),
+        "tracks": int(n),
+    }
+
+
 def _authored_episode_metadata(episode) -> dict:
     info = getattr(episode, "info", None) or {}
     if not isinstance(info, dict):
@@ -322,6 +363,7 @@ def run_eval(cfg) -> dict:
             nav_fn=env.action_to_goal if cfg.agent.use_habitat_navmesh else None,
             reachable_fn=env.is_reachable if cfg.agent.use_habitat_navmesh else None,
         )
+        map_note = _load_prior_map(cfg, agent, authored_scene(episode))
         trajectory = [frame.camera_position[list(PLANE)]]
         # Height is tracked alongside the 2D trajectory (rather than making
         # `trajectory` 3D) so the analyze_*.py tools keep working unchanged,
@@ -344,6 +386,7 @@ def run_eval(cfg) -> dict:
         if dbg is not None:
             dbg.close()
 
+        _save_map(cfg, agent, episode)
         m = env.metrics()
         authored = _authored_episode_metadata(episode)
         # The env knows things the episode record cannot: whether a relocation
@@ -352,6 +395,14 @@ def run_eval(cfg) -> dict:
             live = env.episode_metadata()
             if isinstance(live, dict):
                 authored = {**authored, **live}
+        reloc = authored.get("relocation")
+        if isinstance(reloc, dict) and reloc.get("step") is None and map_note is not None:
+            # Two-pass protocol: the objects moved between the mapping run and
+            # this one, so the map is stale from step 0. Recording it this way
+            # lets belief latency read "how long until the map noticed" with no
+            # special case -- the clock simply starts at the episode start.
+            reloc["step"] = 0
+            reloc["offline"] = True
         rec = {
             "episode_id": str(episode.episode_id),
             "scene": authored.get("scene", str(episode.scene_id).split("/")[-1]),
@@ -371,6 +422,7 @@ def run_eval(cfg) -> dict:
             # Phase 2 dynamic-scene evidence: when beliefs flipped, what the
             # agent believed when it committed to a goal, and what it still
             # believed about the target at the end.
+            "prior_map": map_note,
             "presence_events": agent.presence_events,
             "goal_commit_log": agent.goal_commit_log,
             "target_tracks": [

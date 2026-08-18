@@ -143,3 +143,42 @@ def test_dynamic_summary_omits_metrics_with_no_data():
                                    commits=[{"p": 0.1}],
                                    tracks=[{"label": "mug", "center": [0, 0.5, 0], "p": 0.9}])])
     assert set(out) == {"belief_latency", "stale_goals", "ghosts"}
+
+
+# ------------------------------------------------- offline vs live change
+
+
+class _Policy:
+    """The firing rule in isolation -- see YCBAuthoredNavEnv._maybe_relocate."""
+
+    def __init__(self, enabled, at_step):
+        self.enabled, self.at_step = enabled, at_step
+
+    def should_fire(self, frame_id, pair_exists, already):
+        if not self.enabled or not pair_exists or already:
+            return False
+        return frame_id >= self.at_step
+
+
+def test_a_disabled_policy_never_fires_even_though_the_pair_is_known():
+    """The two-pass protocol needs the pair for metadata (what moved, from
+    where) while the world must NOT change during the episode. Firing here would
+    re-apply poses the world is already in and record a live change that never
+    happened, hiding the offline one from the metrics."""
+    policy = _Policy(enabled=False, at_step=-1)
+    assert policy.should_fire(0, pair_exists=True, already=False) is False
+    assert policy.should_fire(500, pair_exists=True, already=False) is False
+
+
+def test_an_enabled_policy_fires_once_at_its_step():
+    policy = _Policy(enabled=True, at_step=60)
+    assert policy.should_fire(59, True, False) is False
+    assert policy.should_fire(60, True, False) is True
+    assert policy.should_fire(61, True, already=True) is False
+
+
+def test_offline_change_is_reported_as_step_zero():
+    """With the map loaded from a run before the objects moved, the map is stale
+    from the first step -- so the belief-latency clock starts at 0."""
+    r = episode(step=0, events=[{"step": 25, "label": "mug"}])
+    assert belief_latency([r])["mean_steps"] == 25.0

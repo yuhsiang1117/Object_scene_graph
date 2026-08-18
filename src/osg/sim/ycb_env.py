@@ -509,15 +509,22 @@ class _RelocationPolicy:
         self.at_step = int(getattr(ycb, "relocate_at_step", -1))
         self.when = str(getattr(ycb, "relocate_when", "any"))
         self.deadline_steps = int(getattr(ycb, "relocate_deadline_steps", 120))
+        # Firing mid-episode is opt-in, but KNOWING the pair is not: the
+        # two-pass protocol changes the world between runs, and the metrics
+        # still need to know what moved and where it moved from.
         self.enabled = self.at_step >= 0
         self._pairs: Dict[Tuple[str, str], RelocationPair] = {}
-        if not self.enabled:
-            return
-        for pair in relocation_pairs(layouts):
-            self._pairs[(pair.after.scene_name, pair.after.layout_id)] = pair
+        try:
+            for pair in relocation_pairs(layouts):
+                self._pairs[(pair.after.scene_name, pair.after.layout_id)] = pair
+        except YCBLayoutError:
+            # A dynamic-only selection is legitimate for pass 2 -- the static
+            # layout lives in the snapshot, not in this run.
+            if self.enabled:
+                raise
 
     def pair_for(self, key: Tuple[str, str]) -> Optional[RelocationPair]:
-        return self._pairs.get(key) if self.enabled else None
+        return self._pairs.get(key)
 
     def condition_met(self, in_view: bool) -> bool:
         if self.when == "in_view":
@@ -567,7 +574,14 @@ class YCBAuthoredNavEnv(HabitatObjectNavEnv):
         # now is. Injecting the episode's own layout would make the change
         # unobservable, which is exactly DualMap's protocol.
         self._pair = self._relocation.pair_for(key)
-        start_layout = self._pair.before if self._pair is not None else layout
+        # Only the mid-episode variant starts the world in the BEFORE layout.
+        # The two-pass benchmark runs the moved world from step 0 and gets its
+        # staleness from the snapshot it loads, not from a live change.
+        start_layout = (
+            self._pair.before
+            if (self._pair is not None and self._relocation.enabled)
+            else layout
+        )
         self._active_objects = inject_layout_objects(self.env.sim, start_layout)
         self._relocated_at = None
         self._relocated_in_view = None
@@ -587,9 +601,13 @@ class YCBAuthoredNavEnv(HabitatObjectNavEnv):
     # ------------------------------------------------------------ relocation
 
     def _maybe_relocate(self, frame) -> None:
-        if self._pair is None or self._relocated_at is not None:
-            return
         policy = self._relocation
+        # Knowing the pair is not permission to fire: with the two-pass protocol
+        # the pair exists for metadata only, and relocating here would re-apply
+        # poses the world is already in -- recording a live change that never
+        # happened and masking the offline one.
+        if not policy.enabled or self._pair is None or self._relocated_at is not None:
+            return
         if self._frame_id < policy.at_step:
             return
         in_view = self._target_in_view(frame)

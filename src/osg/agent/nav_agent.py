@@ -52,6 +52,36 @@ STOP_ACTION = "stop"
 TURN_ACTION = "turn_left"
 
 
+def target_vocabulary(target: str, vocabulary) -> List[str]:
+    """Target first, then the generic list with anything that COLLIDES removed.
+
+    Measured on the YCB benchmark: with the target "cracker box" the vocabulary
+    also offered the generic "box", and YOLOE labelled every sighting "box" --
+    263 mapped tracks, 3 of them the target, none of them proposable, because
+    candidates() matches on the target category. The specific class was in the
+    vocabulary and still never won.
+
+    So drop a generic entry that is a whole-word part of the target ("box" for
+    "cracker box"), and drop an exact duplicate of the target. Anything that is
+    not a sub-phrase of the target is left alone -- this narrows the vocabulary
+    only where it was actively competing with the goal.
+    """
+    target = str(target).replace("_", " ").strip()
+    words = target.lower().split()
+    out = [target]
+    for entry in vocabulary:
+        text = str(entry).replace("_", " ").strip()
+        low = text.lower()
+        if low == target.lower():
+            continue
+        parts = low.split()
+        n = len(parts)
+        if n < len(words) and any(words[i:i + n] == parts for i in range(len(words) - n + 1)):
+            continue
+        out.append(text)
+    return out
+
+
 def _make_presence_filter(cfg):
     """None unless scene_graph.presence.enabled -- the filter must be an opt-in
     A/B, not a silent default (docs/DYNAMIC_SCENES.md, Phase 1)."""
@@ -335,7 +365,7 @@ class NavAgent:
         self.kf_selector.reset()
         self.controller.reset()
         self.detector.set_vocabulary(
-            [self.target.replace("_", " ")] + list(self.cfg.detector.vocabulary)
+            target_vocabulary(self.target, self.cfg.detector.vocabulary)
         )
 
     # ------------------------------------------------------------------- act

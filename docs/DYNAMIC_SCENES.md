@@ -299,59 +299,72 @@ update in the system defensible, and no dynamic-mapping paper I know of shows on
 
 **Goal:** make change *observable*, so the mechanism can be measured rather than inferred.
 
-> **Status: mid-episode relocation done (2026-08-18); paired-layout episodes not started.**
-> 13 new unit tests; 266 unit + 2 integration green. A relocation episode now starts the
-> world in the paired **static** layout while its goals sit at the **after** poses, so the
-> object moves during the episode and success is still scored where the object ends up.
-> `ycb.relocate_at_step=-1` by default, so every existing run is untouched.
-> `dynamic_summary` reports belief latency, stale-goal rate and ghost rate.
+> **Status: done (2026-08-18).** 24 new unit tests; 285 unit + 2 integration green.
+> The benchmark is **two passes**, and the change happens **between** them:
 >
-> **The collector has authored no dynamic layouts**, so
-> `scripts/author_relocation_layout.py` synthesises a `cross_anchor` one by permuting the
-> authored poses across anchors — every pose is one a human already placed and validated,
-> and the file is written through the ordinary schema so the existing validator checks it.
-> An `in_anchor` layout cannot be synthesised this way: it needs a second pose on the
-> *same* surface, which cannot be borrowed from another object and cannot be invented
-> without the anchor's extent. That one has to come from the collector.
+> ```bash
+> # pass 1 -- explore the static layout, keep the map
+> python scripts/run_eval.py +experiment=ycb_authored_nav 'ycb.layout_types=[static]' \
+>     verification=off scene_graph.presence.enabled=true ycb.map_out=outputs/maps \
+>     'eval.episode_ids=[00829-QaLdnwvtxbs__static__50001__s0]'
 >
-> **Finding 1 — the metric is starved by perception, not by the protocol.** Across 3
-> relocation episodes the relocation fired correctly (step 60, all 6 objects moved), but
-> `belief_latency.flip_rate = 0.0`: the agent had mapped the target in 1 of 3 episodes and
-> committed to a goal in none, so there was no target belief to flip. YCB objects are too
-> small for the current detector at exploration range. Validating belief latency needs
-> either furniture-scale relocation targets or better YCB detection — it is not something
-> Phase 3 can paper over.
+> # pass 2 -- navigate the MOVED world with that map
+> python scripts/run_eval.py +experiment=ycb_authored_nav \
+>     'ycb.layout_types=[static,cross_anchor]' verification=off \
+>     scene_graph.presence.enabled=true ycb.map_in=outputs/maps \
+>     'eval.episode_ids=[00829-QaLdnwvtxbs__cross_anchor_01__50001__s0]'
+> ```
 >
-> **Finding 2 — false disbelief on static furniture, which is R1 arriving early.** In the
-> same 3 episodes, **21 belief flips fired on objects that never moved** (lamp ×5,
-> picture ×5, curtain ×4, mirror ×3, and one each of refrigerator, rug, cabinet, door).
-> Only the 6 YCB objects were relocated, so every one of those is either a detector miss
-> the filter over-trusted or a track whose ellipsoid centre is wrong enough that the
-> expectation looks at the wrong pixels. **Fix this before Phase 3**: a search posterior
-> that consumes wrongly-collapsed beliefs will confidently search the wrong places. The
-> levers are the ones R1 already names — require a minimum accumulated expected-detection
-> mass before a belief may collapse, demand k independent viewpoints rather than k
-> keyframes, and stop trusting a constant recall of 0.6 for classes the detector is
-> actually poor at.
-
-`YCBAuthoredNavEnv.reset()` injects one layout per episode
-(`src/osg/sim/ycb_env.py:491`). That reproduces DualMap's protocol — map, change the
-world offline, query — which measures only stale-memory recovery. Belief latency cannot
-be measured at all, because nothing ever observes the change.
+> `graph/map_store.py` persists the map's **evidence** — object tracks with their
+> ellipsoids, observations and presence beliefs, the occupancy grid, the room
+> segmentation — and rebuilds the scene graph on load, so a snapshot cannot freeze an
+> old container rule into a new run. Single storey only; `save_map` refuses a multi-floor
+> agent rather than silently dropping a level. The world does **not** change during an
+> episode: the pair is known for metadata (what moved, from where), and the firing rule
+> is separately gated.
+>
+> **The result the benchmark exists to produce.** Same agent, same episode, cracker box
+> relocated table_175 → table_188:
+>
+> | | outcome | commits to |
+> |---|---|---|
+> | fresh map (control) | **success**, 363 steps, SPL 0.066 | the real object, at step 355 |
+> | stale map from pass 1 | **failure**, stopped at step 64 | the **ghost** at the old pose, at step 1 |
+>
+> `ghost_rate 1.0`, `belief_latency.flip_rate 0.0`. The stale map is not merely unhelpful,
+> it is actively harmful: it converts a success into a confident failure. That is
+> DualMap's dominant failure mode reproduced in our own harness, and it is the baseline
+> every later phase has to beat.
+>
+> **Why the presence filter did not save it, and what that means for Phase 3.** The agent
+> commits at **step 1** with p=0.98 and STOPs on arrival, so the episode is over before
+> negative evidence can accumulate. Belief latency is therefore unmeasurable on this
+> episode — not because the filter is wrong but because nothing consults it before
+> committing. Two fixes, both Phase 3's business: refuse to STOP on a target the live
+> view does not show (C5's negative confirmation), and rank candidates against the cost
+> of reaching them rather than committing to the first plausible one.
+>
+> **Fixed on the way through: the target/vocabulary collision.** With target `cracker box`
+> the detector vocabulary also offered the generic `box`, and YOLOE labelled every
+> sighting `box` — the target was mapped and never proposable, which is what starved the
+> earlier measurement. `target_vocabulary()` now drops a generic entry that is a
+> whole-word part of the target. Pass 1 went from 263 tracks with 0 usable targets to 173
+> tracks with the cracker box mapped 0.05 m from its authored pose.
+>
+> **Still open:** `in_anchor` layouts cannot be synthesised (they need a second pose on the
+> *same* surface) and must come from the collector; and the false-disbelief rate on static
+> furniture recorded below is unchanged and still worth fixing before Phase 3.
 
 ### Two additions
 
-1. **Paired-layout episodes.** Map on layout *i*, evaluate on layout *j* with the same
-   map. This is the DualMap comparison, and it needs the map to survive a reset — an
-   episode-level `map_from` field in the manifest plus a runner path that keeps the
-   `ObjectLayer` across the pair.
-2. **Mid-episode relocation.** Re-apply translations/rotations to the *same* rigid
-   objects at step *k*. `inject_layout_objects()` already returns the handles, so this
-   is `set_translation`/`set_rotation` on existing objects — no sim rebuild. Two
-   sub-conditions, and the distinction is the point:
-   - **in view** — the agent is looking at the object when it moves. Negative evidence
-     should show a large, clean margin over any timeout scheme here.
-   - **out of view** — tests whether the search posterior recovers.
+1. **Paired-layout passes (the protocol).** Explore the static layout and store the map
+   (`ycb.map_out`), then navigate the moved layout starting from it (`ycb.map_in`). The
+   world is fixed for the whole episode; the staleness comes from the snapshot. This is
+   the DualMap comparison, and it is what the metrics below are defined against.
+2. **Mid-episode relocation (secondary, opt-in).** `ycb.relocate_at_step` re-applies
+   poses to the *same* rigid objects during an episode, visibility-gated, so a change can
+   be witnessed rather than only inherited. Strictly an extra condition — it is off by
+   default and is **not** how the benchmark is run.
 
 ### Metrics — `src/osg/eval/metrics.py`
 

@@ -521,6 +521,13 @@ class YCBAuthoredConfig:
     # If the visibility condition never comes true, relocate anyway this many
     # steps later, rather than silently turning the episode into a static one.
     relocate_deadline_steps: int = 120
+    # Two-pass benchmark (docs/DYNAMIC_SCENES.md, Phase 2). Pass 1 explores the
+    # STATIC layout and writes one snapshot per scene to `map_out`; pass 2 runs
+    # the moved layout and starts from `map_in`, so the map the agent navigates
+    # with is genuinely stale. The staleness IS the experiment -- an agent that
+    # rebuilds from scratch is never wrong about anything and measures nothing.
+    map_out: str = ""
+    map_in: str = ""
     target_labels: Dict[str, str] = field(
         default_factory=lambda: dict(YCB_TARGET_LABELS)
     )
