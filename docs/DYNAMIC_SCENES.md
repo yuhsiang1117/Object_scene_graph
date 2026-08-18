@@ -787,6 +787,42 @@ and re-finding it is C3's job, which the earlier batch shows is not yet working.
 benchmark now has a working terminal, so a search improvement can finally show up as
 success rather than as a distance that was never going to score.
 
+### The C3 experiment on the fixed terminal: a null result
+
+Seven episodes, search posterior on and off, everything else equal.
+
+| | SR | SPL | surfaces inspected |
+|---|---|---|---|
+| baseline | 0.429 | 0.337 | — |
+| search posterior | 0.429 | 0.337 | **0** |
+
+The two runs are **byte-identical** — same successes, same step counts, and not one surface
+inspected in any episode. The posterior never ran, and the reason is upstream of it.
+
+Every episode now ends at 43-56 steps. The agent commits to the remembered object at step
+1, drives to a viewpoint, sweeps, and then either sees the object and stops (success) or
+fails the absence check's precondition and stops anyway. It never reaches the phase where
+"where should I look next" is asked, so the A/B was null by construction. **Two batches
+have now been spent measuring a search policy through a pipeline that never invokes it**;
+that is the lesson worth keeping.
+
+The precondition is the thing to fix. Absence is only concluded where the presence filter
+says a detection was *expected*, and that check runs on whichever frame the sweep ends
+on -- after a full circle, the arrival heading again, which need not face the object. The
+agent arrives at a ghost, sweeps past it, and concludes nothing (`absence_not_expected`
+fires in all three cross-anchor episodes and in the static control).
+
+Gating instead on "was it expected at *any* point during the sweep" fixes that, and costs
+something measured: the static control then fails, because the detector misses a bowl that
+really is 0.8 m in front of it and the agent abandons an object that was exactly where the
+map said. So the choice today is **3/7 with an unmeasurable search policy, or 2/7 with a
+measurable one** -- and it exists because the detector's silence at close range is not
+reliable enough to carry the decision alone. The instrument that would settle it is a
+trustworthy negative check, which is exactly what C5 wanted a vision model for and did not
+get on this endpoint. Worth deciding deliberately rather than by default.
+
+A flow graph of the pipeline and the experiment protocol is published as an artifact.
+
 ---
 
 ## Phase 4 — C4 change log
