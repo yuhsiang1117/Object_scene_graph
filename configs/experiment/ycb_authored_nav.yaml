@@ -22,6 +22,20 @@ defaults:
   - override /verification: "off"
   - override /eval: ycb_authored
 
+# YCB targets are an order of magnitude smaller than HM3D ObjectNav's furniture,
+# and the default gates are tuned for furniture. Measured on 00829-QaLdnwvtxbs:
+# a bowl reaches 1759 px at its BEST authored viewpoint, against a 1500 px
+# node-creation gate and a 3000 px candidate gate -- so the target was discarded
+# on sight and every episode failed for want of a detection, not for want of
+# navigation. With these values the same episode succeeds (SPL 0.32) and the
+# bowl is mapped 0.03 m from its authored pose.
+scene_graph:
+  min_det_bbox_px: 300
+
+verification:
+  min_bbox_px: 300
+  min_score: 0.30
+
 agent:
   max_steps: 500
   success_distance: 0.18

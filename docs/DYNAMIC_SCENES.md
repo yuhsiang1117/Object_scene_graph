@@ -383,6 +383,55 @@ harness**, and the fairest baseline we can publish; (b) + negative evidence; (c)
 instance records and posterior scoring; (d) + transition-model search; (e) + learned
 affinities over repeated episodes in one scene. Every rung with `verification=off`.
 
+### In-anchor results, and three blockers found on the way
+
+The collector's real layouts live in a second tree
+(`data/dualmap/HM3D_collect/<scene>/dynamic_scene_config/`) in an older schema — no
+`authoring` block, no per-object anchor, and a scene path from a machine that no longer
+exists. `scripts/import_collector_layouts.py` converts them (3 in_anchor + 3
+cross_anchor for 00829-QaLdnwvtxbs) and validates every one through the real loader.
+Anchors are derived, and honestly: in this scene the closest pair of static objects is
+2.19 m apart, so "one static object, one anchor" is not a guess. In-anchor displacements
+are 0.01–1.56 m and cross-anchor 2.18–9.37 m, cleanly separated.
+
+**Blocker 1 — the size gate, now fixed in the experiment config.** YCB targets are an
+order of magnitude smaller than HM3D furniture. A bowl reaches 1759 px at its *best*
+authored viewpoint against a 1500 px node-creation gate and a 3000 px candidate gate, so
+the target was discarded on sight and every episode failed for want of a detection rather
+than of navigation. With `min_det_bbox_px: 300` the same episode **succeeds** (SPL 0.32)
+and the bowl is mapped 0.03 m from its authored pose. Every earlier YCB number in this
+document was measured under the old gate.
+
+**Blocker 2 — four of six targets are not detectable at all.** Probing the best authored
+viewpoint of each: bowl 0.90, tomato soup can 0.45, and *nothing* for pitcher, plate,
+scissors or cracker box. The pitcher renders as a plain dark tumbler with no handle or
+spout (not a lighting problem — flat, default and scene lighting are identical), the
+plate is a flat disc on a bed, the scissors are a few hundred pixels, and the cracker
+box's best viewpoint clips into geometry. **Only the bowl is a usable target today**, and
+that is a data problem, not a mapping one.
+
+**Blocker 3 — in-anchor moves are absorbed by linking, so the belief never collapses.**
+This is the real in-anchor finding and it is specific to the condition. Bowl, in_anchor
+layout 1, moved 0.80 m on the same table:
+
+| | outcome | what the map did |
+|---|---|---|
+| stale map | fail, 47 steps | committed at step 1 to the ghost, `ghost_rate 1.0` |
+| fresh map (control) | fail, 500 steps | never reached a viewpoint of the new pose |
+
+With the stale map the agent kept the ghost (track 108, old pose) *and* created track 127
+at the new pose. `linking.relink` unions them — same label, 0.80 m apart, under
+`link_dist_m: 1.0` — so `object_center` reports the component **mean**, 0.42 m from
+either bowl, a place where no bowl is. Both tracks report p=0.9975: the ghost is never
+disbelieved because the component keeps being re-observed, and `belief_latency.flip_rate`
+is 0.0 for a reason that has nothing to do with the filter.
+
+A cross-anchor move is far enough that no linking occurs and a clean second track appears;
+an in-anchor move lands inside the linking radius and is averaged into the ghost. So
+**C6 is not the lowest-priority item after all for the in-anchor condition** — `relink`
+must not union a track the filter is losing faith in with a freshly-observed one, and the
+presence filter must see the ghost separately in order to lose faith in it at all.
+
 ---
 
 ## Phase 3 — C3 search index (+ full C2 posterior)
