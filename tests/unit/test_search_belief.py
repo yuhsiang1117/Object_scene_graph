@@ -198,3 +198,34 @@ def test_with_no_ranking_at_all_every_surface_stays_equally_plausible():
     a = container_prior("zorb", "bed", 0.75, 0.6, np.zeros(2))
     b = container_prior("zorb", "table", 0.75, 0.6, np.zeros(2))
     assert a == b > 0.0
+
+
+# ------------------------------------------------- where the approach ends
+
+def test_a_depth_stop_lands_between_the_viewpoint_rings():
+    """The arithmetic behind agent.approach_to_viewpoint. HM3D scores success
+    against the nearest sampled goal viewpoint, and those sit on rings at fixed
+    radii. Stopping when the target's depth reaches 1.0 m puts the agent
+    radially between the 0.8 m and 1.2 m rings -- 0.2 m from either, against a
+    0.18 m success radius. Measured: four of seven batch episodes ended at 0.18,
+    0.19, 0.21 and 0.28 m having FOUND the object."""
+    rings = [0.8, 1.2, 1.5, 2.0]
+    depth_stop = 1.0
+    radial_miss = min(abs(depth_stop - r) for r in rings)
+    assert radial_miss > 0.18, "a depth stop at 1.0 m would be inside the success radius"
+
+    # Standing ON a ring leaves only angular error: at 24 samples the spacing on
+    # the innermost ring is 0.21 m, so the worst case is half of that.
+    import numpy as np
+    angular_miss = 0.5 * (2 * np.pi * rings[0] / 24)
+    assert angular_miss < 0.18, "even on a ring the sampling would be too coarse"
+
+
+def test_the_planner_samples_the_same_rings_the_benchmark_does():
+    """The fix only works because the agent's own viewpoint rings coincide with
+    the ones the episode manifest sampled its goal viewpoints on."""
+    from osg.core.config import VerificationConfig, YCBAuthoredConfig
+    from osg.verification.viewpoint import ViewpointPlanner
+
+    assert list(VerificationConfig().ring_radii_m) == list(YCBAuthoredConfig().viewpoint_radii_m)
+    assert ViewpointPlanner(list(VerificationConfig().ring_radii_m)).ring_radii == [0.8, 1.2, 1.5, 2.0]

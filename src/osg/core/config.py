@@ -47,6 +47,22 @@ class AgentConfig:
     # Detection-based terminal stop (depth-stop, + bbox fallback). When False the
     # approach relies solely on navmesh-arrival / deadline to terminate.
     approach_depth_stop: bool = True
+    # Drive to a VIEW POINT and stop there, rather than closing on the object
+    # until its depth crosses a threshold. HM3D scores success against the
+    # nearest sampled goal viewpoint, and those sit on rings at fixed radii; a
+    # depth stop at 1.0 m lands between the 0.8 m and 1.2 m rings. Navmesh mode
+    # only -- the costmap path already pre-positions at a viewpoint.
+    approach_to_viewpoint: bool = False
+    # Turns allowed on arriving at a viewpoint, sweeping in place until the
+    # target is seen. The follower arrives on the path's heading, which need not
+    # point at the target, and one frame from one heading is a thin basis for
+    # deciding an object is gone. 12 x 30 deg is a full circle.
+    approach_scan_turns: int = 12
+    # Turns allowed on arriving at a viewpoint, sweeping in place until the
+    # target is seen. The navmesh follower arrives on the path's heading, which
+    # need not point at the target, and one frame from one heading is a thin
+    # basis for deciding an object is gone. 12 x 30 deg is a full circle.
+    approach_scan_turns: int = 12
     approach_max_steps: int = 12  # ~3 m of travel at forward_m=0.25
     # Tighter-than-default planner/controller stopping precision for the
     # final APPROACH segment only (P1f). HM3D success is a geodesic
@@ -321,6 +337,10 @@ class VerificationConfig:
     # negative evidence is what stops a stale map sending the agent back to the
     # same empty spot next episode.
     absence_on_arrival: bool = True
+    # Only treat a non-detection as absence where the presence filter says a
+    # detection was EXPECTED (in frame, in range, big enough, unoccluded). An
+    # unexpected miss says nothing about the world, only about the view.
+    absence_requires_expectation: bool = True
     # Effective recall of "the detector saw nothing during the WHOLE approach".
     # Measured, not guessed: 6790 logged expectations from real episodes give a
     # 0.812 detection rate in the regime the visibility gate admits, and an

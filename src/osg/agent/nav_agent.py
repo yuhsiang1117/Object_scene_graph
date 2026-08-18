@@ -389,6 +389,9 @@ class NavAgent:
         self._search_log = InspectionLog()
         self._search_container: Optional[int] = None
         self._search_started_step = 0
+        self._approach_at_viewpoint = False
+        self._scan_turns_left = 0
+        self._scan_expected = 0
         self.search_log_events: List[dict] = []
         self.goal_commit_log: List[dict] = []
         self._disbelieved: set = set()
@@ -600,7 +603,13 @@ class NavAgent:
                  round(float(depth), 3) if depth is not None else None)
             )
             stop_reason: Optional[str] = None
-            if getattr(self.cfg.agent, "approach_depth_stop", True):
+            # When the goal IS a viewpoint, arriving at it is the stop
+            # condition. A depth stop would fire en route -- the viewpoint sits
+            # at 0.8-1.2 m and the depth threshold is 1.0 m -- and leave the
+            # agent short of the pose success is actually measured at.
+            if self._approach_at_viewpoint:
+                pass
+            elif getattr(self.cfg.agent, "approach_depth_stop", True):
                 if depth is not None:
                     if depth <= self.cfg.agent.approach_stop_depth_m:
                         stop_reason = "depth"
@@ -655,6 +664,9 @@ class NavAgent:
         self._last_follow_none_reason = None
         action = self._follow_to(frame, self._goal_xy)
         if action is None:  # path consumed or unreachable: as close as it gets
+            turn = self._scan_at_viewpoint(det, frame)
+            if turn is not None:
+                return turn
             abandon = self._absence_at_arrival(frame, "path_consumed")
             if abandon is not None:
                 return abandon
@@ -1205,6 +1217,33 @@ class NavAgent:
         self._current_path = None
         self._goto_deadline = self.step_count + 80
 
+    def _scan_at_viewpoint(self, det, frame: FrameData) -> Optional[str]:
+        """Sweep in place on arrival, until the target is seen or the budget ends.
+
+        A viewpoint is a pose the object is visible FROM, but the navmesh
+        follower arrives on whatever heading the path happened to end with, and
+        one frame from one heading is a thin basis for deciding an object is
+        gone. Measured both ways: concluding absence from the arrival frame
+        abandoned a bowl that was exactly where the map said, while stopping
+        without looking declared success on empty space. A full sweep costs a
+        dozen steps and makes the detector's silence mean something.
+        """
+        if not self._approach_at_viewpoint or det is not None:
+            return None
+        if self._scan_turns_left <= 0:
+            return None
+        # Note what is deliberately NOT done here: applying a negative reading
+        # per sweep frame. Twelve looks at the same object from the same pose
+        # are not twelve independent observations -- same range, same lighting,
+        # same viewing angle on the same geometry -- so multiplying their
+        # likelihoods turns one correlated detector failure into overwhelming
+        # evidence of absence. Measured: doing it dropped SR from 0.429 to
+        # 0.286 by abandoning a bowl that was exactly where the map said. The
+        # sweep's job is to give the detector a chance, not to vote.
+        self._scan_turns_left -= 1
+        self.stats["approach_scan_turns"] = self.stats.get("approach_scan_turns", 0) + 1
+        return TURN_ACTION
+
     def _absence_at_arrival(self, frame: FrameData, reason: str) -> Optional[str]:
         """The approach is ending and the target was never seen. Say so.
 
@@ -1230,6 +1269,19 @@ class NavAgent:
         )
         if pf is None or track is None or self._approach_last_good_xy is not None:
             return None
+        # Silence is only absence where a detection was EXPECTED. C1 already
+        # answers that -- frustum, range, apparent size, occlusion -- so ask it
+        # rather than assume that arriving means looking. Measured: on a correct
+        # map the agent reached a viewpoint 0.8 m from the bowl, faced it, got
+        # no detection, and abandoned an object that was exactly where the map
+        # said. An unexpected non-detection says nothing about the world, only
+        # about the view.
+        if getattr(vc, "absence_requires_expectation", True):
+            # A sweep that never once expected to see the object has not looked
+            # at it, whatever heading it ended on.
+            if pf.expectation(track, frame, center_only=True) is None:
+                self.stats["absence_not_expected"] = self.stats.get("absence_not_expected", 0) + 1
+                return None
 
         # The VLM is a second sensor with its own (r, q); when it is available,
         # ask it about the target's own footprint rather than trusting the
@@ -1389,7 +1441,31 @@ class NavAgent:
         # Height to snap the navmesh goal at for the rest of this approach.
         # None keeps the legacy "use the agent's own height" behaviour.
         self._goal_floor_y_cache = floor_y
-        if self._use_navmesh:
+        self._approach_at_viewpoint = False
+        if self._use_navmesh and getattr(self.cfg.agent, "approach_to_viewpoint", False):
+            # HM3D scores success as the distance from the final pose to the
+            # nearest GOAL VIEW POINT, and those are sampled on rings at fixed
+            # radii around the object. Stopping when the target's depth reaches
+            # approach_stop_depth_m puts the agent at 1.0 m -- radially between
+            # the 0.8 m and 1.2 m rings, about 0.2 m from the nearest viewpoint
+            # either way. Measured: four of seven batch episodes ended at 0.18,
+            # 0.19, 0.21 and 0.28 m against a 0.18 m radius, having found the
+            # object. ViewpointPlanner samples the SAME radii, so driving to one
+            # of its poses puts the agent ON a ring, where the only error left
+            # is angular -- at worst half the sampling step, about 0.10 m.
+            view_xy = self.viewpoint_planner.approach_viewpoint(obj_xy, self.costmap)
+            if view_xy is not None:
+                self._goal_xy = np.asarray(view_xy, dtype=float).copy()
+                self._approach_at_viewpoint = True
+                self.stats["approach_viewpoint"] = self.stats.get("approach_viewpoint", 0) + 1
+            else:
+                # Not observable from mapped free space yet: fall back rather
+                # than refuse to approach.
+                self._goal_xy = obj_xy.copy()
+                self.stats["approach_viewpoint_none"] = (
+                    self.stats.get("approach_viewpoint_none", 0) + 1
+                )
+        elif self._use_navmesh:
             # Navigate to the object itself; the navmesh snaps to the nearest
             # standable point (effectively a viewpoint), like old /goal_object.
             self._goal_xy = obj_xy.copy()
@@ -1398,6 +1474,8 @@ class NavAgent:
         else:
             self._goal_xy = self._nearest_free_xy(obj_xy)
         self._target_obj_xy = obj_xy.copy()
+        self._scan_turns_left = int(getattr(self.cfg.agent, "approach_scan_turns", 12))
+        self._scan_expected = 0
         self.state = State.APPROACH
         self._current_path = None
         self._path_goal = None

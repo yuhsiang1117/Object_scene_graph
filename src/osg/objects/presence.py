@@ -188,7 +188,11 @@ class PresenceFilter:
         return pts[inside].astype(int) if inside.any() else None
 
     def expectation(
-        self, track, frame: FrameData, ellipse: Optional[Ellipse2D] = None
+        self,
+        track,
+        frame: FrameData,
+        ellipse: Optional[Ellipse2D] = None,
+        center_only: bool = False,
     ) -> Optional[Expectation]:
         """None means E=0: this frame says nothing about the track.
 
@@ -204,7 +208,14 @@ class PresenceFilter:
             return None
 
         h, w = frame.depth.shape
-        if self._inside_image_frac(ellipse, w, h) < self.img_inside_frac:
+        if center_only:
+            # Standing right in front of something, its projection overflows the
+            # frame -- the 50%-inside rule then rejects the closest, clearest
+            # view there is. At arrival, centre-in-frame is the honest test.
+            mu = ellipse.mu
+            if not (0 <= mu[0] < w and 0 <= mu[1] < h):
+                return None
+        elif self._inside_image_frac(ellipse, w, h) < self.img_inside_frac:
             return None
 
         z_c = track.ellipsoid.mean_depth_at(T_cw)

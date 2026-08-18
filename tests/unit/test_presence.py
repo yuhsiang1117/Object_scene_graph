@@ -367,3 +367,32 @@ def test_a_reading_counts_as_evidence_the_belief_rests_on():
     tr, pf = track(), filt()
     pf.apply_reading(tr, False, recall=0.5)
     assert tr.presence.n_expected == 1
+
+
+def test_absence_requires_expectation_not_merely_arrival():
+    """Measured: on a CORRECT map the agent reached a viewpoint 0.8 m from the
+    bowl, faced it, got no detection, and abandoned an object that was exactly
+    where the map said. Silence is only absence where a detection was expected --
+    which is the same visibility gate C1 already applies per keyframe."""
+    tr, pf = track(), filt()
+    occluded = frame(1.0)     # a surface 1 m in front of a 2 m object
+    clear = frame(5.0)        # seeing straight through to the wall behind
+    assert pf.expectation(tr, occluded) is None, "occluded view must not count"
+    assert pf.expectation(tr, clear) is not None, "a clear view must count"
+
+
+def test_repeated_looks_from_one_pose_are_not_independent_evidence():
+    """Measured: applying a negative reading per sweep frame dropped batch SR
+    from 0.429 to 0.286, abandoning a bowl that was exactly where the map said.
+    Twelve looks from one pose share range, lighting and viewing angle, so the
+    filter's independence assumption does not hold and one correlated detector
+    failure becomes overwhelming 'evidence' of absence."""
+    tr, pf = track(), filt()
+    start = tr.presence.log_odds
+    for _ in range(12):
+        pf.apply_reading(tr, False, recall=0.8)
+    many = tr.presence.log_odds
+    tr2 = track(2)
+    pf.apply_reading(tr2, False, recall=0.8)
+    assert many < -5.0, "twelve correlated looks would read as near-certain absence"
+    assert tr2.presence.log_odds > start - 2.0, "one look is properly modest"

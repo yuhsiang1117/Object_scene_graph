@@ -744,6 +744,49 @@ One earlier change did carry: `abandon_below_p` at 1.0 turned two cross-anchor e
 from stopping on empty space at ~50 steps into searching for 290 and 500 steps. That is
 the C5 rule working, and it is what made the cross-anchor rows above comparable at all.
 
+### The terminal condition: SR 0.0 -> 0.429
+
+The batch above failed four of seven episodes by between 0.01 m and 0.10 m, having found
+the object. The cause is geometry, not search. HM3D scores success as the distance from
+the final pose to the nearest sampled **goal viewpoint**, and those sit on rings at
+0.8 / 1.2 / 1.5 / 2.0 m. The navmesh approach drove at the object and stopped when the
+target's depth reached `approach_stop_depth_m = 1.0 m` -- radially half-way between the
+two inner rings, about 0.2 m from either, against a 0.18 m radius. The agent was doing
+everything right and stopping in the one place that could not score.
+
+`agent.approach_to_viewpoint` drives to a pose from `ViewpointPlanner` instead, which
+samples the *same* radii the manifest does, so the agent stands ON a ring and the only
+error left is angular -- at 24 samples on the innermost ring, at worst 0.10 m. Two
+follow-on fixes were needed, and both came from failures the change produced:
+
+- **Arriving is not looking.** The follower arrives on whatever heading the path ended
+  with, so the agent can reach a viewpoint facing away. Without a sweep the absence check
+  fired on a *correct* map and abandoned a bowl that was exactly where the map said,
+  turning a 49-step stop into 500 steps of searching for something already found. The
+  agent now sweeps in place until the target is seen or a full circle is spent.
+- **A sweep is one look, not twelve.** Applying a negative reading per sweep frame is
+  epistemically tempting and wrong: twelve frames of the same object from the same pose
+  share range, lighting and viewing angle, so multiplying their likelihoods turns one
+  correlated detector failure into near-certain "absence". Measured: it dropped SR from
+  0.429 to 0.286 by abandoning the static control. The sweep gives the detector a chance;
+  it does not vote.
+
+| | SR | SPL | in_anchor distances |
+|---|---|---|---|
+| depth stop (before) | 0.0 | 0.0 | 0.18 / 0.21 / 0.19 m |
+| viewpoint terminal | **0.429** | **0.337** | 0.12 / 0.19 / 0.17 m |
+
+Three of seven episodes now succeed: the static control at 0.06 m and two in_anchor
+relocations at 0.12 m and 0.17 m, with SPL 0.76, 0.85 and 0.75 -- the agent goes more or
+less straight to the object, which is what a map is *for*. in_anchor_02 still misses at
+0.19 m, one centimetre out; that is angular sampling and navmesh snap, and closing it
+needs a finer ring or a short final alignment step.
+
+The cross-anchor episodes are unchanged at 0-for-3: the object really is 2.8-6.8 m away
+and re-finding it is C3's job, which the earlier batch shows is not yet working. But the
+benchmark now has a working terminal, so a search improvement can finally show up as
+success rather than as a distance that was never going to score.
+
 ---
 
 ## Phase 4 — C4 change log

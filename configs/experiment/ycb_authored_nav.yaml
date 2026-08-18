@@ -40,6 +40,13 @@ agent:
   max_steps: 500
   success_distance: 0.18
   use_habitat_navmesh: true
+  # Stop at a view point, not at a depth threshold. Success here is measured
+  # from the final pose to the nearest sampled goal viewpoint, and those sit on
+  # rings at 0.8/1.2/1.5/2.0 m; closing until the target's depth reaches 1.0 m
+  # lands between the two inner rings. Measured before this: four of seven
+  # episodes ended at 0.18-0.28 m against a 0.18 m radius, having found the
+  # object.
+  approach_to_viewpoint: true
 
 eval:
   mode: ycb_authored

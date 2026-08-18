@@ -80,11 +80,12 @@ def make_cfg(**agent_overrides) -> types.SimpleNamespace:
             camera_height=0.88, approach_stop_bbox_px=APPROACH_BBOX_THRESHOLD,
             approach_stop_depth_m=1.0, approach_max_steps=12,
             approach_goal_tolerance_m=0.12, approach_arrival_tol_m=0.1,
+            approach_to_viewpoint=False, approach_scan_turns=12,
         ),
         verification=types.SimpleNamespace(
             ring_radii_m=[0.8, 1.2, 1.5, 2.0], min_obs=3, min_score=0.45, min_bbox_px=3000.0,
             min_evidence=0.0,
-            absence_on_arrival=True, detector_absence_recall=0.5, absence_use_vlm=True,
+            absence_on_arrival=True, absence_requires_expectation=True, detector_absence_recall=0.5, absence_use_vlm=True,
             vlm_recall=0.85, vlm_q=0.02, absence_categories_max=5, abandon_below_p=1.0,
         ),
         detector=types.SimpleNamespace(vocabulary=["chair", "bed"]),
