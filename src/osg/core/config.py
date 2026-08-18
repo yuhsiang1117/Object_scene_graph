@@ -351,8 +351,15 @@ class VerificationConfig:
     # The VLM as a second sensor, with its own error rates. One trusted "no" is
     # worth about two detector misses: log(0.15/0.98) vs log(0.5/0.95).
     absence_use_vlm: bool = True
-    vlm_recall: float = 0.85
-    vlm_q: float = 0.02
+    # Measured on 20 real present/absent cases at the agent's own bounding box,
+    # forced choice on a zoomed crop: 17/20 overall, saying the object is there
+    # 9 times out of 10 when it is, and "bare" 8 times out of 10 when it is not.
+    # These are those rates, not a guess.
+    vlm_recall: float = 0.9
+    vlm_q: float = 0.2
+    # Build the verifier for the ABSENCE check only, leaving the pre-approach
+    # candidate gate off, so a run isolates one variable.
+    absence_only: bool = False
     # Enumerating a long list is where VLMs are least reliable, and an absence
     # you cannot trust is worse than no absence at all.
     absence_categories_max: int = 5

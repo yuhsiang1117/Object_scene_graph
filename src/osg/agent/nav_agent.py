@@ -1193,7 +1193,9 @@ class NavAgent:
             # VLM verify the candidate before committing (no VERIFYING state in
             # navmesh mode). Reject -> blacklist and keep exploring; this is the
             # only FP gate in the navmesh path.
-            if self.verifier is not None:
+            if self.verifier is not None and not getattr(
+                self.cfg.verification, "absence_only", False
+            ):
                 with self.profiler.timeit("verification"):
                     ok = self.verifier.verify(track, self.target)
                 if not ok:
@@ -1269,20 +1271,6 @@ class NavAgent:
         )
         if pf is None or track is None or self._approach_last_good_xy is not None:
             return None
-        # Silence is only absence where a detection was EXPECTED. C1 already
-        # answers that -- frustum, range, apparent size, occlusion -- so ask it
-        # rather than assume that arriving means looking. Measured: on a correct
-        # map the agent reached a viewpoint 0.8 m from the bowl, faced it, got
-        # no detection, and abandoned an object that was exactly where the map
-        # said. An unexpected non-detection says nothing about the world, only
-        # about the view.
-        if getattr(vc, "absence_requires_expectation", True):
-            # A sweep that never once expected to see the object has not looked
-            # at it, whatever heading it ended on.
-            if pf.expectation(track, frame, center_only=True) is None:
-                self.stats["absence_not_expected"] = self.stats.get("absence_not_expected", 0) + 1
-                return None
-
         # The VLM is a second sensor with its own (r, q); when it is available,
         # ask it about the target's own footprint rather than trusting the
         # detector's silence alone. A failed call returns None and is treated as
@@ -1292,17 +1280,27 @@ class NavAgent:
         if self.verifier is not None and getattr(vc, "absence_use_vlm", True):
             proj = track.ellipsoid.project(frame.intrinsics.K(), frame.T_cw)
             if proj is not None:
-                seen = self.verifier.verify_absence(
-                    frame.rgb, proj.bbox(), [self.target],
-                    max_categories=int(getattr(vc, "absence_categories_max", 5)),
-                )
-                if seen is not None:
+                with self.profiler.timeit("absence_vlm"):
+                    still = self.verifier.verify_still_there(frame.rgb, proj.bbox(), self.target)
+                if still is not None:
                     asked_vlm = True
-                    recall = float(getattr(vc, "vlm_recall", 0.85))
-                    q = float(getattr(vc, "vlm_q", 0.02))
-                    if seen.get(self.target, False):
+                    recall = float(getattr(vc, "vlm_recall", 0.9))
+                    q = float(getattr(vc, "vlm_q", 0.2))
+                    if still:
+                        # It IS there and the detector merely missed it. Let the
+                        # stop stand -- this is the case that made a correct map
+                        # abandon a bowl 0.8 m in front of it.
                         pf.apply_reading(track, True, recall, q)
-                        return None  # the VLM says it IS there; let the stop stand
+                        return None
+        # The expectation gate is the DETECTOR's precondition: its silence only
+        # means something where a detection was likely (frustum, range, apparent
+        # size, occlusion -- C1 already answers this). A VLM that answered about
+        # the region has already looked, so its answer stands on its own.
+        if not asked_vlm and getattr(vc, "absence_requires_expectation", True):
+            if pf.expectation(track, frame, center_only=True) is None:
+                self.stats["absence_not_expected"] = self.stats.get("absence_not_expected", 0) + 1
+                return None
+
         p = pf.apply_reading(track, False, recall, q)
         self.stats["absence_checks"] = self.stats.get("absence_checks", 0) + 1
         if asked_vlm:

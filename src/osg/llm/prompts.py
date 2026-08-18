@@ -87,6 +87,27 @@ Respond as JSON: {{"description": "<short>", "category": "<one category or none>
 # mug on this table" is not -- and the model is asked to list what it does see
 # first, so a "no" is grounded in a description rather than produced by a model
 # agreeing with the question's framing.
+# Forced choice, not a yes/no list. Measured on 20 real present/absent cases at
+# the agent's own bounding box: asking "which of these categories are present"
+# scored 11/20 because the model answered "yes" to almost everything -- it was
+# judging plausibility, not visibility. Making it commit to one of three options,
+# on a crop zoomed to the region, scored 17/20 (9/10 when the object was there,
+# 8/10 when it had been moved away). "blocked" is a real answer and maps to NO
+# INFORMATION, never to absence.
+ABSENCE_CHOICE_SYSTEM = (
+    "You check whether a specific object is still in a place a robot remembers "
+    "it. You see a camera image with one region outlined in red. Describe what "
+    "is inside that red region, then choose the single option that best "
+    "matches. Answer with JSON only."
+)
+
+ABSENCE_CHOICE_USER = """Look ONLY inside the red box. First describe what you see there, then choose one:
+"{target}" if a {target} is visibly there,
+"bare" if you see only an empty surface, floor or furniture with no {target},
+"blocked" if the view is obstructed.
+Respond as JSON: {{"seen": "<short description>", "choice": "<{target}|bare|blocked>"}}"""
+
+
 ABSENCE_SYSTEM = (
     "You help a robot check whether objects are still where it remembers them. "
     "You are shown a camera image with ONE region outlined by a red box. List "

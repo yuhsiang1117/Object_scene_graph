@@ -300,3 +300,32 @@ def test_verify_absence_truncates_the_category_list():
                            cats, max_categories=3)
     assert list(out) == ["mug", "bowl", "plate"]
     assert "zucchini" not in captured["user"] and "colander" not in captured["user"]
+
+
+def test_verify_still_there_is_a_forced_choice_and_blocked_means_nothing():
+    """Measured: asking "which categories are present" scored 11/20 because the
+    model answered about plausibility, not pixels. Forced choice on a zoomed
+    crop scored 17/20. "blocked" must map to None -- an obstructed view is not
+    evidence of absence, and treating it as such deletes objects behind doors."""
+    import numpy as np
+    from osg.verification.verifier import VLMVerifier
+
+    class _Client:
+        def __init__(self, choice):
+            self.choice = choice
+            self.seen_user = None
+
+        def chat(self, system, user, images=None, json_response=False):
+            self.seen_user = user
+            return {"seen": "a surface", "choice": self.choice}
+
+    img = np.zeros((80, 80, 3), np.uint8)
+    bbox = np.array([20.0, 20.0, 60.0, 60.0])
+    assert VLMVerifier(_Client("bowl")).verify_still_there(img, bbox, "bowl") is True
+    assert VLMVerifier(_Client("bare")).verify_still_there(img, bbox, "bowl") is False
+    assert VLMVerifier(_Client("blocked")).verify_still_there(img, bbox, "bowl") is None
+    assert VLMVerifier(_Client("")).verify_still_there(img, bbox, "bowl") is None
+
+    c = _Client("bare")
+    VLMVerifier(c).verify_still_there(img, bbox, "bowl")
+    assert "bare" in c.seen_user and "blocked" in c.seen_user

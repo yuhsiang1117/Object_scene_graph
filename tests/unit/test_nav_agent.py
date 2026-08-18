@@ -86,7 +86,7 @@ def make_cfg(**agent_overrides) -> types.SimpleNamespace:
             ring_radii_m=[0.8, 1.2, 1.5, 2.0], min_obs=3, min_score=0.45, min_bbox_px=3000.0,
             min_evidence=0.0,
             absence_on_arrival=True, absence_requires_expectation=True, detector_absence_recall=0.5, absence_use_vlm=True,
-            vlm_recall=0.85, vlm_q=0.02, absence_categories_max=5, abandon_below_p=1.0,
+            vlm_recall=0.9, vlm_q=0.2, absence_only=False, absence_categories_max=5, abandon_below_p=1.0,
         ),
         detector=types.SimpleNamespace(vocabulary=["chair", "bed"]),
     )

@@ -823,6 +823,53 @@ get on this endpoint. Worth deciding deliberately rather than by default.
 
 A flow graph of the pipeline and the experiment protocol is published as an artifact.
 
+### The VLM as absence sensor: it works, it is cheap, and it is not the bottleneck
+
+**Prompt design was the whole difference.** Measured on 20 real present/absent cases at
+the agent's own bounding box:
+
+| how the question is asked | accuracy | present | absent | median latency |
+|---|---|---|---|---|
+| "which of these categories are present" | 11/20 | 10/10 | 1/10 | 1.3 s |
+| forced choice: object / bare / blocked | 12/20 | 6/10 | 6/10 | 1.5 s |
+| **forced choice on a zoomed crop** | **17/20** | **9/10** | **8/10** | 2.0 s |
+
+The first form scores 11/20 by answering "yes" to almost everything -- it judges
+plausibility, not pixels, and a 100 px object in a 640x480 frame invites exactly that.
+Making the model commit to one of three options, on a crop zoomed to the region, turns it
+into a usable sensor. `blocked` maps to *no information*, never to absence: an obstructed
+view must not delete objects behind doors. Those measured rates (0.9 / 0.2) are now the
+sensor's `(r, q)` in the filter, replacing guesses.
+
+**FPS is not the constraint.** The call fires only at the decision point -- an approach
+that arrived and never saw its target -- which came to **3 calls across 14 episodes**.
+Mean 1.9-4.3 s each, 5.7 s and 12.9 s of VLM time per seven-episode batch, and pipeline
+throughput of 4.32 / 3.98 fps against 3.88 fps for the no-VLM baseline. The value-of-
+information trigger does its job; a per-keyframe VLM would not have been affordable, and
+is not needed.
+
+**But the batch does not improve.** Two runs of the same configuration:
+
+| | SR | SPL | what happened |
+|---|---|---|---|
+| VLM absence only | 0.286 | 0.229 | the VLM said "bare" on the **static control** -- the 1-in-10 false negative -- and the agent abandoned a bowl that was there |
+| VLM absence + search posterior | 0.429 | 0.337 | same call answered correctly; `cross_anchor_03` abandoned and searched for 500 steps |
+
+The two differ only in a flag that cannot affect the VLM call, so the difference is the
+model's own nondeterminism. **One stochastic call decides an episode**, and at 90%
+accuracy that is a 10% episode-flip rate -- clearly visible in a batch of seven, and a
+reason to average over runs rather than read a single one.
+
+**The real blocker moved, and it is category-versus-instance.** In four of seven episodes
+the absence check never runs at all, because the agent *does* see a bowl at the ghost
+location -- the HM3D dining table carries its own crockery, and the detector is asked
+about a category while the benchmark scores a specific YCB instance. The agent stops on
+the scene's bowl and fails. That is not something an absence sensor can fix: it is a
+sighting, not a silence. The instrument for it is the terminal candidate gate -- ask the
+VLM *before stopping* whether the boxed object is the target -- which this run deliberately
+disabled (`verification.absence_only=true`) to isolate one variable. Turning it on is the
+next experiment.
+
 ---
 
 ## Phase 4 — C4 change log
