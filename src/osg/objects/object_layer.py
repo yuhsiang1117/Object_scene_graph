@@ -13,6 +13,7 @@ from ..mapping.costmap import PLANE
 from .association import DataAssociator, Observation, ObjectTrack
 from .ellipsoid import Ellipsoid
 from .linking import object_center, relink
+from .presence import PresenceFilter
 from .optimization import WassersteinRefiner
 
 
@@ -30,6 +31,7 @@ class ObjectLayer:
         min_det_bbox_px: float = 0.0,
         confirm_baseline_m: float = 0.0,
         repeat_view_discount: float = 0.2,
+        presence_filter: Optional[PresenceFilter] = None,
         rng_seed: int = 0,
     ) -> None:
         self._tracks: Dict[int, ObjectTrack] = {}
@@ -50,6 +52,7 @@ class ObjectLayer:
         # _view_diversity_weight). 0 disables the discount entirely.
         self.confirm_baseline_m = confirm_baseline_m
         self.repeat_view_discount = repeat_view_discount
+        self.presence_filter = presence_filter
         self._rng = np.random.default_rng(rng_seed)
 
     # ------------------------------------------------------------------ api
@@ -61,10 +64,19 @@ class ObjectLayer:
         # would-be match still consumes that track's slot so a second, good
         # detection of the same object this frame doesn't spawn a duplicate),
         # but only detections clearing the bar reach track creation/update.
-        dets = [
+        admitted = [
             d for d in dets
             if d.score >= self.min_det_score and self._bbox_px(d) >= self.min_det_bbox_px
         ]
+        # Presence runs on EVERY keyframe, before the early return and against
+        # the UNFILTERED detections. A frame with nothing admitted is precisely
+        # the frame where negative evidence is worth the most -- the agent is
+        # looking at the surface and the detector produced nothing -- and a
+        # detection too small to seed a track is still proof that something is
+        # there, so it must not be counted as a miss.
+        if self.presence_filter is not None:
+            self.presence_filter.update(list(self._tracks.values()), frame, dets)
+        dets = admitted
         if not dets:
             return
         matches = self._associator.associate(dets, frame, list(self._tracks.values()))
@@ -145,10 +157,18 @@ class ObjectLayer:
         min_score: float = 0.0,
         min_bbox_px: float = 0.0,
         min_evidence: float = 0.0,
+        min_presence: float = 0.0,
     ) -> List[ObjectTrack]:
         """Non-blacklisted tracks matching the target with enough support,
-        detection quality, and accumulated evidence (fragment detections
-        and single-glimpse noise make useless candidates)."""
+        detection quality, accumulated evidence (fragment detections and
+        single-glimpse noise make useless candidates), and enough remaining
+        belief that the object is still there.
+
+        Ranking by `best_score * presence.p` rather than `best_score` alone is
+        the whole query-side payoff of the presence filter: a track the agent
+        has since looked at and not found sinks below one it has not disproved,
+        instead of being re-proposed on every replan.
+        """
         target = target_label.lower().replace(" ", "_")
         out = []
         for t in self._tracks.values():
@@ -156,9 +176,11 @@ class ObjectLayer:
                 continue
             if t.best_score < min_score or t.best_bbox_px < min_bbox_px:
                 continue
+            if t.presence.p < min_presence:
+                continue
             if t.label.lower().replace(" ", "_") == target:
                 out.append(t)
-        out.sort(key=lambda t: -t.best_score)
+        out.sort(key=lambda t: -(t.best_score * t.presence.p))
         return out
 
     @staticmethod

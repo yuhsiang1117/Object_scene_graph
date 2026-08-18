@@ -52,6 +52,38 @@ STOP_ACTION = "stop"
 TURN_ACTION = "turn_left"
 
 
+def _make_presence_filter(cfg):
+    """None unless scene_graph.presence.enabled -- the filter must be an opt-in
+    A/B, not a silent default (docs/DYNAMIC_SCENES.md, Phase 1)."""
+    pc = getattr(cfg.scene_graph, "presence", None)
+    if pc is None or not getattr(pc, "enabled", False):
+        return None
+    from ..objects.presence import PresenceFilter, RecallModel
+
+    recall = (
+        RecallModel.load(pc.recall_model_path, constant=pc.recall_constant)
+        if pc.recall_model_path
+        else RecallModel(constant=pc.recall_constant)
+    )
+    return PresenceFilter(
+        recall=recall,
+        q_false_alarm=pc.q_false_alarm,
+        l_clamp=pc.l_clamp,
+        occ_ratio_max=pc.occ_ratio_max,
+        depth_tol_m=pc.depth_tol_m,
+        # Expectation shares the ADMISSION threshold by construction: expecting
+        # detections at a size the layer would have discarded biases the filter.
+        min_area_px=cfg.scene_graph.min_det_bbox_px,
+        range_m=tuple(pc.range_m),
+        img_inside_frac=pc.img_inside_frac,
+        min_depth_samples=pc.min_depth_samples,
+        max_samples=pc.max_samples,
+        max_tracks=pc.max_tracks,
+        z_overlap_iou=pc.z_overlap_iou,
+        log_path=pc.log_path,
+    )
+
+
 class State(Enum):
     INIT = "init"
     EXPLORE = "explore"
@@ -174,6 +206,7 @@ class NavAgent:
             min_det_bbox_px=cfg.scene_graph.min_det_bbox_px,
             confirm_baseline_m=cfg.scene_graph.confirm_baseline_m,
             repeat_view_discount=cfg.scene_graph.repeat_view_discount,
+            presence_filter=_make_presence_filter(cfg),
         )
         self.scene_graph = SceneGraph(
             container_top_h_m=tuple(cfg.scene_graph.container_top_h_m),
@@ -567,6 +600,18 @@ class NavAgent:
             self.object_layer.update(frame, dets)
         self.keyframes.add(frame)
 
+        pf = self.object_layer.presence_filter
+        if pf is not None:
+            # Surfaced per episode so the mechanism is measurable on real runs:
+            # how much evidence the beliefs rest on, and how many objects the
+            # agent has actually looked for and failed to find.
+            self.stats["presence_expected"] = pf.n_expected
+            self.stats["presence_negative"] = pf.n_negative
+            self.stats["presence_positive"] = pf.n_positive
+            self.stats["presence_disbelieved"] = sum(
+                1 for t in self.object_layer.tracks() if t.presence.p < 0.1
+            )
+
         if self._stairs_on:
             fc = self.cfg.floor
             if self._kf_count % max(1, int(fc.stair_detect_every_kf)) == 1:
@@ -888,6 +933,9 @@ class NavAgent:
             min_score=self.cfg.verification.min_score,
             min_bbox_px=self.cfg.verification.min_bbox_px,
             min_evidence=self.cfg.verification.min_evidence,
+            min_presence=getattr(
+                getattr(self.cfg.scene_graph, "presence", None), "min_presence", 0.0
+            ),
         )
         if not candidates:
             return

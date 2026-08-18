@@ -147,6 +147,27 @@ Reuse the fake `_Track` / `_Layer` pattern from `tests/unit/test_scene_graph_flo
 positive **and** negative evidence. This is the only phase that adds information the
 system does not already have; every later phase spends it.
 
+> **Status: done (2026-08-18), opt-in.** 19 new unit tests; 253 unit + 2 integration
+> green. `scene_graph.presence.enabled=false` by default — turning the filter on changes
+> which candidate the agent proposes first, so it must be an explicit A/B, not a silent
+> default. 3-episode YCB static run: navigation metrics identical to baseline, and the
+> mechanism demonstrably fires — ~2.1–2.5k expectations, **~400 negative updates** and
+> ~10 objects driven below p=0.1 per episode (`agent_stats.presence_*`).
+> Cost: `object_layer` 55.3 ms → 62.0 ms per keyframe (**+6.7 ms**), pipeline 6.4 → 5.7 fps.
+> The cost is ~0.2 ms per expected track spread over many small numpy calls, not one
+> hotspot; the real fix is a batched multi-track projection, which Phase 3 wants anyway
+> for candidate scoring. Do it once, there.
+>
+> **The recall fit is not yet trustworthy — keep the constant.** Fitted on 6790
+> expectations from 3 episodes: Brier 0.1497 against 0.1525 for a constant predictor, i.e.
+> the view features buy almost nothing, and the `depth_m` weight comes out **positive**
+> (farther ⇒ easier to detect), which is backwards. The cause is structural, not sample
+> size: the expectation gate already requires `area ≥ min_det_bbox_px`, so at long range
+> only large objects are ever logged and depth acts as a proxy for size. Fixing it needs
+> per-class terms and a log that records *gated-out* expectations too, so the fit sees
+> the small-and-far cases it is currently blind to. Until then `recall_model_path` stays
+> empty and every negative update is the same size — blunt, but unbiased.
+
 ### Theory
 
 For track *i* carry a latent binary state `X_i` — "the object is still at its mapped

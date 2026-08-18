@@ -22,6 +22,7 @@ import numpy as np
 from ..core.geometry import Ellipse2D, ellipse_from_mask, sqrtm_2x2_spd
 from ..core.types import Detection, FrameData
 from .ellipsoid import Ellipsoid
+from .presence import PresenceState
 
 
 def _gaussian_w2(e1: Ellipse2D, e2: Ellipse2D) -> float:
@@ -88,6 +89,10 @@ class ObjectTrack:
     # spot so a genuine multi-view corroboration still counts for more than
     # a burst of near-duplicate frames, without ever hiding the track.
     evidence: float = 0.0
+    # Is the object STILL there? Updated every keyframe by PresenceFilter from
+    # positive AND negative evidence (objects/presence.py). Default 1.5 log-odds
+    # (p~0.82) so a track behaves exactly as before until the filter runs.
+    presence: PresenceState = field(default_factory=PresenceState)
 
     @property
     def n_obs(self) -> int:

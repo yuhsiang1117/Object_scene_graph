@@ -108,6 +108,44 @@ class DetectorConfig:
 
 
 @dataclass
+class PresenceConfig:
+    """Presence belief per object (objects/presence.py, docs/DYNAMIC_SCENES.md).
+
+    Off by default: enabling it changes which candidate the agent proposes
+    first, so it must be an explicit, measurable A/B rather than a silent
+    default change.
+    """
+
+    enabled: bool = False
+    # P(detected | present, view). `recall_model_path` wins when it exists;
+    # otherwise every view gets `recall_constant`, which makes negative updates
+    # uniform -- wrong, but unbiased, and it lets the filter run before any fit.
+    recall_constant: float = 0.6
+    recall_model_path: str = ""
+    # P(detection at a mapped pose | object gone). Only bounds the size of a
+    # POSITIVE step; the system is insensitive to it.
+    q_false_alarm: float = 0.05
+    # Belief clamp, both signs. Never remove it: it is what keeps an object that
+    # was wrongly disbelieved resurrectable by a single later detection.
+    l_clamp: float = 6.0
+    # Expected-depth band tolerance. Generous, because a mask-moment ellipsoid
+    # fitted from a partial view is a coarse estimate of where a surface is.
+    depth_tol_m: float = 0.15
+    occ_ratio_max: float = 0.30
+    range_m: Tuple[float, float] = (0.4, 6.0)
+    img_inside_frac: float = 0.5
+    min_depth_samples: int = 12
+    max_samples: int = 256
+    max_tracks: int = 64
+    z_overlap_iou: float = 0.05
+    # Minimum belief for a track to be proposed as a navigation candidate.
+    # 0 keeps every track eligible and lets presence act through RANKING only.
+    min_presence: float = 0.0
+    # JSONL of expectation features per keyframe, for scripts/fit_recall_model.py.
+    log_path: str = ""
+
+
+@dataclass
 class SceneGraphConfig:
     keyframe_trans_m: float = 0.25
     keyframe_rot_deg: float = 30.0
@@ -173,6 +211,7 @@ class SceneGraphConfig:
     # resting on it. Generous, because a mask-moment ellipsoid fitted from a
     # partial view is a coarse estimate of where an object's bottom is.
     container_support_tol_m: float = 0.15
+    presence: PresenceConfig = field(default_factory=PresenceConfig)
 
 
 @dataclass
