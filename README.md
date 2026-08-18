@@ -46,12 +46,20 @@ etc. are already set by the image/compose env, so no `docker exec` prefix or
 `PYTHONPATH=src` is needed below).
 
 ```bash
-cp .env.example .env                  # adjust dataset paths if needed
-docker compose -f docker/compose.yaml --env-file .env build nav   # nav image (habitat-sim 0.3.1, torch cu121)
-docker compose -f docker/compose.yaml --env-file .env up -d       # start ollama + nav containers
-docker exec -it object_scene_graph-ollama-1 ollama pull qwen2.5vl:3b
-docker exec -it object_scene_graph-nav-1 /entrypoint.sh bash                           # shell inside nav (habitat conda env active)
+cp docker/.env.example docker/.env
+# Set the two collector paths and LOCAL_UID=$(id -u), LOCAL_GID=$(id -g).
+docker compose -f docker/compose.yaml --env-file docker/.env build nav
+docker compose -f docker/compose.yaml --env-file docker/.env up -d
+docker exec -it docker-nav-1 bash       # habitat conda env is active through the entrypoint
 ```
+
+Compose mounts the collector's `data/` and `outputs/dualmap_authoring/`
+directories read-write at `/datasets/habitat-data-collector/...`, so `nav` can
+use and update the collector data directly. The host-matched UID/GID keeps new
+files accessible outside Docker without a second user setup. Generated episode
+manifests and experiment artifacts still default to this repository's ignored
+`outputs/` directory. The entrypoint repairs ownership only for `outputs/` and
+the named detector-weight volume; it does not recursively chown collector data.
 
 ### Smoke tests
 
@@ -88,6 +96,47 @@ python scripts/run_eval.py +experiment=matched_single_floor          # a named e
 python scripts/run_eval.py +experiment=full_v1_navmesh eval.debug_frames=true   # current best config, full debug
 ```
 
+### Authored YCB benchmark
+
+`+experiment=ycb_authored_nav` discovers authored layouts at runtime, creates
+and caches target-visible ObjectNav episodes, injects all authored rigid objects
+after every Habitat reset, and uses YOLOE-11l. The current `00829` scene is a
+fixture, not a hard-coded preset: adding another complete authored scene makes
+it available immediately.
+
+```bash
+# Download both explicit detector profiles once (inside docker-nav-1).
+python scripts/download_weights.py --profile large
+python scripts/download_weights.py --profile small
+
+# All complete scenes and their static layouts (default).
+python scripts/run_eval.py +experiment=ycb_authored_nav
+
+# One scene, or an arbitrary subset.
+python scripts/run_eval.py +experiment=ycb_authored_nav \
+  'ycb.scenes=[00829-QaLdnwvtxbs]'
+python scripts/run_eval.py +experiment=ycb_authored_nav \
+  'ycb.scenes=[00829-QaLdnwvtxbs,00900-FutureScene]'
+
+# A specific dynamic relocation slot.
+python scripts/run_eval.py +experiment=ycb_authored_nav \
+  'ycb.layout_types=[in_anchor]' 'ycb.layout_indices=[2]'
+
+# Prepare/validate manifests without running the navigation agent.
+python scripts/prepare_ycb_episodes.py +experiment=ycb_authored_nav
+
+# Explicit memory fallback; this is never selected silently.
+python scripts/run_eval.py +experiment=ycb_authored_nav detector=yoloe_small
+```
+
+Valid layout types are `static`, `in_anchor`, and `cross_anchor`. Wildcard
+selection skips incomplete scene directories and records the reason in
+`summary.json`; explicitly selecting an incomplete scene, layout type, or slot
+fails with an actionable error. Cache keys include the scene, layout type/index,
+generator settings, seed, and layout SHA-256, so editing an authoring JSON
+automatically regenerates its manifest. Each layout starts with a fresh scene
+graph; memory is not carried between static and dynamic layouts.
+
 ### Different configs
 
 Override any Hydra group on the CLI, standalone or stacked on a preset:
@@ -115,7 +164,7 @@ whole preset with `+experiment=name`:
 | `llm` | `nim` (NVIDIA hosted, default), `ollama` (local) |
 | `exploration` | `llm_text` (LLM-scored, default), `nearest` (geometric, no LLM), `sweep` (nearest + momentum, no LLM) |
 | `verification` | `nim` (forced-choice VLM, **default**), `nim_terminal` (verify at STOP), `off` |
-| `eval` | `hm3d_val` (v2), `hm3d_val_v1` (v1, matched-to-old), `hm3d_val_single_floor`, `hm3d_val_mini` |
+| `eval` | `hm3d_val` (v2), `hm3d_val_v1` (v1, matched-to-old), `hm3d_val_single_floor`, `hm3d_val_mini`, `ycb_authored` |
 | `floor` | multi-floor support; all off by default, enabled by `+experiment=full_v1_navmesh` (see docs/MULTI_FLOOR.md) |
 
 Key agent flags (CLI: `agent.<flag>=...`): `use_habitat_navmesh` (drive on the
@@ -125,7 +174,7 @@ navmesh, default off — the `*_navmesh` experiments turn it on),
 `configs/experiment/` presets: **`full_v1_navmesh`** (current best — navmesh +
 sweep + verify, full v1, 5 eps/scene), `matched_navmesh` (single-floor),
 `matched_single_floor`, `matched_old`, `matched_verify`,
-`matched_terminal_verify`, `single_floor_navgoal`.
+`matched_terminal_verify`, `single_floor_navgoal`, `ycb_authored_nav`.
 
 ### Analysis & debugging
 
@@ -151,7 +200,12 @@ See **[docs/INVESTIGATION.md](docs/INVESTIGATION.md)** for the full story.
 | | detector | VLM | fits |
 |---|---|---|---|
 | default (6 GB, RTX 4050 laptop) | `detector=yoloe_small` (11s, 512px) | `qwen2.5vl:3b` | ~4.5 GB |
-| report-quality (>=12 GB) | `detector=yoloe` (11l, 640px) | `llm.text_model=qwen2.5vl:7b llm.vlm_model=qwen2.5vl:7b` | ~8.5 GB |
+| report-quality (>=10 GB; verified on RTX 3080) | `detector=yoloe` (11l, 640px) | off or hosted | hardware-dependent |
+
+The global default remains the small profile for general use, while
+`+experiment=ycb_authored_nav` deliberately defaults to YOLOE-11l so benchmark
+results stay comparable. Select `detector=yoloe_small` explicitly if memory is
+tight; the benchmark never falls back silently.
 
 The LLM/VLM is queried **asynchronously** — the control loop never blocks on
 it, which is what keeps the pipeline real-time; decision latency is reported

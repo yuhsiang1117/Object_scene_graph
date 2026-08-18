@@ -23,8 +23,8 @@ services:
       context: .
       dockerfile: Dockerfile
       args:
-        USER_UID: ${UID:-1000}
-        USER_GID: ${GID:-1000}
+        USER_UID: ${LOCAL_UID:-1000}
+        USER_GID: ${LOCAL_GID:-1000}
     runtime: nvidia
     depends_on:
       - ollama
@@ -41,7 +41,11 @@ services:
     volumes:
       - ..:/workspace
       - weights-cache:/workspace/data/weights
-      - ../outputs:/workspace/outputs
+      # Habitat assets and authored layouts live in the collector checkout.
+      # The nav container may read and update both collector trees directly.
+      # Its UID/GID matches the host owner, so new files remain host-accessible.
+      - ${HABITAT_COLLECTOR_DATA_DIR:-../../habitat-data-collector/data}:/datasets/habitat-data-collector/data:rw
+      - ${DUALMAP_AUTHORING_DIR:-../../habitat-data-collector/outputs/dualmap_authoring}:/datasets/habitat-data-collector/outputs/dualmap_authoring:rw
     deploy:
       resources:
         reservations:

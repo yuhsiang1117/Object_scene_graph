@@ -1,0 +1,41 @@
+# @package _global_
+#
+# Data-driven authored YCB ObjectNav benchmark. Scene and layout selectors are
+# ordinary Hydra overrides; no per-scene experiment preset is needed.
+#
+#   # all complete authored scenes (default)
+#   python scripts/run_eval.py +experiment=ycb_authored_nav
+#
+#   # one scene, or a subset
+#   python scripts/run_eval.py +experiment=ycb_authored_nav 'ycb.scenes=[00829-QaLdnwvtxbs]'
+#   python scripts/run_eval.py +experiment=ycb_authored_nav 'ycb.scenes=[00829-QaLdnwvtxbs,00900-FutureScene]'
+#
+#   # one dynamic relocation slot
+#   python scripts/run_eval.py +experiment=ycb_authored_nav \
+#     'ycb.layout_types=[in_anchor]' 'ycb.layout_indices=[2]'
+#
+#   # explicit 6 GB fallback (never selected automatically)
+#   python scripts/run_eval.py +experiment=ycb_authored_nav detector=yoloe_small
+defaults:
+  - override /detector: yoloe
+  - override /exploration: sweep
+  - override /verification: "off"
+  - override /eval: ycb_authored
+
+agent:
+  max_steps: 500
+  success_distance: 0.18
+  use_habitat_navmesh: true
+
+eval:
+  mode: ycb_authored
+
+ycb:
+  data_root: /datasets/habitat-data-collector/data
+  layout_root: /datasets/habitat-data-collector/outputs/dualmap_authoring
+  scenes: ["*"]
+  layout_types: [static]
+  layout_indices: [1, 2, 3]
+  starts_per_target: 1
+  seed: 42
+  manifest_cache_dir: outputs/ycb_manifests

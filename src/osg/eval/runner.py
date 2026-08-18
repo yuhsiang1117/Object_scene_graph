@@ -4,7 +4,9 @@ visualizations.
 """
 from __future__ import annotations
 
+import hashlib
 import json
+import re
 import time
 from pathlib import Path
 from typing import Optional
@@ -171,6 +173,18 @@ def _target_track_fields(agent) -> dict:
     }
 
 
+def _authored_episode_metadata(episode) -> dict:
+    info = getattr(episode, "info", None) or {}
+    if not isinstance(info, dict):
+        return {}
+    authored = info.get("ycb", {})
+    return dict(authored) if isinstance(authored, dict) else {}
+
+
+def _safe_tag(value: object) -> str:
+    return re.sub(r"[^A-Za-z0-9_.-]+", "-", str(value)).strip("-_")
+
+
 def episode_tag(episode) -> str:
     """Filesystem-safe, UNIQUE per-episode tag: `<scene>_ep<id>`.
 
@@ -180,8 +194,33 @@ def episode_tag(episode) -> str:
     maps and keyframe directories (last scene wins). Every per-episode artifact
     path must include the scene.
     """
+    authored = _authored_episode_metadata(episode)
+    if authored:
+        scene = _safe_tag(authored.get("scene", "scene"))
+        layout = _safe_tag(authored.get("layout_id", "layout"))
+        return f"{scene}_{layout}_ep{_safe_tag(episode.episode_id)}"
     scene = str(getattr(episode, "scene_id", "")).split("/")[-1].split(".")[0]
     return f"{scene}_ep{episode.episode_id}" if scene else f"ep{episode.episode_id}"
+
+
+def _detector_identity(cfg) -> dict:
+    weights = Path(str(cfg.detector.weights))
+    digest = None
+    if weights.is_file():
+        sha256 = hashlib.sha256()
+        with weights.open("rb") as stream:
+            for chunk in iter(lambda: stream.read(1024 * 1024), b""):
+                sha256.update(chunk)
+        digest = sha256.hexdigest()
+    return {
+        "name": str(cfg.detector.name),
+        "weights": str(cfg.detector.weights),
+        "weights_sha256": digest,
+        "imgsz": int(cfg.detector.imgsz),
+        "conf": float(cfg.detector.conf),
+        "half": bool(cfg.detector.half),
+        "device": str(cfg.detector.device),
+    }
 
 
 STAIR_LABELS = ("stairs", "staircase", "stair")
@@ -217,14 +256,23 @@ def _stair_track_fields(agent) -> dict:
 
 
 def run_eval(cfg) -> dict:
-    from ..sim.habitat_env import HabitatObjectNavEnv
-
     out_dir = Path(cfg.output_dir)
     out_dir.mkdir(parents=True, exist_ok=True)
 
     _unload_ollama_models(cfg)
-    env = HabitatObjectNavEnv(cfg)
+    eval_mode = str(getattr(cfg.eval, "mode", "objectnav"))
+    if eval_mode == "ycb_authored":
+        from ..sim.ycb_env import YCBAuthoredNavEnv
+
+        env = YCBAuthoredNavEnv(cfg)
+    elif eval_mode == "objectnav":
+        from ..sim.habitat_env import HabitatObjectNavEnv
+
+        env = HabitatObjectNavEnv(cfg)
+    else:
+        raise ValueError(f"unknown eval.mode: {eval_mode}")
     detector = build_detector(cfg)
+    detector_identity = _detector_identity(cfg)
     scorer = build_scorer(cfg)
     verifier = build_verifier(cfg)
     if verifier is not None and cfg.eval.debug_frames:
@@ -297,10 +345,13 @@ def run_eval(cfg) -> dict:
             dbg.close()
 
         m = env.metrics()
+        authored = _authored_episode_metadata(episode)
         rec = {
             "episode_id": str(episode.episode_id),
-            "scene": str(episode.scene_id).split("/")[-1],
+            "scene": authored.get("scene", str(episode.scene_id).split("/")[-1]),
             "target": target,
+            "detector": detector_identity,
+            "authored_layout": authored or None,
             "success": float(m.get("success", 0.0)),
             "spl": float(m.get("spl", 0.0)),
             "distance_to_goal": float(m.get("distance_to_goal", -1.0)),
@@ -369,9 +420,10 @@ def run_eval(cfg) -> dict:
 
     summary = {
         "config": {
+            "eval_mode": eval_mode,
             "scorer": cfg.exploration.scorer,
             "verification": cfg.verification.enabled,
-            "detector": cfg.detector.name,
+            "detector": detector_identity,
             "dataset_version": cfg.eval.dataset_version,
             "split": cfg.eval.split,
             "success_distance": cfg.agent.success_distance,
@@ -382,6 +434,9 @@ def run_eval(cfg) -> dict:
         "timing": profiler_all.report(),
         "pipeline_fps": round(profiler_all.fps("control_loop"), 2),
     }
+    benchmark_metadata = getattr(env, "benchmark_metadata", None)
+    if callable(benchmark_metadata):
+        summary["benchmark"] = benchmark_metadata()
     with open(out_dir / "summary.json", "w") as f:
         json.dump(summary, f, indent=2)
     profiler_all.write_csv(str(out_dir / "timing.csv"))

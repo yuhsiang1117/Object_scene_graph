@@ -6,6 +6,8 @@ provides masks directly, removing the SAM stage entirely.
 from __future__ import annotations
 
 from abc import ABC, abstractmethod
+import os
+from pathlib import Path
 from typing import List
 
 import numpy as np
@@ -33,6 +35,7 @@ class YoloeDetector(Detector):
     ) -> None:
         from ultralytics import YOLOE  # deferred: heavy import
 
+        self._weights_dir = Path(weights).expanduser().resolve().parent
         self.model = YOLOE(weights)
         # Checkpoints ship fp16 weights; get_text_pe feeds the fp32 mobileclip
         # features through the checkpoint's text head -> dtype mismatch unless
@@ -61,7 +64,16 @@ class YoloeDetector(Detector):
         import torch
 
         self.model.model.float().to(self.device)
-        self.model.set_classes(classes, self.model.get_text_pe(classes))
+        # Ultralytics resolves mobileclip_blt.ts relative to the process CWD,
+        # not relative to the YOLOE checkpoint. Keep all downloaded model
+        # assets in the mounted weights volume and restore the caller's CWD.
+        previous_cwd = Path.cwd()
+        try:
+            os.chdir(self._weights_dir)
+            text_pe = self.model.get_text_pe(classes)
+        finally:
+            os.chdir(previous_cwd)
+        self.model.set_classes(classes, text_pe)
         self.model.predictor = None  # AutoBackend cached the fp16 view
         if hasattr(self.model.model, "clip_model"):
             del self.model.model.clip_model  # free the 572MB encoder

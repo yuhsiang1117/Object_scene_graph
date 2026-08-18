@@ -4,7 +4,7 @@ yaml/CLI overrides fail fast instead of silently creating new keys.
 from __future__ import annotations
 
 from dataclasses import dataclass, field
-from typing import List, Optional
+from typing import Dict, List, Optional
 
 from hydra.core.config_store import ConfigStore
 from omegaconf import MISSING
@@ -401,6 +401,10 @@ class FloorConfig:
 
 @dataclass
 class EvalConfig:
+    # `objectnav` loads the standard HM3D episode dataset. `ycb_authored`
+    # discovers scene-layout JSON files written by habitat-data-collector and
+    # builds equivalent ObjectNav episodes from the placed YCB objects.
+    mode: str = "objectnav"
     split: str = "val"
     dataset_version: str = "v2"  # HM3D-semantics v0.2, 6 categories
     episodes_path: str = "data/datasets/objectnav/hm3d/v2/{split}/{split}.json.gz"
@@ -426,6 +430,44 @@ class EvalConfig:
     hfov_deg: float = 79.0
 
 
+YCB_TARGET_LABELS: Dict[str, str] = {
+    "003_cracker_box": "cracker box",
+    "005_tomato_soup_can": "tomato soup can",
+    "011_banana": "banana",
+    "019_pitcher_base": "pitcher",
+    "024_bowl": "bowl",
+    "025_mug": "mug",
+    "029_plate": "plate",
+    "037_scissors": "scissors",
+}
+
+
+@dataclass
+class YCBAuthoredConfig:
+    """Runtime discovery and deterministic episode generation for authored YCB layouts."""
+
+    data_root: str = "/datasets/habitat-data-collector/data"
+    layout_root: str = "/datasets/habitat-data-collector/outputs/dualmap_authoring"
+    scenes: List[str] = field(default_factory=lambda: ["*"])
+    layout_types: List[str] = field(default_factory=lambda: ["static"])
+    layout_indices: List[int] = field(default_factory=lambda: [1, 2, 3])
+    starts_per_target: int = 1
+    seed: int = 42
+    manifest_cache_dir: str = "outputs/ycb_manifests"
+    target_labels: Dict[str, str] = field(
+        default_factory=lambda: dict(YCB_TARGET_LABELS)
+    )
+    viewpoint_radii_m: List[float] = field(
+        default_factory=lambda: [0.8, 1.2, 1.5, 2.0]
+    )
+    viewpoint_angular_samples: int = 24
+    viewpoint_max_snap_m: float = 0.5
+    viewpoint_dedup_m: float = 0.2
+    viewpoint_min_visible_pixels: int = 20
+    start_min_geodesic_m: float = 3.0
+    start_sample_attempts: int = 2000
+
+
 @dataclass
 class OSGConfig:
     agent: AgentConfig = field(default_factory=AgentConfig)
@@ -437,6 +479,7 @@ class OSGConfig:
     mapping: MappingConfig = field(default_factory=MappingConfig)
     floor: FloorConfig = field(default_factory=FloorConfig)
     eval: EvalConfig = field(default_factory=EvalConfig)
+    ycb: YCBAuthoredConfig = field(default_factory=YCBAuthoredConfig)
     seed: int = 42
     output_dir: str = "outputs/${now:%Y%m%d_%H%M%S}"
 
@@ -453,3 +496,4 @@ def register_configs() -> None:
     cs.store(group="mapping", name="base_default", node=MappingConfig)
     cs.store(group="floor", name="base_default", node=FloorConfig)
     cs.store(group="eval", name="base_hm3d", node=EvalConfig)
+    cs.store(group="ycb", name="base_authored", node=YCBAuthoredConfig)
