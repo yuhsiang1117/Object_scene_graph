@@ -129,3 +129,39 @@ def test_displacement_disagreeing_with_the_declared_type_is_reported_not_silent(
     ])
     assert not any("disagrees" in line
                    for line in mod.displacement_report(STATIC, both_far, "cross_anchor"))
+
+
+# ------------------------------------------------- what the detector can see
+
+
+def test_the_ycb_experiment_offers_every_target_as_a_class():
+    """The detector's vocabulary is DEFAULT_VOCABULARY plus the EPISODE's
+    target, so a mapping run for one object has no class for the others and
+    cannot map them at all -- which is why a map built while chasing the bowl
+    contained no soup can. A multi-target benchmark needs every target present
+    from the start."""
+    import yaml
+    from pathlib import Path
+    from osg.core.config import YCB_TARGET_LABELS
+
+    cfg = yaml.safe_load(
+        (Path(__file__).resolve().parents[2] / "configs/experiment/ycb_authored_nav.yaml")
+        .read_text(encoding="utf-8")
+    )
+    vocab = {v.lower() for v in cfg["detector"]["vocabulary"]}
+    missing = sorted({v.lower() for v in YCB_TARGET_LABELS.values()} - vocab)
+    assert not missing, f"targets absent from the detector vocabulary: {missing}"
+
+
+def test_the_ycb_experiment_runs_the_detector_at_small_object_resolution():
+    """Measured at each object's best authored viewpoint: at imgsz 512 the
+    cracker box scores 0.00 and the soup can 0.31 (below the 0.35 gate); at 1280
+    they reach 0.62 and 0.63, for 34 -> 51 ms per frame."""
+    import yaml
+    from pathlib import Path
+
+    cfg = yaml.safe_load(
+        (Path(__file__).resolve().parents[2] / "configs/experiment/ycb_authored_nav.yaml")
+        .read_text(encoding="utf-8")
+    )
+    assert cfg["detector"]["imgsz"] >= 960

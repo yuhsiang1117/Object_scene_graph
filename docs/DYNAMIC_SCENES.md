@@ -870,6 +870,57 @@ VLM *before stopping* whether the boxed object is the target -- which this run d
 disabled (`verification.absence_only=true`) to isolate one variable. Turning it on is the
 next experiment.
 
+### Why four of six YCB targets were invisible — and getting three of them back
+
+Three separate causes, only one of which was the asset.
+
+**1. Detector resolution.** Measured at each object's best authored viewpoint, with the
+pipeline's own vocabulary and the exact-label match `candidates()` performs:
+
+| target | imgsz 512 | 768 | 960 | 1280 |
+|---|---|---|---|---|
+| bowl | 0.90 | 0.94 | 0.95 | 0.88 |
+| plate | 0.43 | 0.23 | 0.00 | 0.14 |
+| tomato soup can | 0.31 | 0.58 | 0.54 | **0.63** |
+| cracker box | 0.00 | 0.39 | 0.50 | **0.62** |
+| pitcher | 0.00 | 0.00 | 0.00 | 0.00 |
+| scissors | 0.00 | 0.00 | 0.00 | 0.00 |
+| *cost per frame* | 34 ms | 38 ms | 42 ms | 51 ms |
+
+The default was 512. At that size the cracker box is invisible and the soup can sits
+below the 0.35 admission gate; at 1280 both clear it comfortably, for 17 ms per keyframe
+against a ~250 ms control loop. This was never an asset problem for these two.
+
+**2. The vocabulary could not name them.** The detector's classes are
+`DEFAULT_VOCABULARY` plus *the episode's target*, and no YCB label is in the default list.
+A mapping run chasing the bowl therefore had no class for "cracker box" and could not have
+mapped it whatever the resolution. The experiment now puts every YCB target in the
+vocabulary.
+
+**3. One episode does not see the house.** An episode stops when it succeeds -- the bowl
+run ended at 173 steps -- so objects elsewhere were never looked at. Pointing `map_in` and
+`map_out` at the same directory accumulates one map across several mapping episodes, which
+is what a benchmark with several targets needs anyway.
+
+Together those take the map from one usable target to **three**: bowl (0.06 m error,
+score 0.82), tomato soup can (0.01 m, 0.81), cracker box (0.35 m, 0.75). The benchmark
+grows from 7 episodes to 21.
+
+**The two that stay out, and why it is not fixable from here.** The compressed and original
+meshes are identical -- 1854 verts and 3276 triangles for the pitcher in both, textures
+present in both (Basis-compressed in the one Habitat loads, PNG in the original) -- so
+nothing is corrupted, and the box and can prove Basis decoding works. The pitcher simply
+renders as a plain dark vessel with no handle or spout visible, and scores 0.00 at every
+resolution and against every synonym tried (jug, water jug, vase, mug, cup). The scissors
+render correctly and are simply too thin to survive detection at any size. Both are
+recognition limits of this asset set, not data faults.
+
+**The plate is a genuine trade-off, not a failure.** It is the one object that prefers the
+*low* resolution -- 0.43 at 512 against 0.14 at 1280 -- so the setting that recovers the
+can and the box loses it, and a full 500-step episode targeting it at 1280 mapped nothing.
+Three targets beats two, so 1280 stands, and the plate is excluded with its reason
+recorded rather than quietly dropped.
+
 ---
 
 ## Phase 4 — C4 change log

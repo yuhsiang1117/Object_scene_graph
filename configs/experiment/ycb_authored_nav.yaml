@@ -29,6 +29,30 @@ defaults:
 # on sight and every episode failed for want of a detection, not for want of
 # navigation. With these values the same episode succeeds (SPL 0.32) and the
 # bowl is mapped 0.03 m from its authored pose.
+
+# Detection for small tabletop objects, measured at each object's best authored
+# viewpoint with the pipeline's own vocabulary and exact-label matching:
+#
+#            imgsz 512   768   960  1280      cost/frame
+#   bowl          0.90  0.94  0.95  0.88      512:  34 ms
+#   plate         0.43  0.23  0.00  0.14      768:  38 ms
+#   soup can      0.31  0.58  0.54  0.63      960:  42 ms
+#   cracker box   0.00  0.39  0.50  0.62     1280:  51 ms
+#   pitcher       0.00  0.00  0.00  0.00
+#   scissors      0.00  0.00  0.00  0.00
+#
+# At the 512 default only the bowl and (marginally) the plate clear the 0.35
+# admission gate; at 1280 the soup can and cracker box join them, for 17 ms per
+# keyframe against a ~250 ms control loop. The pitcher renders as an untextured
+# dark cylinder with no handle or spout -- a broken asset, not a detection
+# problem -- and the scissors are too thin to survive at any resolution.
+detector:
+  imgsz: 1280
+  # The vocabulary is DEFAULT_VOCABULARY plus the episode target, so a mapping
+  # run for one target has no class for the others and cannot map them. A
+  # multi-target benchmark needs every target present from the start.
+  vocabulary: ["chair", "sofa", "armchair", "plant", "bed", "toilet", "tv_monitor", "table", "desk", "cabinet", "shelf", "dresser", "wardrobe", "nightstand", "lamp", "pillow", "cushion", "picture", "mirror", "window", "door", "sink", "bathtub", "shower", "towel", "counter", "stool", "bench", "refrigerator", "oven", "microwave", "washing machine", "stove", "fireplace", "stairs", "rug", "curtain", "clothes", "book", "box", "basket", "banana", "bowl", "cracker box", "mug", "pitcher", "plate", "scissors", "tomato soup can"]
+
 scene_graph:
   min_det_bbox_px: 300
 
