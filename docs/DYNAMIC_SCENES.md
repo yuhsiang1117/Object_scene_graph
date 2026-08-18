@@ -921,6 +921,43 @@ can and the box loses it, and a full 500-step episode targeting it at 1280 mappe
 Three targets beats two, so 1280 stands, and the plate is excluded with its reason
 recorded rather than quietly dropped.
 
+### The 21-episode baseline
+
+Three targets x seven layouts, two-pass protocol against one accumulated map of the static
+world, `verification=off`, no search posterior. This is the number future work is measured
+against.
+
+| condition | n | SR | SPL | mean distance to goal |
+|---|---|---|---|---|
+| in_anchor | 9 | **0.444** | 0.367 | 1.45 m |
+| static (control) | 3 | 0.333 | 0.252 | 1.54 m |
+| cross_anchor | 9 | **0.000** | 0.000 | 4.95 m |
+| **overall** | **21** | **0.238** | **0.193** | |
+
+| target | n | SR | SPL |
+|---|---|---|---|
+| tomato soup can | 7 | 0.429 | 0.350 |
+| bowl | 7 | 0.286 | 0.230 |
+| cracker box | 7 | 0.000 | 0.000 |
+
+Three things this shows that seven episodes could not.
+
+**The failure is structured, not diffuse.** Every cross-anchor episode fails and nearly
+half the in-anchor ones succeed. That is exactly the shape the design predicts: when an
+object moves within reach of where the map remembers it, the stale map still gets the
+agent close enough to find it, and when it moves across the room the map is worse than
+useless. Re-finding it from there is C3's job, and C3 remains the open problem.
+
+**The static control is not a ceiling at 1.0.** It scores 0.333, so a third of the gap in
+the dynamic conditions is not about staleness at all -- it is perception and terminal
+precision on a correct map. Any dynamic-handling claim has to be read against that, not
+against a perfect baseline.
+
+**The cracker box fails everywhere despite being mapped.** It is mapped at 0.35 m error
+against 0.06 m for the bowl and 0.01 m for the can, and it never converts. A goal 0.35 m
+from the truth is outside the 0.18 m success radius before the agent takes a step, so its
+ellipsoid centre -- not its detection -- is what needs work.
+
 ---
 
 ## Phase 4 — C4 change log
