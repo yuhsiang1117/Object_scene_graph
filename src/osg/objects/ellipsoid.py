@@ -9,7 +9,7 @@ C* = P Q* P^T which, normalized so its bottom-right entry is -1, reads
 from __future__ import annotations
 
 from dataclasses import dataclass
-from typing import Optional
+from typing import Optional, Tuple
 
 import numpy as np
 
@@ -79,3 +79,46 @@ class Ellipsoid:
 
     def mean_depth_at(self, T_cw: np.ndarray) -> float:
         return float((T_cw[:3, :3] @ self.center + T_cw[:3, 3])[2])
+
+    # --------------------------------------------------------------- extents
+    # R is initialised to the CAMERA rotation and then refined, so it is never
+    # world-axis-aligned: reading axes[HEIGHT_AXIS] to answer "how tall is this"
+    # is wrong by however much the object is tilted in the map frame. The
+    # shape matrix below is the only correct route, and three consumers share
+    # it -- container surface heights, the C1 depth band, the C3 affordance
+    # test (docs/DYNAMIC_SCENES.md).
+
+    def shape_matrix(self) -> np.ndarray:
+        """Q = R diag(a^2, b^2, c^2) R^T -- the ellipsoid's 3x3 shape matrix.
+
+        The surface is {x : (x - t)^T Q^-1 (x - t) = 1}, so Q plays the role of
+        a covariance and every extent question below is a statement about it.
+        """
+        return self.R @ np.diag(self.axes ** 2) @ self.R.T
+
+    def world_extent(self, axis_unit: np.ndarray) -> float:
+        """Half-extent along a world direction d: sqrt(d^T Q d).
+
+        The ellipsoid's support function. For an axis-aligned ellipsoid and
+        d = e_y this is just the y semi-axis; for a tilted one it is the real
+        silhouette half-height, which is what a support-surface test needs.
+        """
+        d = np.asarray(axis_unit, dtype=float)
+        n = float(np.linalg.norm(d))
+        if n < 1e-12:
+            return 0.0
+        d = d / n
+        return float(np.sqrt(max(d @ self.shape_matrix() @ d, 0.0)))
+
+    def ground_footprint(self, plane: Tuple[int, int]) -> Tuple[np.ndarray, np.ndarray]:
+        """(center_xy, cov_xy) of the ellipsoid's shadow on the ground plane.
+
+        The orthogonal projection of an ellipsoid onto a coordinate plane is the
+        ellipse whose shape matrix is the corresponding 2x2 block of Q -- the
+        same marginalisation rule as for a Gaussian covariance. A point p is
+        inside iff (p - mu)^T cov^-1 (p - mu) <= 1, and the area is
+        pi * sqrt(det(cov)).
+        """
+        idx = np.array(plane, dtype=int)
+        Q = self.shape_matrix()
+        return self.center[idx].copy(), Q[np.ix_(idx, idx)].copy()

@@ -112,8 +112,23 @@ def to_json(sg: SceneGraph) -> dict:
                 "centroid_xy": r.centroid_xy.tolist(),
                 "n_cells": r.n_cells,
                 "floor_id": r.floor_id,
+                "container_ids": sorted(r.container_ids),
             }
             for r in sg.rooms.values()
+        ],
+        "containers": [
+            {
+                "id": c.id,
+                "label": c.label,
+                "track_ids": sorted(c.track_ids),
+                "center": c.center.tolist(),
+                "top_h": round(c.top_h, 3),
+                "area_m2": round(c.area_m2, 4),
+                "room_id": c.room_id,
+                "floor_id": c.floor_id,
+                "object_ids": sorted(c.object_ids),
+            }
+            for c in sorted(sg.containers.values(), key=lambda c: c.id)
         ],
         "objects": [
             {
@@ -123,6 +138,8 @@ def to_json(sg: SceneGraph) -> dict:
                 "room_id": o.room_id,
                 "n_obs": o.n_obs,
                 "floor_id": o.floor_id,
+                "container_id": o.container_id,
+                "p_rel": None if o.p_rel is None else [round(v, 3) for v in o.p_rel],
             }
             for o in sg.objects
         ],

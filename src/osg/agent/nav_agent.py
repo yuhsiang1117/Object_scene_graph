@@ -175,7 +175,11 @@ class NavAgent:
             confirm_baseline_m=cfg.scene_graph.confirm_baseline_m,
             repeat_view_discount=cfg.scene_graph.repeat_view_discount,
         )
-        self.scene_graph = SceneGraph()
+        self.scene_graph = SceneGraph(
+            container_top_h_m=tuple(cfg.scene_graph.container_top_h_m),
+            container_min_area_m2=cfg.scene_graph.container_min_area_m2,
+            container_support_tol_m=cfg.scene_graph.container_support_tol_m,
+        )
         self.keyframes = KeyframeStore(save_dir=keyframe_dir)
         self.kf_selector = KeyframeSelector(
             cfg.scene_graph.keyframe_trans_m, cfg.scene_graph.keyframe_rot_deg

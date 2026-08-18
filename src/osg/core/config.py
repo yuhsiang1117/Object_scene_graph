@@ -4,7 +4,7 @@ yaml/CLI overrides fail fast instead of silently creating new keys.
 from __future__ import annotations
 
 from dataclasses import dataclass, field
-from typing import Dict, List, Optional
+from typing import Dict, List, Optional, Tuple
 
 from hydra.core.config_store import ConfigStore
 from omegaconf import MISSING
@@ -160,6 +160,19 @@ class SceneGraphConfig:
     # gets full weight, matching pre-feature behavior).
     confirm_baseline_m: float = 0.15
     repeat_view_discount: float = 0.2
+    # Container (anchor) layer -- floor -> room -> container -> object
+    # (docs/DYNAMIC_SCENES.md). A track qualifies as a support surface when its
+    # label is in graph.containers.CONTAINER_CATEGORIES AND its world top height
+    # falls in this band with at least this much ground footprint. The geometry
+    # half is what a DualMap-style word list alone cannot do: reject the
+    # mis-segmented sliver labelled "table", and the "shelf" whose top lands
+    # at 1.9 m where nothing is ever put down.
+    container_top_h_m: Tuple[float, float] = (0.2, 1.4)
+    container_min_area_m2: float = 0.06
+    # How far an object's underside may sit from a surface and still count as
+    # resting on it. Generous, because a mask-moment ellipsoid fitted from a
+    # partial view is a coarse estimate of where an object's bottom is.
+    container_support_tol_m: float = 0.15
 
 
 @dataclass
