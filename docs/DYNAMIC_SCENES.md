@@ -671,6 +671,79 @@ episode set, not more single-episode tuning: a 500-step budget to re-find an obj
 away among 43 candidate surfaces is tight, and one episode cannot separate a good policy
 from a lucky one.
 
+### Can a VLM serve as C5's absence sensor? Tested, and no — not on this endpoint
+
+There is no "locate anything" model on the NIM endpoint (102 models; the vision-capable
+ones are `meta/llama-3.2-11b-vision-instruct`, `meta/llama-3.2-90b-vision-instruct`,
+`nvidia/nemotron-nano-12b-v2-vl`, `nvidia/llama-3.1-nemotron-nano-vl-8b-v1`,
+`microsoft/phi-3-vision-128k-instruct`, `nvidia/vila`). The provided text model
+`nvidia/nemotron-3.5-lightning-30b-a3b` has multimodal processing disabled, so it cannot
+answer C5's question at all — it serves C3's affinity prior instead.
+
+Scored on the real task: the same authored viewpoint with the YCB bowl present, and with
+it relocated away.
+
+| model | bowl present | bowl gone | usable |
+|---|---|---|---|
+| meta/llama-3.2-11b-vision-instruct | present | **present** | no |
+| nvidia/nemotron-nano-12b-v2-vl | present | **present** | no |
+| nvidia/llama-3.1-nemotron-nano-vl-8b-v1 | present | error | no |
+| microsoft/phi-3-vision-128k-instruct | error | error | no |
+| meta/llama-3.2-90b-vision-instruct | — | — | times out |
+
+Two things make this less damning than it looks, and both matter. The marked region also
+contains a **scene-geometry dish** — HM3D scans come with their own crockery — so "is a
+bowl in this region" is genuinely ambiguous and answering "yes" is not pure hallucination.
+And that is the real lesson: a VQA question about a *category* cannot decide the presence
+of an *instance*, which is what a stale map needs to know. The instrument for that is an
+open-vocabulary detector returning boxes at locations — which is YOLOE, already in the
+pipeline, and which is why the detector-driven absence path is doing the work.
+
+**A bug this uncovered, and it invalidated the first version of the test above.**
+`apply_layout_transforms` was a silent no-op: `inject_layout_objects` marks objects
+`MotionType.STATIC`, and a STATIC habitat object **ignores an assignment to
+`translation` and then reads back the old pose**, so nothing in the calling code could
+tell. The first present/absent pair was byte-identical — zero pixels changed — and all
+three VLMs "failed" a test in which nothing had moved. Switching to `KINEMATIC` before
+the move changes exactly 1759 pixels, matching the manifest's visible-pixel count for the
+bowl. Every mid-episode relocation before this reported six objects moved while the world
+stood still. The function now verifies the pose it asked for actually took, and raises if
+not; `test_relocation_verifies_the_move_actually_took` pins it. The two-pass benchmark is
+unaffected — it injects each layout at reset rather than moving objects.
+
+### The first batch: C3 is not validated, and the dominant failure is elsewhere
+
+Seven episodes (static, in_anchor 1-3, cross_anchor 1-3), bowl, two-pass protocol against
+one shared map of the static world, `verification=off`.
+
+| layout | baseline steps / dist | posterior steps / dist | surfaces inspected |
+|---|---|---|---|
+| cross_anchor_01 | 500 / 12.15 m | 500 / **5.28 m** | 10 |
+| cross_anchor_02 | 290 / **3.78 m** | 500 / 7.21 m | 11 |
+| cross_anchor_03 | 500 / **6.63 m** | 500 / 7.45 m | 12 |
+| in_anchor_01 | 47 / 0.18 m | 47 / 0.18 m | 0 |
+| in_anchor_02 | 49 / 0.21 m | 49 / 0.21 m | 0 |
+| in_anchor_03 | 49 / 0.19 m | 49 / 0.19 m | 0 |
+| static | 49 / 0.28 m | 49 / 0.28 m | 0 |
+| **SR / mean distance** | **0.0 / 3.35 m** | **0.0 / 2.97 m** | |
+
+**C3 is not validated by this.** One episode improves a great deal, two get worse, four are
+untouched, no episode succeeds either way, and n=7 with zero successes cannot separate a
+policy from noise. The mean-distance difference is one episode's worth of movement.
+
+**The dominant failure is not search at all.** Four of seven episodes — every in_anchor
+plus the static control — end at **0.18, 0.19, 0.21 and 0.28 m** against a 0.18 m success
+radius. The agent finds the real bowl (in_anchor episodes end holding two bowl tracks: the
+ghost and the relocated object, 0.6-0.9 m apart, correctly separated since the ghosting
+fix) and stops just too far away. Fixing where the approach terminates could plausibly
+convert four of seven episodes; nothing in the search posterior can compete with that, and
+until it is fixed a search metric measured on this benchmark is reading noise off a
+terminal-precision bug.
+
+One earlier change did carry: `abandon_below_p` at 1.0 turned two cross-anchor episodes
+from stopping on empty space at ~50 steps into searching for 290 and 500 steps. That is
+the C5 rule working, and it is what made the cross-anchor rows above comparable at all.
+
 ---
 
 ## Phase 4 — C4 change log

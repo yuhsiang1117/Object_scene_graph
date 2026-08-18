@@ -337,13 +337,15 @@ class VerificationConfig:
     # you cannot trust is worse than no absence at all.
     absence_categories_max: int = 5
     # Below this belief the agent abandons the candidate instead of stopping on
-    # it, and goes back to exploring. 0.45 is where the arithmetic puts the
-    # intended behaviour, given a belief reloaded at p=0.82: ONE trusted VLM
-    # "no" lands at 0.407 and abandons, the detector's silence alone needs
-    # THREE failed approaches (0.702 / 0.554 / 0.395), and a belief saturated
-    # in this episode survives a single VLM "no" at 0.755. Absence has to be
-    # earned, and cheap evidence earns it more slowly.
-    abandon_below_p: float = 0.45
+    # it. 1.0 = always abandon, which is the right default once you notice what
+    # the alternative actually is: NOT "keep believing and look again later" but
+    # "STOP here and end the episode". Measured on the batch, two cross-anchor
+    # episodes arrived at an empty spot, dropped the belief to 0.64, and -- being
+    # above a 0.45 threshold -- stopped and failed with 450 steps unspent. An
+    # approach that never saw its target has no reason to stop at it while steps
+    # remain; the belief arithmetic still does its work in the ranking. Lower
+    # this only to A/B the stricter behaviour.
+    abandon_below_p: float = 1.0
     min_obs: int = 3
     # Candidate quality gates: sliver/fragment detections (a chair edge seen
     # through furniture) must not trigger the expensive approach+verify loop.

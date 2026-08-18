@@ -207,6 +207,8 @@ def apply_layout_transforms(objects: List[Any], layout: AuthoredLayout) -> List[
         except (AttributeError, TypeError, ValueError):
             continue
 
+    import habitat_sim
+
     moved = []
     for authored in layout.objects:
         rigid = by_id.get(int(authored.semantic_id))
@@ -215,11 +217,24 @@ def apply_layout_transforms(objects: List[Any], layout: AuthoredLayout) -> List[
                 f"cannot relocate {authored.semantic_id}: not present in the running scene"
             )
         before = np.array([rigid.translation.x, rigid.translation.y, rigid.translation.z])
+        # inject_layout_objects marks objects STATIC, and a STATIC object
+        # SILENTLY IGNORES a new translation -- it even reads back the old pose
+        # afterwards, so nothing in the calling code can tell. Every mid-episode
+        # relocation before this was a no-op that reported success. KINEMATIC
+        # objects hold their pose exactly the same way and can be moved.
+        rigid.motion_type = habitat_sim.physics.MotionType.KINEMATIC
         rigid.translation = mn.Vector3(*authored.translation)
         rigid.rotation = mn.Quaternion(
             mn.Vector3(*authored.rotation[:3]), authored.rotation[3]
         )
-        if float(np.linalg.norm(before - np.asarray(authored.translation, float))) > 1e-6:
+        after = np.array([rigid.translation.x, rigid.translation.y, rigid.translation.z])
+        target = np.asarray(authored.translation, float)
+        if float(np.linalg.norm(after - target)) > 1e-3:
+            raise YCBLayoutError(
+                f"relocating {authored.semantic_id} did not take: asked for "
+                f"{target.tolist()}, object reports {after.tolist()}"
+            )
+        if float(np.linalg.norm(before - target)) > 1e-6:
             moved.append(int(authored.semantic_id))
     return moved
 

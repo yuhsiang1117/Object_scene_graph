@@ -200,7 +200,7 @@ class _Filter:
         return 1 / (1 + math.exp(-self.log_odds))
 
 
-THRESHOLD = 0.45  # VerificationConfig.abandon_below_p
+THRESHOLD = 0.45  # the stricter A/B setting; the default is 1.0, see below
 
 
 def test_one_vlm_no_abandons_a_ghost_the_detector_alone_would_keep():
@@ -229,3 +229,91 @@ def test_a_belief_earned_in_this_episode_survives_one_trusted_no():
     saturated = _Filter()
     saturated.log_odds = 3.0  # PresenceConfig.l_clamp_pos
     assert saturated.miss(recall=0.85, q=0.02) > THRESHOLD
+
+
+# ------------------------------------- a move that does not move is a no-op
+
+
+class _Vec:
+    def __init__(self, x, y, z):
+        self.x, self.y, self.z = float(x), float(y), float(z)
+
+
+class _Rigid:
+    """A STATIC habitat object: assignment to translation is silently dropped,
+    and reading it back returns the OLD pose -- which is why this went unnoticed."""
+
+    def __init__(self, sid, xyz, static=True):
+        self.semantic_id = sid
+        self._t = _Vec(*xyz)
+        self.static = static
+        self.motion_type = "STATIC"
+        self.rotation = None
+
+    @property
+    def translation(self):
+        return self._t
+
+    @translation.setter
+    def translation(self, value):
+        if self.static and self.motion_type == "STATIC":
+            return  # the silent drop
+        self._t = _Vec(value.x, value.y, value.z) if hasattr(value, "x") else _Vec(*value)
+
+
+def test_relocation_verifies_the_move_actually_took():
+    """Every mid-episode relocation before this reported six objects moved while
+    the render was byte-identical: a STATIC object ignores a new translation and
+    reports back the old one, so nothing in the calling code could tell."""
+    import types
+    import numpy as np
+    import osg.sim.ycb_env as ycb_env
+
+    rigid = _Rigid(56, (0.0, 0.9, 0.0))
+    authored = types.SimpleNamespace(semantic_id=56, translation=(5.0, 0.9, 5.0),
+                                     rotation=(0.0, 0.0, 0.0, 1.0))
+    layout = types.SimpleNamespace(objects=[authored])
+
+    class _MN:
+        Vector3 = staticmethod(lambda *a: _Vec(*a))
+        Quaternion = staticmethod(lambda *a: None)
+
+    class _MotionType:
+        KINEMATIC = "KINEMATIC"
+
+    fake_hs = types.SimpleNamespace(
+        physics=types.SimpleNamespace(MotionType=_MotionType)
+    )
+    real_import = __import__
+
+    def fake_import(name, *args, **kwargs):
+        if name == "magnum":
+            return _MN
+        if name == "habitat_sim":
+            return fake_hs
+        return real_import(name, *args, **kwargs)
+
+    import builtins
+    builtins.__import__ = fake_import
+    try:
+        moved = ycb_env.apply_layout_transforms([rigid], layout)
+    finally:
+        builtins.__import__ = real_import
+
+    assert rigid.motion_type == "KINEMATIC", "the object was never made movable"
+    assert moved == [56]
+    assert (rigid.translation.x, rigid.translation.z) == (5.0, 5.0)
+
+
+
+def test_by_default_an_unseen_target_is_always_abandoned():
+    """The default threshold is 1.0, and the reason is what the alternative
+    actually is. Not "keep believing and look again later" but "STOP here and
+    end the episode": two cross-anchor episodes arrived at an empty spot,
+    dropped the belief to 0.64, and -- being above a 0.45 threshold -- stopped
+    and failed with 450 steps unspent. An approach that never saw its target has
+    no reason to stop at it while steps remain."""
+    from osg.core.config import VerificationConfig
+
+    assert VerificationConfig().abandon_below_p == 1.0
+    assert _Filter().miss(recall=0.5) < 1.0
