@@ -99,6 +99,7 @@ def _make_presence_filter(cfg):
         recall=recall,
         q_false_alarm=pc.q_false_alarm,
         l_clamp=pc.l_clamp,
+        l_clamp_pos=getattr(pc, "l_clamp_pos", 3.0),
         occ_ratio_max=pc.occ_ratio_max,
         depth_tol_m=pc.depth_tol_m,
         # Expectation shares the ADMISSION threshold by construction: expecting
@@ -232,6 +233,7 @@ class NavAgent:
             refine_every=cfg.scene_graph.refine_every,
             refine_max_center_move_m=cfg.scene_graph.refine_max_center_move_m,
             link_dist_m=cfg.scene_graph.link_dist_m,
+            link_max_frame_gap=getattr(cfg.scene_graph, "link_max_frame_gap", None),
             min_det_score=cfg.scene_graph.min_det_score,
             min_det_bbox_px=cfg.scene_graph.min_det_bbox_px,
             confirm_baseline_m=cfg.scene_graph.confirm_baseline_m,

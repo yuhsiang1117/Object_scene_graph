@@ -432,6 +432,60 @@ an in-anchor move lands inside the linking radius and is averaged into the ghost
 must not union a track the filter is losing faith in with a freshly-observed one, and the
 presence filter must see the ghost separately in order to lose faith in it at all.
 
+### Ghosting, fixed — and what it uncovered
+
+The in-anchor ghost survived for two compounding reasons, both mine, both now fixed.
+
+**A saturated belief cannot be argued with.** A sighting is worth `log(r/q) = +2.5` and a
+miss only `log((1−r)/(1−q)) = −0.9`, so a symmetric ±6 clamp saturated after three
+sightings and then needed **seven** clean misses to unwind. The bowl was stored at
+p=0.9975 from five observations. The positive clamp is now +3.0 while disbelief keeps the
+−6.0 floor: believing an object's *presence* that hard is unjustified, because the world
+changes while you are not looking, whereas an object known to be gone should stay gone.
+And a belief restored from a snapshot is capped again at 1.5 (p≈0.82) — the map was built
+in another session, so the survival channel of the filter applies, collapsed into one
+honest number.
+
+**Linking merged the object with its own past.** `relink` unions same-label tracks within
+`link_dist_m`, which is right for two ellipsoid fragments of one sofa and catastrophic for
+a bowl that moved 0.80 m: the stale track and the fresh one were merged, so
+`object_center` reported their midpoint — 0.42 m from either bowl, a place with no bowl,
+which neither observation can ever contradict. Linking now requires co-observation
+(`link_max_frame_gap`), because fragments of one object are seen *together* and an object
+and its ghost never are. Restored observations are stamped into a previous session so
+they cannot be mistaken for current ones. A third fix stops a detection crediting every
+track it overlaps: one detection now credits the single best-matching track, so a
+neighbour 0.8 m away can no longer keep a ghost alive.
+
+Same episode, bowl moved 0.80 m on the same table:
+
+| | before | after |
+|---|---|---|
+| tracks at end | 108 and 127 **merged**, both reported at [0.13, 0.86, 1.11] | **separate**: ghost at [-0.30, 0.87, 1.03], bowl at [0.55, 0.86, 1.19] |
+| ghost belief | p = 0.9975, never moved | p = **0.654, falling** from 0.82 |
+| real bowl | never isolated | mapped **0.05 m** from its true new pose |
+
+**What this uncovered is now the top blocker, and it is not about staleness at all.**
+Run the *static* layout against a map of that same static layout — a perfectly correct
+map — and the episode still fails:
+
+| same world, same episode | outcome |
+|---|---|
+| fresh map (pass 1) | **success**, SPL 0.323, 157 steps |
+| perfect preloaded map | **failure**, 49 steps, 0.28 m from goal |
+
+With a map in hand the agent commits at step 1 and drives to the object's stored centre,
+**never having seen it**. HM3D success needs the agent inside a view-point ring, which the
+detection-driven approach reaches by closing on a *visible* target; commit-from-memory
+skips that entirely and stops wherever the navmesh arrives. So every two-pass episode is
+scored on a terminal behaviour that never runs. Until the agent must *see* the target
+before stopping — C5's negative confirmation, and refusing to STOP on a target the live
+view does not show — no dynamic number from this benchmark measures dynamics.
+
+**Targets are now selectable** (`ycb.targets`), because four of six assets cannot be
+detected at any authored viewpoint. The layouts are DualMap's original data and are never
+edited; this only chooses which episodes to run. Bowl is the usable target today.
+
 ---
 
 ## Phase 3 — C3 search index (+ full C2 posterior)

@@ -83,7 +83,7 @@ def test_occlusion_leaves_the_belief_untouched():
 
 
 def test_a_sighting_is_positive_evidence():
-    tr, f, pf = track(), frame(2.0), filt()
+    tr, f, pf = track(), frame(2.0), filt(l_clamp_pos=100.0)
     before = tr.presence.log_odds
     pf.update([tr], f, [detection_over(tr, f)])
     assert tr.presence.log_odds == pytest.approx(before + POS, abs=1e-12)
@@ -288,3 +288,51 @@ def test_a_word_that_merely_shares_a_substring_is_kept():
     from osg.agent.nav_agent import target_vocabulary
 
     assert "boxer" in target_vocabulary("cracker box", ["boxer"])
+
+
+# ------------------------------------------------------ ghosting: saturation
+
+
+def test_belief_cannot_saturate_beyond_a_few_misses_of_recovery():
+    """The defect this closes: a sighting is worth +2.5 and a miss only -0.9, so
+    a symmetric clamp saturated after three sightings and then needed SEVEN
+    clean misses to unwind. Measured on the benchmark, a bowl mapped from five
+    observations stored p=0.9975, and the agent committed to it on step 1 of the
+    next episode and stopped before the evidence could arrive."""
+    tr, f, pf = track(), frame(2.0), filt()
+    for i in range(20):
+        pf.update([tr], frame(2.0, frame_id=i), [detection_over(tr, frame(2.0, frame_id=i))])
+    assert tr.presence.log_odds == pytest.approx(pf.l_clamp_pos)
+
+    misses = 0
+    while tr.presence.p >= 0.5 and misses < 20:
+        misses += 1
+        pf.update([tr], frame(5.0, frame_id=100 + misses), [])
+    assert misses <= 4, f"took {misses} clean misses to doubt a saturated belief"
+
+
+def test_disbelief_keeps_the_deeper_floor():
+    """An object known to be gone should stay gone -- the asymmetry only limits
+    how CONFIDENT presence may become, not how firmly absence is held."""
+    tr, pf = track(), filt()
+    for i in range(40):
+        pf.update([tr], frame(5.0, frame_id=i), [])
+    assert tr.presence.log_odds == pytest.approx(-pf.l_clamp)
+
+
+# --------------------------------------------- ghosting: who gets the credit
+
+
+def test_a_detection_credits_one_track_not_every_overlapping_one():
+    """A ghost 0.8 m from a live object still projects close enough to clear a
+    permissive IoU gate. Crediting both keeps the ghost alive on the live
+    object's evidence -- so the map never receives the negative evidence it is
+    standing directly in front of."""
+    ghost = track(1, center=(-0.4, 0.0, 2.0))
+    live = track(2, center=(0.4, 0.0, 2.0))
+    f = frame(2.0)
+    pf = filt()
+    before_ghost = ghost.presence.log_odds
+    pf.update([ghost, live], f, [detection_over(live, f)])
+    assert live.presence.log_odds > before_ghost, "the live object was not credited"
+    assert ghost.presence.log_odds < before_ghost, "the ghost was credited with a neighbour's detection"

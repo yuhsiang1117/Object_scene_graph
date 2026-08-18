@@ -182,15 +182,37 @@ def load_map(path: Path) -> Dict[str, Any]:
     return blob
 
 
-def apply_map(agent, blob: Dict[str, Any]) -> int:
+PRIOR_SESSION_OFFSET = 1_000_000
+
+
+def apply_map(agent, blob: Dict[str, Any], *, max_log_odds: float = 1.5) -> int:
     """Load a snapshot into a freshly constructed agent. Returns track count.
 
     Called after NavAgent.__init__ (which resets), before the first act().
+
+    Two things are deliberately NOT carried across intact:
+
+    `max_log_odds` caps how sure a restored belief may be. The map was built in
+    another session; the world had every opportunity to change in between, and a
+    belief that saturated at p=0.998 then would need seven clean misses to
+    unwind now -- so the agent commits to a stale goal on step 1 and the episode
+    is over before the evidence arrives. Capping is the survival channel of the
+    presence filter collapsed into one honest number: time passed, so believe
+    less. Disbelief is left alone; an object already known to be gone has not
+    become more likely by sitting in a file.
+
+    Observation frame ids are shifted into negative territory so nothing can
+    mistake a previous session's frames for this one's -- in particular
+    `relink`, which must not merge a fresh track with a track last seen before
+    the world changed.
     """
     layer = agent.object_layer
     layer._tracks = {}
     for rec in blob.get("tracks", []):
         track = _track_from_record(rec)
+        track.presence.log_odds = min(float(track.presence.log_odds), float(max_log_odds))
+        for obs in track.observations:
+            obs.frame_id = int(obs.frame_id) - PRIOR_SESSION_OFFSET
         layer._tracks[track.id] = track
     layer._next_id = int(blob.get("next_track_id", max(layer._tracks, default=-1) + 1))
 

@@ -428,7 +428,35 @@ def prepare_ycb_benchmark(cfg, *, force: bool = False) -> PreparedYCB:
     return PreparedYCB(discovery, tuple(manifests), tuple(cache_files))
 
 
-def _make_dataset(prepared: PreparedYCB, layout_by_key: Mapping[Tuple[str, str], AuthoredLayout]):
+def select_targets(episodes: Sequence[Mapping[str, Any]], wanted: Sequence[str]):
+    """Keep only episodes whose target is in `wanted` (handle or label).
+
+    Several YCB assets in the collector's dataset cannot be detected at all --
+    probed at each object's best authored viewpoint, the pitcher, plate,
+    scissors and cracker box return nothing even as the detector's only class,
+    because of how those meshes render. Running their episodes measures the
+    detector's asset coverage, not dynamic-scene handling. The layouts are
+    DualMap's original data and are never edited; this only chooses which
+    episodes to run.
+
+    Empty `wanted` keeps everything.
+    """
+    if not wanted:
+        return list(episodes)
+    keys = {str(w).strip().lower() for w in wanted}
+    kept = [
+        ep for ep in episodes
+        if str(ep["target"]["handle"]).lower() in keys
+        or str(ep["target"]["label"]).lower() in keys
+    ]
+    return kept
+
+
+def _make_dataset(
+    prepared: PreparedYCB,
+    layout_by_key: Mapping[Tuple[str, str], AuthoredLayout],
+    targets: Sequence[str] = (),
+):
     from habitat.core.simulator import AgentState
     from habitat.datasets.object_nav.object_nav_dataset import ObjectNavDatasetV1
     from habitat.tasks.nav.object_nav_task import (
@@ -439,13 +467,22 @@ def _make_dataset(prepared: PreparedYCB, layout_by_key: Mapping[Tuple[str, str],
 
     dataset = ObjectNavDatasetV1()
     dataset.episodes = []
+    selected = {
+        id(manifest): select_targets(manifest["episodes"], targets)
+        for manifest in prepared.manifests
+    }
     labels = sorted(
         {
             str(episode["target"]["label"])
             for manifest in prepared.manifests
-            for episode in manifest["episodes"]
+            for episode in selected[id(manifest)]
         }
     )
+    if not labels:
+        raise YCBLayoutError(
+            f"ycb.targets={list(targets)} matched no episode; targets are matched "
+            "against the YCB handle or its label"
+        )
     dataset.category_to_task_category_id = {label: index for index, label in enumerate(labels)}
     dataset.category_to_scene_annotation_category_id = dict(dataset.category_to_task_category_id)
     dataset.goals_by_category = {}
@@ -454,7 +491,7 @@ def _make_dataset(prepared: PreparedYCB, layout_by_key: Mapping[Tuple[str, str],
         layout_meta = manifest["layout"]
         layout_key = (str(layout_meta["scene"]), str(layout_meta["layout_id"]))
         layout = layout_by_key[layout_key]
-        for item in manifest["episodes"]:
+        for item in selected[id(manifest)]:
             target = item["target"]
             view_points = [
                 ObjectViewLocation(
@@ -546,7 +583,10 @@ class YCBAuthoredNavEnv(HabitatObjectNavEnv):
             for layout in self.prepared.discovery.layouts
         }
         self._relocation = _RelocationPolicy(cfg, self.prepared.discovery.layouts)
-        dataset = _make_dataset(self.prepared, self._layout_by_key)
+        dataset = _make_dataset(
+            self.prepared, self._layout_by_key,
+            targets=[str(t) for t in getattr(cfg.ycb, "targets", []) or []],
+        )
         self._hab_cfg = make_objectnav_config(cfg)
         self.env = habitat.Env(config=self._hab_cfg, dataset=dataset)
         from ..core.types import CameraIntrinsics

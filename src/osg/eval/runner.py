@@ -206,7 +206,11 @@ def _load_prior_map(cfg, agent, scene: str) -> Optional[dict]:
 
     path = _map_path(root, scene)
     blob = load_map(path)
-    n = apply_map(agent, blob)
+    pc = getattr(cfg.scene_graph, "presence", None)
+    n = apply_map(
+        agent, blob,
+        max_log_odds=float(getattr(pc, "reload_max_log_odds", 1.5)) if pc else 1.5,
+    )
     return {
         "path": str(path),
         "from_layout": str(blob.get("layout_id", "")),

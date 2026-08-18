@@ -128,6 +128,14 @@ class PresenceConfig:
     # Belief clamp, both signs. Never remove it: it is what keeps an object that
     # was wrongly disbelieved resurrectable by a single later detection.
     l_clamp: float = 6.0
+    # Asymmetric on purpose: a sighting is worth +2.5 and a miss -0.9, so a
+    # symmetric clamp saturates after three sightings and then needs seven clean
+    # misses to undo. Believing an object's PRESENCE that hard is unjustified --
+    # the world changes while you are not looking -- while disbelief keeps the
+    # deeper floor so a genuinely gone object stays gone.
+    l_clamp_pos: float = 3.0
+    # Ceiling on a belief restored from a snapshot built in an earlier session.
+    reload_max_log_odds: float = 1.5
     # Expected-depth band tolerance. Generous, because a mask-moment ellipsoid
     # fitted from a partial view is a coarse estimate of where a surface is.
     depth_tol_m: float = 0.15
@@ -157,6 +165,11 @@ class SceneGraphConfig:
     # narrow ObjectNav view arc (see analyze_refine_accuracy). 0 disables.
     refine_max_center_move_m: float = 0.5
     link_dist_m: float = 1.0
+    # Two tracks may only be merged if they were observed at about the same
+    # time. Linking exists to reunite fragments of one object that a single
+    # ellipsoid cannot cover, and those are seen together; an object and its own
+    # ghost are not (docs/DYNAMIC_SCENES.md, the in-anchor ghosting bug).
+    link_max_frame_gap: int = 50
     near_edge_dist_m: float = 1.5
     assoc_score_thresh: float = 0.4
     assoc_depth_gate_m: float = 0.5
@@ -503,6 +516,12 @@ class YCBAuthoredConfig:
     scenes: List[str] = field(default_factory=lambda: ["*"])
     layout_types: List[str] = field(default_factory=lambda: ["static"])
     layout_indices: List[int] = field(default_factory=lambda: [1, 2, 3])
+    # Restrict episodes to these targets (YCB handle or label; empty = all).
+    # Several assets in the collector's dataset render in a way the open-vocab
+    # detector cannot recognise at any authored viewpoint, so their episodes
+    # measure asset coverage rather than dynamic-scene handling. The layouts
+    # themselves are DualMap's original data and are never edited.
+    targets: List[str] = field(default_factory=list)
     starts_per_target: int = 1
     seed: int = 42
     manifest_cache_dir: str = "outputs/ycb_manifests"

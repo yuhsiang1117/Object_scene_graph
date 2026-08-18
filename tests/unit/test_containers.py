@@ -299,3 +299,52 @@ def test_batched_support_matches_the_scalar_rule():
 def test_shadow_index_handles_an_empty_map():
     index = containers.ShadowIndex.build([])
     assert index.supporting(0.75, np.zeros(2)).size == 0
+
+
+# ------------------------------------------ linking must not merge a ghost
+
+
+def test_linking_will_not_merge_an_object_with_its_own_past():
+    """The in-anchor ghosting bug, measured: a bowl moved 0.80 m on the same
+    table, the stale track and the fresh one were 0.80 m apart under
+    link_dist_m=1.0, and relink merged them -- so object_center reported the
+    midpoint, 0.42 m from either bowl, a place with no bowl at all. Neither
+    observation can ever contradict that point."""
+    from osg.objects.association import Observation, ObjectTrack
+    from osg.objects.linking import object_center, relink
+
+    def mk(tid, x, frame_id):
+        t = ObjectTrack(id=tid, label="bowl",
+                        ellipsoid=box([x, 0.8, 0.0], (0.08, 0.08, 0.08)))
+        t.observations = [Observation(frame_id=frame_id, mu=np.zeros(2), cov=np.eye(2),
+                                      K=np.eye(3), T_cw=np.eye(4), mean_depth=1.0)]
+        return t
+
+    ghost, fresh = mk(1, -0.4, -1_000_000), mk(2, 0.4, 12)
+    tracks = [ghost, fresh]
+
+    relink(tracks, link_dist_m=1.0)  # no window: the old behaviour
+    assert ghost.linked_ids == {2}
+    assert object_center(fresh, {t.id: t for t in tracks})[0] == pytest.approx(0.0)
+
+    relink(tracks, link_dist_m=1.0, max_frame_gap=50)
+    assert ghost.linked_ids == set() and fresh.linked_ids == set()
+    assert object_center(fresh, {t.id: t for t in tracks})[0] == pytest.approx(0.4)
+
+
+def test_linking_still_merges_fragments_seen_together():
+    """The behaviour relink exists for: an L-shaped sofa split across two
+    ellipsoids, both observed in the same frames."""
+    from osg.objects.association import Observation, ObjectTrack
+    from osg.objects.linking import relink
+
+    def mk(tid, x, frame_id):
+        t = ObjectTrack(id=tid, label="sofa",
+                        ellipsoid=box([x, 0.5, 0.0], (0.4, 0.3, 0.4)))
+        t.observations = [Observation(frame_id=frame_id, mu=np.zeros(2), cov=np.eye(2),
+                                      K=np.eye(3), T_cw=np.eye(4), mean_depth=2.0)]
+        return t
+
+    a, b = mk(1, -0.3, 40), mk(2, 0.3, 42)
+    relink([a, b], link_dist_m=1.0, max_frame_gap=50)
+    assert a.linked_ids == {2} and b.linked_ids == {1}

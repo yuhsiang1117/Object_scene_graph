@@ -217,3 +217,33 @@ def test_schema_version_mismatch_is_refused(tmp_path):
     (tmp_path / "m.json").write_text(json.dumps(blob))
     with pytest.raises(MapStoreError, match="schema"):
         load_map(tmp_path / "m.json")
+
+
+# ------------------------------------------------------ ghosting on reload
+
+
+def test_a_carried_belief_cannot_assert_certainty(tmp_path):
+    """The map was built in another session and the world had every chance to
+    change. A belief restored at p=0.998 needs seven clean misses to unwind, so
+    the agent commits to a stale goal on step 1 and the episode ends before the
+    evidence arrives."""
+    t = track(1)
+    t.presence.log_odds = 6.0
+    out = roundtrip(agent_with([t]), tmp_path)
+    assert out.object_layer.get(1).presence.log_odds == pytest.approx(1.5)
+
+
+def test_disbelief_is_carried_across_unchanged(tmp_path):
+    """An object already known to be gone has not become more likely by sitting
+    in a file -- the cap limits confidence, not doubt."""
+    t = track(1)
+    t.presence.log_odds = -4.0
+    out = roundtrip(agent_with([t]), tmp_path)
+    assert out.object_layer.get(1).presence.log_odds == pytest.approx(-4.0)
+
+
+def test_restored_observations_are_marked_as_a_previous_session(tmp_path):
+    """relink must be able to tell "seen a moment ago" from "seen before the
+    world changed"; raw frame ids restart each episode and would collide."""
+    out = roundtrip(agent_with([track(1, n_obs=3)]), tmp_path)
+    assert all(o.frame_id < 0 for o in out.object_layer.get(1).observations)

@@ -27,6 +27,7 @@ class ObjectLayer:
         refine_every: int = 3,
         refine_max_center_move_m: float = 0.5,
         link_dist_m: float = 1.0,
+        link_max_frame_gap: Optional[int] = None,
         min_det_score: float = 0.0,
         min_det_bbox_px: float = 0.0,
         confirm_baseline_m: float = 0.0,
@@ -43,6 +44,7 @@ class ObjectLayer:
         self.min_obs_for_refine = min_obs_for_refine
         self.refine_every = refine_every
         self.link_dist_m = link_dist_m
+        self.link_max_frame_gap = link_max_frame_gap
         self.min_det_score = min_det_score
         self.min_det_bbox_px = min_det_bbox_px
         # confirm_baseline_m: camera-position distance from a track's first
@@ -128,7 +130,8 @@ class ObjectLayer:
                 track.refined_at_obs = track.n_obs
 
         if relink_needed:
-            relink(list(self._tracks.values()), self.link_dist_m)
+            relink(list(self._tracks.values()), self.link_dist_m,
+                   max_frame_gap=self.link_max_frame_gap)
 
     def _view_diversity_weight(self, track: ObjectTrack, cam_xy: np.ndarray) -> float:
         """Full weight for a re-observation from a meaningfully different

@@ -5,7 +5,7 @@ component's centers.
 """
 from __future__ import annotations
 
-from typing import Dict, List
+from typing import Dict, List, Optional
 
 import numpy as np
 
@@ -28,8 +28,27 @@ class _UnionFind:
             self.parent[rb] = ra
 
 
-def relink(tracks: List[ObjectTrack], link_dist_m: float = 1.0) -> None:
-    """Rebuild linked_ids for all tracks (idempotent)."""
+def _last_seen(track: ObjectTrack) -> Optional[int]:
+    return int(track.observations[-1].frame_id) if track.observations else None
+
+
+def relink(
+    tracks: List[ObjectTrack],
+    link_dist_m: float = 1.0,
+    max_frame_gap: Optional[int] = None,
+) -> None:
+    """Rebuild linked_ids for all tracks (idempotent).
+
+    `max_frame_gap` requires two tracks to have been observed at about the same
+    TIME before they may be merged. Linking exists to reunite fragments of one
+    object that a single ellipsoid cannot cover -- and those fragments are seen
+    together, in the same frames. An object and its own past are not: when a
+    mug moves half a metre, the stale track and the fresh one sit within
+    link_dist_m of each other, get merged, and object_center then reports the
+    midpoint of where the mug WAS and where it IS -- a place with no mug, which
+    neither observation can ever contradict. Requiring co-observation separates
+    "two halves of a sofa" from "an object and its ghost".
+    """
     by_label: Dict[str, List[ObjectTrack]] = {}
     for tr in tracks:
         if not tr.blacklisted:
@@ -45,8 +64,13 @@ def relink(tracks: List[ObjectTrack], link_dist_m: float = 1.0) -> None:
         for i in range(len(group)):
             for j in range(i + 1, len(group)):
                 d = np.linalg.norm(group[i].ellipsoid.center - group[j].ellipsoid.center)
-                if d < link_dist_m:
-                    uf.union(group[i].id, group[j].id)
+                if d >= link_dist_m:
+                    continue
+                if max_frame_gap is not None:
+                    fi, fj = _last_seen(group[i]), _last_seen(group[j])
+                    if fi is None or fj is None or abs(fi - fj) > max_frame_gap:
+                        continue
+                uf.union(group[i].id, group[j].id)
         roots: Dict[int, List[ObjectTrack]] = {}
         for t in group:
             roots.setdefault(uf.find(t.id), []).append(t)

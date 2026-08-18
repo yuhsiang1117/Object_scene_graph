@@ -115,6 +115,7 @@ class PresenceFilter:
         recall: Optional[RecallModel] = None,
         q_false_alarm: float = 0.05,
         l_clamp: float = 6.0,
+        l_clamp_pos: float = 3.0,
         occ_ratio_max: float = 0.30,
         depth_tol_m: float = 0.15,
         min_area_px: float = 1500.0,
@@ -128,7 +129,16 @@ class PresenceFilter:
     ) -> None:
         self.recall = recall or RecallModel()
         self.q = float(q_false_alarm)
+        # Asymmetric on purpose. A sighting is worth log(r/q) = +2.5 and a miss
+        # only log((1-r)/(1-q)) = -0.9, so a symmetric clamp saturates after
+        # three sightings and then needs SEVEN clean misses to undo -- which is
+        # exactly how a ghost survives an agent standing in front of its empty
+        # shelf. Capping belief lower says the honest thing: no amount of past
+        # evidence justifies near-certainty about a fact the world can change
+        # while you are not looking. Disbelief keeps the deeper floor, so an
+        # object that is genuinely gone stays gone without becoming unrecoverable.
         self.l_clamp = float(l_clamp)
+        self.l_clamp_pos = float(l_clamp_pos)
         self.occ_ratio_max = float(occ_ratio_max)
         self.depth_tol_m = float(depth_tol_m)
         # Expectation and ADMISSION must share a scale threshold: expecting a
@@ -265,10 +275,26 @@ class PresenceFilter:
                 det_boxes.append(e.bbox())
         if not det_boxes:
             return seen
+
+        # One detection credits ONE track: the best-overlapping one. Crediting
+        # every track that merely overlaps lets a neighbour's detection keep a
+        # ghost alive -- an object 0.8 m from where the map thinks it is still
+        # projects close enough to clear a permissive IoU gate, so the map never
+        # gets the negative evidence it is standing right in front of.
+        pairs = []
         for track, proj in projections:
             pb = proj.bbox()
-            if any(_bbox_iou(pb, db) > self.z_overlap_iou for db in det_boxes):
-                seen.add(track.id)
+            for di, db in enumerate(det_boxes):
+                iou = _bbox_iou(pb, db)
+                if iou > self.z_overlap_iou:
+                    pairs.append((iou, di, track.id))
+        pairs.sort(key=lambda p: -p[0])
+        used_dets: Set[int] = set()
+        for _, di, tid in pairs:
+            if di in used_dets or tid in seen:
+                continue
+            used_dets.add(di)
+            seen.add(tid)
         return seen
 
     def update(self, tracks: List, frame: FrameData, dets: Sequence[Detection]) -> None:
@@ -313,7 +339,9 @@ class PresenceFilter:
                 state.last_absent_kf = frame.frame_id
                 state.n_missed += 1
                 self.n_negative += 1
-            state.log_odds = float(np.clip(state.log_odds, -self.l_clamp, self.l_clamp))
+            state.log_odds = float(
+                np.clip(state.log_odds, -self.l_clamp, self.l_clamp_pos)
+            )
 
             if self.log_path and exp is not None:
                 rows.append(
