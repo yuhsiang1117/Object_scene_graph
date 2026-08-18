@@ -24,6 +24,8 @@ import numpy as np
 
 from ..llm.client import ChatClient
 from ..llm.prompts import (
+    ABSENCE_SYSTEM,
+    ABSENCE_USER,
     OBJECTNAV_CATEGORIES,
     VERIFY_CHOICE_SYSTEM,
     VERIFY_CHOICE_USER,
@@ -139,6 +141,58 @@ class VLMVerifier:
         if rgb is None or bbox_xyxy is None:
             return True
         return self._ask(self._draw_bbox(rgb, bbox_xyxy), target)
+
+    def verify_absence(
+        self,
+        rgb: Optional[np.ndarray],
+        region_bbox_xyxy: Optional[np.ndarray],
+        categories: List[str],
+        max_categories: int = 5,
+    ) -> Optional[dict]:
+        """Which of `categories` are inside the marked region?
+
+        The verifier's mirror image. Confirming what IS there is worth one call;
+        asking what is NOT there is what lets a map correct itself -- a single
+        trusted "no" collapses a belief that would otherwise need several
+        detector misses to shift.
+
+        Returns {category: present} for the categories asked, or None if the
+        call failed -- None means "no information", NOT "absent", because
+        treating a network error as evidence of absence would quietly delete
+        objects.
+
+        `categories` is truncated to `max_categories`: enumerating a long list
+        is where vision-language models are least reliable, and an absence you
+        cannot trust is worse than no absence at all.
+        """
+        if rgb is None or region_bbox_xyxy is None or not categories:
+            return None
+        asked = [str(c) for c in categories[:max_categories]]
+        img = self._draw_bbox(rgb, np.asarray(region_bbox_xyxy, dtype=float))
+        self.n_calls += 1
+        try:
+            reply = self.client.chat(
+                ABSENCE_SYSTEM,
+                ABSENCE_USER.format(categories=", ".join(asked)),
+                images=[img],
+                json_response=True,
+            )
+        except Exception as exc:  # network/model failure is not evidence
+            self.n_errors += 1
+            self.last_error = str(exc)
+            return None
+        if not isinstance(reply, dict):
+            self.n_errors += 1
+            self.last_error = f"unexpected absence reply: {reply!r}"
+            return None
+        present = reply.get("present") or []
+        if isinstance(present, str):
+            present = [present]
+        seen = {_norm(str(c)) for c in present}
+        result = {c: _norm(c) in seen for c in asked}
+        self._save_debug(img, ",".join(asked), ABSENCE_USER, reply,
+                         accepted=any(result.values()))
+        return result
 
     def verify_crop(self, img: Optional[np.ndarray], target: str) -> bool:
         """Verify a pre-cropped image (fallback when no full frame + bbox)."""

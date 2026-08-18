@@ -596,11 +596,17 @@ class NavAgent:
             action = self._follow_to(frame, self._approach_last_good_xy)
             if action is not None:
                 return action
+            abandon = self._absence_at_arrival(frame, "retreat")
+            if abandon is not None:
+                return abandon
             self.state = State.DONE  # retreat path consumed/unreachable: stop here
             self.approach_stop_reason = "retreat"
             return STOP_ACTION
 
         if self.step_count > self._goto_deadline or self._approach_steps_left <= 0:
+            abandon = self._absence_at_arrival(frame, "deadline")
+            if abandon is not None:
+                return abandon
             self.state = State.DONE
             self.approach_stop_reason = "deadline"
             return STOP_ACTION
@@ -608,6 +614,9 @@ class NavAgent:
         self._last_follow_none_reason = None
         action = self._follow_to(frame, self._goal_xy)
         if action is None:  # path consumed or unreachable: as close as it gets
+            abandon = self._absence_at_arrival(frame, "path_consumed")
+            if abandon is not None:
+                return abandon
             self.state = State.DONE
             self.approach_stop_reason = "path_consumed"
             if self.approach_diag is not None:
@@ -1042,6 +1051,77 @@ class NavAgent:
         self.state = State.GOTO_VERIFY_VIEW
         self._current_path = None
         self._goto_deadline = self.step_count + 80
+
+    def _absence_at_arrival(self, frame: FrameData, reason: str) -> Optional[str]:
+        """The approach is ending and the target was never seen. Say so.
+
+        Walking to where the map said an object was, finding nothing, and
+        stopping there is how a stale map converts a success into a confident
+        failure -- and, worse, it teaches the map nothing, so the next episode
+        makes the same trip. Arriving without a sighting IS an observation:
+        this applies it as negative evidence, and abandons the candidate when
+        the belief no longer supports stopping on it.
+
+        Returns an action when the candidate is abandoned (the caller must not
+        STOP), or None to let the normal termination proceed. A track that has
+        been seen at some point during this approach is left alone -- the
+        target was there, this is a geometry or timing problem, not absence.
+        """
+        vc = self.cfg.verification
+        if not getattr(vc, "absence_on_arrival", True):
+            return None
+        pf = self.object_layer.presence_filter
+        track = (
+            self.object_layer.get(self._candidate_id)
+            if self._candidate_id is not None else None
+        )
+        if pf is None or track is None or self._approach_last_good_xy is not None:
+            return None
+
+        # The VLM is a second sensor with its own (r, q); when it is available,
+        # ask it about the target's own footprint rather than trusting the
+        # detector's silence alone. A failed call returns None and is treated as
+        # no information, never as absence.
+        recall, q = float(getattr(vc, "detector_absence_recall", 0.5)), None
+        asked_vlm = False
+        if self.verifier is not None and getattr(vc, "absence_use_vlm", True):
+            proj = track.ellipsoid.project(frame.intrinsics.K(), frame.T_cw)
+            if proj is not None:
+                seen = self.verifier.verify_absence(
+                    frame.rgb, proj.bbox(), [self.target],
+                    max_categories=int(getattr(vc, "absence_categories_max", 5)),
+                )
+                if seen is not None:
+                    asked_vlm = True
+                    recall = float(getattr(vc, "vlm_recall", 0.85))
+                    q = float(getattr(vc, "vlm_q", 0.02))
+                    if seen.get(self.target, False):
+                        pf.apply_reading(track, True, recall, q)
+                        return None  # the VLM says it IS there; let the stop stand
+        p = pf.apply_reading(track, False, recall, q)
+        self.stats["absence_checks"] = self.stats.get("absence_checks", 0) + 1
+        if asked_vlm:
+            self.stats["absence_vlm"] = self.stats.get("absence_vlm", 0) + 1
+
+        if p >= float(getattr(vc, "abandon_below_p", 0.35)):
+            return None  # still believed: stop as before, and keep the evidence
+        self.stats["absence_abandon"] = self.stats.get("absence_abandon", 0) + 1
+        self.presence_events.append(
+            {
+                "step": int(self.step_count),
+                "track_id": int(track.id),
+                "label": str(track.label),
+                "center": [float(v) for v in self.object_layer.center_of(track)],
+                "p": round(float(p), 4),
+                "n_missed": int(track.presence.n_missed),
+                "cause": f"absent_on_arrival:{reason}",
+            }
+        )
+        self.object_layer.blacklist(track.id)
+        self._candidate_id = None
+        self._target_obj_xy = None
+        self.state = State.EXPLORE
+        return TURN_ACTION
 
     def _log_goal_commit(self, track) -> None:
         """What the map believed at the moment it committed. A commit to a

@@ -247,3 +247,56 @@ def test_restored_observations_are_marked_as_a_previous_session(tmp_path):
     world changed"; raw frame ids restart each episode and would collide."""
     out = roundtrip(agent_with([track(1, n_obs=3)]), tmp_path)
     assert all(o.frame_id < 0 for o in out.object_layer.get(1).observations)
+
+
+# ---------------------------------------------------- C5: absence reporting
+
+
+def test_verify_absence_reports_per_category_and_never_guesses():
+    """A failed call must return None -- 'no information'. Treating a network
+    error as evidence of absence would quietly delete objects."""
+    import numpy as np
+    from osg.verification.verifier import VLMVerifier
+
+    class _Client:
+        def __init__(self, reply):
+            self.reply, self.calls = reply, 0
+
+        def chat(self, system, user, images=None, json_response=False):
+            self.calls += 1
+            if isinstance(self.reply, Exception):
+                raise self.reply
+            return self.reply
+
+    img = np.zeros((40, 40, 3), np.uint8)
+    bbox = np.array([5.0, 5.0, 30.0, 30.0])
+
+    v = VLMVerifier(_Client({"visible": "an empty table", "present": []}))
+    assert v.verify_absence(img, bbox, ["mug"]) == {"mug": False}
+
+    v = VLMVerifier(_Client({"visible": "a mug and a book", "present": ["mug"]}))
+    assert v.verify_absence(img, bbox, ["mug", "bowl"]) == {"mug": True, "bowl": False}
+
+    v = VLMVerifier(_Client(RuntimeError("network down")))
+    assert v.verify_absence(img, bbox, ["mug"]) is None
+    assert v.n_errors == 1
+
+
+def test_verify_absence_truncates_the_category_list():
+    """Enumerating a long list is where VLMs are least reliable."""
+    import numpy as np
+    from osg.verification.verifier import VLMVerifier
+
+    captured = {}
+
+    class _Client:
+        def chat(self, system, user, images=None, json_response=False):
+            captured["user"] = user
+            return {"present": []}
+
+    v = VLMVerifier(_Client())
+    cats = ["mug", "bowl", "plate", "kettle", "colander", "zucchini"]
+    out = v.verify_absence(np.zeros((40, 40, 3), np.uint8), np.array([1.0, 1.0, 20.0, 20.0]),
+                           cats, max_categories=3)
+    assert list(out) == ["mug", "bowl", "plate"]
+    assert "zucchini" not in captured["user"] and "colander" not in captured["user"]

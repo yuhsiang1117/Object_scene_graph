@@ -286,6 +286,34 @@ class LLMConfig:
 @dataclass
 class VerificationConfig:
     enabled: bool = True
+    # Arriving at a committed target without ever seeing it is an OBSERVATION,
+    # not just a failed trip (docs/DYNAMIC_SCENES.md, C5). Applying it as
+    # negative evidence is what stops a stale map sending the agent back to the
+    # same empty spot next episode.
+    absence_on_arrival: bool = True
+    # Effective recall of "the detector saw nothing during the WHOLE approach".
+    # Measured, not guessed: 6790 logged expectations from real episodes give a
+    # 0.812 detection rate in the regime the visibility gate admits, and an
+    # approach is dozens of frames from many poses rather than one look. Kept
+    # just under that so a failed approach is strong evidence without being
+    # decisive on its own.
+    detector_absence_recall: float = 0.8
+    # The VLM as a second sensor, with its own error rates. One trusted "no" is
+    # worth about two detector misses: log(0.15/0.98) vs log(0.5/0.95).
+    absence_use_vlm: bool = True
+    vlm_recall: float = 0.85
+    vlm_q: float = 0.02
+    # Enumerating a long list is where VLMs are least reliable, and an absence
+    # you cannot trust is worse than no absence at all.
+    absence_categories_max: int = 5
+    # Below this belief the agent abandons the candidate instead of stopping on
+    # it, and goes back to exploring. 0.45 is where the arithmetic puts the
+    # intended behaviour, given a belief reloaded at p=0.82: ONE trusted VLM
+    # "no" lands at 0.407 and abandons, the detector's silence alone needs
+    # THREE failed approaches (0.702 / 0.554 / 0.395), and a belief saturated
+    # in this episode survives a single VLM "no" at 0.755. Absence has to be
+    # earned, and cheap evidence earns it more slowly.
+    abandon_below_p: float = 0.45
     min_obs: int = 3
     # Candidate quality gates: sliver/fragment detections (a chair edge seen
     # through furniture) must not trigger the expensive approach+verify loop.

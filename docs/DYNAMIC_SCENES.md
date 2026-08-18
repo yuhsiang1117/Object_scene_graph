@@ -465,26 +465,76 @@ Same episode, bowl moved 0.80 m on the same table:
 | ghost belief | p = 0.9975, never moved | p = **0.654, falling** from 0.82 |
 | real bowl | never isolated | mapped **0.05 m** from its true new pose |
 
-**What this uncovered is now the top blocker, and it is not about staleness at all.**
-Run the *static* layout against a map of that same static layout — a perfectly correct
-map — and the episode still fails:
+**Correction to an earlier reading of this run.** An earlier version of this section said
+the agent commits from memory and stops "never having seen the object". That was wrong,
+and the episode record says so: `approach_stop_reason: depth` with a `bbox_log` showing
+the target closing from 1.5 m to 0.95 m. The agent *does* see the bowl and stops on the
+depth criterion. What actually happens on a **correct** preloaded map is a terminal
+precision miss — it stops 0.28 m from the nearest authored viewpoint against a 0.18 m
+success radius, where the same agent exploring from scratch lands inside it:
 
 | same world, same episode | outcome |
 |---|---|
-| fresh map (pass 1) | **success**, SPL 0.323, 157 steps |
-| perfect preloaded map | **failure**, 49 steps, 0.28 m from goal |
+| fresh map | **success**, SPL 0.323, 157 steps |
+| perfect preloaded map | **failure**, 49 steps, 0.28 m from the nearest viewpoint |
 
-With a map in hand the agent commits at step 1 and drives to the object's stored centre,
-**never having seen it**. HM3D success needs the agent inside a view-point ring, which the
-detection-driven approach reaches by closing on a *visible* target; commit-from-memory
-skips that entirely and stops wherever the navmesh arrives. So every two-pass episode is
-scored on a terminal behaviour that never runs. Until the agent must *see* the target
-before stopping — C5's negative confirmation, and refusing to STOP on a target the live
-view does not show — no dynamic number from this benchmark measures dynamics.
+That is a ~0.10 m problem in where the approach terminates, worth fixing on its own, and
+it is not what C5 addresses.
 
 **Targets are now selectable** (`ycb.targets`), because four of six assets cannot be
 detected at any authored viewpoint. The layouts are DualMap's original data and are never
 edited; this only chooses which episodes to run. Bowl is the usable target today.
+
+### C5 — the VLM as a second sensor, and absence as an observation
+
+**Status: done (2026-08-18).** 8 new unit tests; 307 unit + 2 integration green. No
+usable VLM credential in this environment (`NVIDIA_API_KEY` is set but empty), so the
+VLM path is unit-tested against a stub client and the detector path is measured end to
+end.
+
+Three pieces:
+
+- `VLMVerifier.verify_absence(rgb, region_bbox, categories)` asks which of up to five
+  categories are inside a marked region, listing what it sees first so a "no" is grounded
+  in a description rather than in agreeing with the question. A failed call returns
+  `None` — *no information*, never *absent*; treating a network error as evidence would
+  quietly delete objects.
+- `PresenceFilter.apply_reading(track, detected, recall, q)` takes a reading from **any**
+  sensor with that sensor's own error rates. This is the payoff of writing C1 as a filter:
+  fusion needs no fusion code. A VLM at `r=0.85, q=0.02` contributes −1.88 per miss
+  against the detector's −0.64, so one trusted look is worth nearly three ordinary ones.
+- `NavAgent._absence_at_arrival` makes the three no-sighting terminations
+  (`path_consumed`, `deadline`, `retreat`) apply that evidence instead of stopping on
+  empty space. A track seen at any point during the approach is left alone — that is a
+  geometry problem, not absence.
+
+The thresholds are chosen from the arithmetic rather than picked: from a belief reloaded
+at p=0.82, one trusted VLM "no" lands at 0.407 and abandons, the detector's silence alone
+needs three failed approaches (0.702 / 0.554 / 0.395), and a belief saturated *in this
+episode* survives a single VLM "no" at 0.755. Absence has to be earned, and cheap evidence
+earns it more slowly. `detector_absence_recall` is 0.8 from measurement — 6790 logged
+expectations give a 0.812 detection rate in the regime the visibility gate admits.
+
+Cross-anchor, bowl moved 6.84 m, stale map, detector only:
+
+| | outcome | what the map did |
+|---|---|---|
+| absence off | stops at step 36 on empty space | ghost belief had already fallen to 0.25 — **and the stop ignored it** |
+| absence on | abandons at step 36, explores to 500 | belief 0.066, ghost blacklisted, `absent_on_arrival:path_consumed` recorded |
+
+Worth being precise about what fixed it: the presence filter's ordinary per-keyframe
+negatives had *already* driven the ghost to p=0.25 by the time the agent arrived. The
+belief was right and nothing consulted it. The explicit arrival reading pushes it to 0.066
+and makes the decision, but the deeper lesson is that a belief nothing reads is not a
+belief.
+
+The episode still fails: the agent abandons the ghost and then has 464 steps of undirected
+exploration to find a bowl 6.84 m away. Turning "not here" into "then look there" is C3,
+and this is the first run where that is the *only* thing left in the way.
+
+Regression: the fresh-map success path is unchanged (SR 1, SPL 0.323, 157 steps), and on a
+correct preloaded map the agent still stops on `depth` with no absence check — C5 stays
+out of the way when the target is visible.
 
 ---
 

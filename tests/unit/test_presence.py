@@ -336,3 +336,34 @@ def test_a_detection_credits_one_track_not_every_overlapping_one():
     pf.update([ghost, live], f, [detection_over(live, f)])
     assert live.presence.log_odds > before_ghost, "the live object was not credited"
     assert ghost.presence.log_odds < before_ghost, "the ghost was credited with a neighbour's detection"
+
+
+# ------------------------------------------------ C5: a second sensor's word
+
+
+def test_a_vlm_miss_outweighs_a_detector_miss():
+    """The payoff of writing this as a filter: fusion is free. A VLM with
+    r=0.85, q=0.02 contributes log(0.15/0.98) per miss against the detector's
+    log(0.5/0.95), so one trusted look is worth about two ordinary ones."""
+    det_tr, vlm_tr, pf = track(1), track(2), filt()
+    before = det_tr.presence.log_odds
+    pf.apply_reading(det_tr, False, recall=0.5)
+    pf.apply_reading(vlm_tr, False, recall=0.85, q=0.02)
+    det_step = before - det_tr.presence.log_odds
+    vlm_step = before - vlm_tr.presence.log_odds
+    assert vlm_step > 2 * det_step * 0.9
+    assert vlm_tr.presence.n_missed == 1
+
+
+def test_an_external_sighting_is_positive_and_respects_the_clamp():
+    tr, pf = track(), filt()
+    tr.presence.log_odds = -5.0
+    for _ in range(10):
+        pf.apply_reading(tr, True, recall=0.85, q=0.02)
+    assert tr.presence.log_odds == pytest.approx(pf.l_clamp_pos)
+
+
+def test_a_reading_counts_as_evidence_the_belief_rests_on():
+    tr, pf = track(), filt()
+    pf.apply_reading(tr, False, recall=0.5)
+    assert tr.presence.n_expected == 1

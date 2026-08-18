@@ -182,3 +182,50 @@ def test_offline_change_is_reported_as_step_zero():
     from the first step -- so the belief-latency clock starts at 0."""
     r = episode(step=0, events=[{"step": 25, "label": "mug"}])
     assert belief_latency([r])["mean_steps"] == 25.0
+
+
+# ----------------------------------------- C5: arriving and seeing nothing
+
+
+class _Filter:
+    """The belief update in isolation -- see NavAgent._absence_at_arrival."""
+
+    def __init__(self, p=0.82):
+        import math
+        self.log_odds = math.log(p / (1 - p))
+
+    def miss(self, recall, q=0.05):
+        import math
+        self.log_odds += math.log((1 - recall) / (1 - q))
+        return 1 / (1 + math.exp(-self.log_odds))
+
+
+THRESHOLD = 0.45  # VerificationConfig.abandon_below_p
+
+
+def test_one_vlm_no_abandons_a_ghost_the_detector_alone_would_keep():
+    """The behaviour C5 buys, and the arithmetic the threshold is chosen from.
+    Walking to where the map said an object was and finding nothing must be an
+    observation, not just a failed trip -- otherwise the map learns nothing and
+    sends the agent back next episode. But cheap evidence must earn it slowly:
+    the detector's silence is worth log(0.5/0.95) and a trusted VLM "no"
+    log(0.15/0.98), nearly three times as much."""
+    assert _Filter().miss(recall=0.5) > THRESHOLD, "one detector miss should not decide it"
+    assert _Filter().miss(recall=0.85, q=0.02) < THRESHOLD, "a trusted no should decide it"
+
+
+def test_the_detector_alone_needs_three_failed_approaches():
+    f, p = _Filter(), 1.0
+    seen = []
+    for _ in range(3):
+        p = f.miss(recall=0.5)
+        seen.append(round(p, 3))
+    assert seen[0] > THRESHOLD and seen[1] > THRESHOLD and seen[2] < THRESHOLD, seen
+
+
+def test_a_belief_earned_in_this_episode_survives_one_trusted_no():
+    """Absence has to be earned. An object seen repeatedly a moment ago is more
+    likely occluded than gone, and must not be deleted on one inconclusive look."""
+    saturated = _Filter()
+    saturated.log_odds = 3.0  # PresenceConfig.l_clamp_pos
+    assert saturated.miss(recall=0.85, q=0.02) > THRESHOLD

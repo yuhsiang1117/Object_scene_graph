@@ -359,6 +359,35 @@ class PresenceFilter:
         if rows:
             self._log(rows)
 
+    def apply_reading(
+        self, track, detected: bool, recall: float, q: Optional[float] = None
+    ) -> float:
+        """One Bayes step from ANY sensor, with that sensor's own (r, q).
+
+        The filter does not care which instrument produced the reading, which
+        is the payoff of writing it as a filter rather than as detector
+        bookkeeping: a VLM with r=0.85, q=0.02 contributes
+        log(0.15/0.98) = -1.9 per miss against the detector's -0.9, so one
+        trusted look is worth two ordinary ones and no fusion code is needed.
+
+        Returns the new probability.
+        """
+        state = track.presence
+        r = float(np.clip(recall, 1e-3, 1.0 - 1e-3))
+        q_eff = float(np.clip(self.q if q is None else q, 1e-4, 1.0 - 1e-3))
+        if detected:
+            state.log_odds += math.log(r / q_eff)
+            self.n_positive += 1
+        else:
+            state.log_odds += math.log((1.0 - r) / (1.0 - q_eff))
+            state.n_missed += 1
+            self.n_negative += 1
+        state.n_expected += 1
+        state.log_odds = float(
+            np.clip(state.log_odds, -self.l_clamp, self.l_clamp_pos)
+        )
+        return state.p
+
     def _log(self, rows: List[dict]) -> None:
         try:
             with open(self.log_path, "a", encoding="utf-8") as fh:

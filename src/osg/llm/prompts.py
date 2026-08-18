@@ -78,3 +78,23 @@ VERIFY_CHOICE_USER = """Categories: {categories}.
 First describe the object inside the red bounding box, then choose the single
 best-matching category from the list above (or "none" if it fits none).
 Respond as JSON: {{"description": "<short>", "category": "<one category or none>", "confidence": <0-1>}}"""
+
+
+# Absence: the other half of verification. Confirming what IS there is only
+# useful once; asking what is NOT there is what lets a map correct itself. The
+# question is deliberately scoped to a marked REGION rather than the whole
+# frame -- "is there a mug anywhere in this room" is unanswerable, "is there a
+# mug on this table" is not -- and the model is asked to list what it does see
+# first, so a "no" is grounded in a description rather than produced by a model
+# agreeing with the question's framing.
+ABSENCE_SYSTEM = (
+    "You help a robot check whether objects are still where it remembers them. "
+    "You are shown a camera image with ONE region outlined by a red box. List "
+    "what you actually see inside that red region, then say which of the asked "
+    "categories are present there. Be strict: only say an object is present if "
+    "you can actually see it inside the red region. Answer with JSON only."
+)
+
+ABSENCE_USER = """Look only inside the red box. First list what you see there, then for each of
+these categories say whether it is present inside the red box: {categories}.
+Respond as JSON: {{"visible": "<short list of what you see>", "present": [<categories that ARE there>]}}"""
