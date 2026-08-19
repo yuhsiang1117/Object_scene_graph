@@ -173,6 +173,58 @@ def _target_track_fields(agent) -> dict:
     }
 
 
+def _attempt_succeeded(env, frame, cfg) -> bool:
+    """Would STOPping here score? Asked without ending the episode.
+
+    Habitat scores success only when STOP is passed to the task, and that also
+    terminates the episode -- so a multi-attempt protocol has to evaluate the
+    same criterion itself: geodesic distance from the agent to the nearest goal
+    view point, under the same success_distance.
+    """
+    try:
+        episode = env.current_episode
+        sim = env.env.sim
+        pos = sim.get_agent_state().position
+        best = float("inf")
+        for goal in getattr(episode, "goals", []) or []:
+            for vp in getattr(goal, "view_points", []) or []:
+                import habitat_sim
+
+                path = habitat_sim.ShortestPath()
+                path.requested_start = np.asarray(pos, dtype=np.float32)
+                path.requested_end = np.asarray(vp.agent_state.position, dtype=np.float32)
+                if sim.pathfinder.find_path(path):
+                    best = min(best, float(path.geodesic_distance))
+        return best <= float(cfg.agent.success_distance)
+    except Exception:  # never let scoring bookkeeping end a run
+        return False
+
+
+def _rearm_agent(agent, cfg, steps: int) -> None:
+    """Give the agent another attempt without giving it a new map.
+
+    Everything learned survives -- presence beliefs, searched surfaces, objects
+    mapped along the way -- because that carry-over is the whole point of
+    retrying. Only the navigation state is reset, and the candidate just
+    rejected is blacklisted so the next attempt cannot repeat it.
+    """
+    from ..agent.nav_agent import State
+
+    if agent._candidate_id is not None:
+        agent.object_layer.blacklist(agent._candidate_id)
+    agent._candidate_id = None
+    agent._target_obj_xy = None
+    agent._goal_xy = None
+    agent._current_path = None
+    agent._approach_at_viewpoint = False
+    agent._scan_turns_left = 0
+    agent._scan_expected = 0
+    agent.state = State.EXPLORE
+    agent.approach_stop_reason = None
+    agent._goto_deadline = agent.step_count + int(cfg.agent.max_steps)
+    agent.stats["attempts"] = agent.stats.get("attempts", 1) + 1
+
+
 def authored_scene(episode) -> str:
     return str(_authored_episode_metadata(episode).get("scene", "scene"))
 
@@ -379,8 +431,28 @@ def run_eval(cfg) -> dict:
         dbg = _DebugVideo(cfg, out_dir, ep_tag) if cfg.eval.debug_frames else None
         t0 = time.time()
         steps = 0
+        # DualMap gives a query several navigation attempts: when one fails it
+        # updates the map and goes again. Scoring a single attempt is a STRICTER
+        # protocol than the system we are comparing against, so match theirs.
+        # An attempt ends when the agent decides to STOP; if that decision does
+        # not score, the map keeps everything it learned (beliefs, searched
+        # surfaces, new objects) and the agent is re-armed for another go.
+        attempts_allowed = max(1, int(getattr(cfg.eval, "attempts", 1)))
+        attempts_used, attempt_log = 1, []
         while not env.episode_over:
             action = agent.act(frame)  # updates agent.costmap from `frame`
+            if action == "stop" and attempts_used < attempts_allowed:
+                scored = _attempt_succeeded(env, frame, cfg)
+                attempt_log.append(
+                    {"attempt": attempts_used, "step": steps, "success": bool(scored)}
+                )
+                if not scored:
+                    # Not here after all. Keep the map, drop the thing it stopped
+                    # on, and let it choose again -- this is the loop DualMap runs
+                    # and the one our search posterior was built for.
+                    attempts_used += 1
+                    _rearm_agent(agent, cfg, steps)
+                    continue
             if dbg is not None:
                 dbg.write(frame, agent, target, detector)
             frame = env.step(action)
@@ -427,6 +499,8 @@ def run_eval(cfg) -> dict:
             # agent believed when it committed to a goal, and what it still
             # believed about the target at the end.
             "prior_map": map_note,
+            "attempts_used": attempts_used,
+            "attempt_log": attempt_log,
             "presence_events": agent.presence_events,
             "search_log_events": agent.search_log_events,
             "goal_commit_log": agent.goal_commit_log,

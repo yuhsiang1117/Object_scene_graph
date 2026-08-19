@@ -1060,6 +1060,41 @@ far fewer candidate surfaces, or a sensor that can check a surface without stand
 Ordering was never the binding constraint, and two batches spent on priors would have been
 better spent measuring inspection cost first.
 
+### Matching DualMap's protocol: several attempts per query
+
+Two corrections to how this has been evaluated, both of which made our setup **stricter
+than the system we are comparing against** rather than fairer.
+
+**500 steps is the standard budget**, so the earlier 2000-step run should be read as a
+diagnostic (it showed the search is not merely starved) and never as a proposed setting.
+Everything below is at 500.
+
+**DualMap allows a query several navigation attempts**: when one fails it updates the map
+and goes again — that is what its "exceeding navigation attempt limits" failure bucket
+counts. Scoring a single attempt, as every batch here did until now, is a harsher rule than
+theirs. `eval.attempts` now matches it: when the agent decides to STOP and that decision
+would not score, the map keeps everything it has learned — presence beliefs, searched
+surfaces, objects mapped along the way — the candidate it stopped on is blacklisted, and it
+chooses again, all within the same 500 steps.
+
+Scoring an attempt without ending the episode needs the criterion evaluated directly, since
+Habitat only scores STOP and STOP also terminates: `_attempt_succeeded` computes geodesic
+distance to the nearest goal view point under the same `success_distance`.
+
+It works mechanically — the cracker box episodes now take three attempts (stopping at
+steps 52 and 101 before a third), where before they ended at the first — and it produced
+**no successes**: cross-anchor 0/9, static 0/3.
+
+**And it surfaced the thing to fix next.** One episode, `static bowl`, **ended 0.126 m from
+the goal — inside the 0.18 m success radius — and never stopped**, running the full 500
+steps with `stop_reason: None`. It was standing on the answer. That is not search and not
+staleness; it is the terminal decision failing to fire, and it is now the clearest
+single-episode win available. The same configuration scored that episode 0.06 m and
+successful two commits ago, so something in the recent search changes (the glance
+retirement, the same-room bonus, or dropping proximity once moved) has made the agent
+wander past a target it had already reached. That regression is worth bisecting before any
+further search work.
+
 ---
 
 ## Phase 4 — C4 change log

@@ -559,6 +559,11 @@ class FloorConfig:
 
 @dataclass
 class EvalConfig:
+    # Navigation attempts per query. DualMap allows several: a failed attempt
+    # updates the map and the agent goes again. Scoring one attempt is a
+    # STRICTER protocol than the system being compared against, so this exists
+    # to match theirs rather than to flatter ours. 1 keeps the old behaviour.
+    attempts: int = 1
     # `objectnav` loads the standard HM3D episode dataset. `ycb_authored`
     # discovers scene-layout JSON files written by habitat-data-collector and
     # builds equivalent ObjectNav episodes from the placed YCB objects.
