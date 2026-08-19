@@ -85,6 +85,9 @@ class SceneGraph:
         container_top_h_m: Tuple[float, float] = containers_mod.DEFAULT_TOP_H_M,
         container_min_area_m2: float = containers_mod.DEFAULT_MIN_AREA_M2,
         container_support_tol_m: float = containers_mod.DEFAULT_SUPPORT_TOL_M,
+        container_min_obs: int = 1,
+        container_min_score: float = 0.0,
+        container_merge_m: float = 0.0,
     ) -> None:
         self.rooms: Dict[int, RoomNode] = {}
         self.objects: List[ObjectNodeView] = []
@@ -93,6 +96,9 @@ class SceneGraph:
         self._container_top_h_m = tuple(container_top_h_m)
         self._container_min_area_m2 = float(container_min_area_m2)
         self._container_support_tol_m = float(container_support_tol_m)
+        self._container_min_obs = int(container_min_obs)
+        self._container_min_score = float(container_min_score)
+        self._container_merge_m = float(container_merge_m)
 
     def rebuild(
         self,
@@ -171,6 +177,22 @@ class SceneGraph:
         # 1. Linked components: an L-shaped sofa split across two ellipsoids is
         #    ONE surface. relink() gives every member the full component, so the
         #    minimum id is a stable canonical name for it.
+        # A search candidate has to be a surface that is really there. The map
+        # held 112 of them for a six-object hotel suite -- 29 "bed"s, 34 seen
+        # exactly once, 46 scoring under 0.5 -- and the search budget is seven
+        # to nine inspections, so two thirds of every episode was spent on
+        # detector noise. Filtering to twice-seen, half-confident surfaces and
+        # merging duplicates takes the true destination of a cross-anchor move
+        # from rank 20 of 112 to rank 7 of 46, and into the inspected set in
+        # five of nine relocations instead of three.
+        min_obs = int(self._container_min_obs)
+        min_score = float(self._container_min_score)
+        tracks = {
+            tid: t for tid, t in tracks.items()
+            if getattr(t, "n_obs", 0) >= min_obs
+            and float(getattr(t, "best_score", 0.0)) >= min_score
+        }
+
         comps: Dict[int, set] = {}
         for tid, track in tracks.items():
             linked = getattr(track, "linked_ids", None) or set()
@@ -224,6 +246,38 @@ class SceneGraph:
                 floor_id=view.floor_id,
             )
             footprints[cid] = shadows
+
+        # Merge duplicates of one piece of furniture. linking.relink cannot do
+        # this: it requires co-observation, which is right for a movable object
+        # and its own ghost but wrong for a bed seen from two rooms on two
+        # different passes. Containers are the stable layer -- a bed does not
+        # move -- so proximity and label are enough.
+        merge_m = float(self._container_merge_m)
+        if merge_m > 0.0 and len(self.containers) > 1:
+            # Widest first, so the surviving node is the best-supported one.
+            order = sorted(self.containers, key=lambda c: -self.containers[c].area_m2)
+            keep: List[int] = []
+            for cid in order:
+                node = self.containers[cid]
+                dup = None
+                for kid in keep:
+                    other = self.containers[kid]
+                    if other.label != node.label:
+                        continue
+                    if float(np.linalg.norm(other.center - node.center)) <= merge_m:
+                        dup = kid
+                        break
+                if dup is None:
+                    keep.append(cid)
+                else:
+                    merged = self.containers[dup]
+                    merged.track_ids = sorted(set(merged.track_ids) | set(node.track_ids))
+                    merged.top_h = max(merged.top_h, node.top_h)
+                    footprints[dup] = footprints[dup] + footprints[cid]
+            dropped = [c for c in self.containers if c not in keep]
+            for cid in dropped:
+                self.containers.pop(cid, None)
+                footprints.pop(cid, None)
 
         for cid in sorted(self.containers):
             room = self.rooms.get(self.containers[cid].room_id)

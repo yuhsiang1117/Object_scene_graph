@@ -1176,6 +1176,58 @@ sensors would have fixed a heading.
 Cross-anchor is unchanged at 0/9, and that remains a detection-range-times-candidate-count
 problem rather than a heading one.
 
+### Cross-anchor works: the search was never being driven to
+
+Every C3 result in this document up to here measured nothing, and the log entry that
+gives it away had been sitting in the data for several rounds:
+
+```
+chose desk  prior=3.20 cost=2.3   -> searched 288 arrived=False factor=0.8
+chose desk  prior=2.56 cost=2.3   -> searched 288 arrived=False factor=0.64
+chose desk  prior=2.05 cost=2.3   -> searched 288 arrived=False factor=0.512
+... eight times, one surface, an unchanged 2.3 m path cost
+```
+
+An unchanged path cost means the agent never moved. Only `State.GOTO_FRONTIER` follows
+`_goal_xy`; the surface selection set the goal and left the state at `EXPLORE`, so the
+agent stood still, re-selected the same surface five steps later, and scored it "never
+reached" each time. Every "8 surfaces inspected" in the earlier batches was eight
+selections that were never acted on. The priors, the room term, the glance retirement, the
+proximity question -- all of it was tuning the ranking of a list nobody walked to.
+
+Two fixes together make the search real: drive to the chosen surface (set the state that
+follows the goal), and aim at a pose you can **stand in** rather than the middle of the
+furniture -- a container's centre is inside the desk, so arrival could never register even
+once the agent did move. Alongside them, the candidate set is now filtered to surfaces
+that are really there (seen twice, scored above 0.5, duplicates merged): 112 -> 46, which
+takes a cross-anchor destination from rank 20 to rank 7.
+
+**21 episodes, three attempts, 500 steps:**
+
+| condition | n | SR | SPL |
+|---|---|---|---|
+| bowl | 7 | **0.714** | |
+| tomato soup can | 7 | 0.286 | |
+| cracker box | 7 | 0.143 | |
+| in_anchor | 9 | 0.444 | 0.311 |
+| **cross_anchor** | 9 | **0.333** | 0.086 |
+| static | 3 | 0.333 | 0.252 |
+| **overall** | **21** | **0.381** | **0.206** |
+
+**Cross-anchor goes 0.000 -> 0.333**, and the successful episodes look like the design
+intends: go to the remembered place, find nothing, abandon it, inspect three or four
+plausible surfaces, find the object at its new home 0.05-0.12 m from the goal. Overall SR
+0.286 -> 0.381. SPL on those episodes is low (0.086) exactly as it should be -- the agent
+walks a long way to re-find something -- and that is the honest signature of re-search
+rather than luck.
+
+The three cracker box episodes still never search (`chose=0`): they stop three times
+without ever abandoning, which is a separate thread.
+
+The lesson is the same one this document keeps recording: the failing data was
+self-diagnosing several rounds before it was read. "Constant path cost, arrived=False,
+same surface" says "it never went" and nothing else.
+
 ---
 
 ## Phase 4 — C4 change log

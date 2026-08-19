@@ -276,6 +276,9 @@ class NavAgent:
             container_top_h_m=tuple(cfg.scene_graph.container_top_h_m),
             container_min_area_m2=cfg.scene_graph.container_min_area_m2,
             container_support_tol_m=cfg.scene_graph.container_support_tol_m,
+            container_min_obs=getattr(cfg.scene_graph, "container_min_obs", 1),
+            container_min_score=getattr(cfg.scene_graph, "container_min_score", 0.0),
+            container_merge_m=getattr(cfg.scene_graph, "container_merge_m", 0.0),
         )
         self.keyframes = KeyframeStore(save_dir=keyframe_dir)
         self.kf_selector = KeyframeSelector(
@@ -883,6 +886,17 @@ class NavAgent:
             self._goal_xy = surface.goal_xy
             self._search_container = int(surface.ref_id)
             self._search_started_step = self.step_count
+            # Actually GO there. Only GOTO_FRONTIER follows _goal_xy; setting the
+            # goal while the state stayed EXPLORE meant the agent never moved,
+            # re-selected the same surface five steps later, and scored it
+            # "never reached" each time. Every C3 result before this was
+            # measuring selections that were never acted on: eight inspections
+            # of one desk, an unchanged 2.3 m path cost, arrived=False
+            # throughout. The give-up net handles a null frontier already.
+            self._current_frontier = None
+            self._progress_ref_step = self.step_count
+            self._progress_ref_xy = agent_xy.copy()
+            self.state = State.GOTO_FRONTIER
             self._current_path = None
             self._goal_frontier = None
             self.stats["search_surface"] = self.stats.get("search_surface", 0) + 1
@@ -1018,6 +1032,22 @@ class NavAgent:
         )
         if not cands:
             return None
+        # Drive to a pose you can STAND in, not to the middle of the furniture.
+        # A container's centre is inside the desk; the follower ends wherever the
+        # navmesh allows, arrival is never registered, and the surface is scored
+        # as "never reached" -- a quarter credit -- so it stays top of the list
+        # and gets chosen again. Measured before this fix, one episode's entire
+        # search was: desk, desk, desk, desk, desk, desk, desk, desk, with its
+        # prior decaying 3.20, 2.56, 2.05, 1.64 ... and an unchanged 2.5 m path
+        # cost every time. Eight inspections, one surface.
+        reachable = []
+        for c in cands:
+            view = self.viewpoint_planner.approach_viewpoint(c.goal_xy, self.costmap)
+            c.goal_xy = np.asarray(
+                view if view is not None else self._nearest_free_xy(c.goal_xy), dtype=float
+            )
+            reachable.append(c)
+        cands = reachable
         # Prefer surfaces in the room the agent is already in. Simulated over
         # this scene: room-grouped order reaches the target in a median 37
         # inspections and 33 m against 45 and 40 m for a plain global argmax,

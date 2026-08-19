@@ -348,3 +348,54 @@ def test_linking_still_merges_fragments_seen_together():
     a, b = mk(1, -0.3, 40), mk(2, 0.3, 42)
     relink([a, b], link_dist_m=1.0, max_frame_gap=50)
     assert a.linked_ids == {2} and b.linked_ids == {1}
+
+
+# ------------------------------------------- a candidate must really be there
+
+
+class _ScoredTrack(_Track):
+    def __init__(self, *a, n_obs=5, best_score=0.9, **kw):
+        super().__init__(*a, **kw)
+        self.n_obs, self.best_score = n_obs, best_score
+
+
+def _graph(tracks, **kw):
+    cm, labels = make()
+    sg = SceneGraph(**kw)
+    sg.rebuild(labels, cm, _Layer(tracks))
+    return sg
+
+
+def test_weakly_seen_surfaces_are_not_search_candidates():
+    """Measured on the accumulated map: 112 containers for a six-object suite,
+    34 of them seen exactly once and 46 scoring under 0.5, against a search
+    budget of seven to nine inspections. Two thirds of every episode went on
+    detector noise."""
+    solid = _ScoredTrack(1, "table", table(1).center, (0.6, 0.02, 0.4), n_obs=5, best_score=0.9)
+    glimpsed = _ScoredTrack(2, "table", table(2, xz=(6.0, 6.0)).center, (0.6, 0.02, 0.4),
+                            n_obs=1, best_score=0.9)
+    unsure = _ScoredTrack(3, "table", table(3, xz=(9.0, 9.0)).center, (0.6, 0.02, 0.4),
+                          n_obs=5, best_score=0.2)
+    sg = _graph([solid, glimpsed, unsure], container_min_obs=2, container_min_score=0.5)
+    assert set(sg.containers) == {1}
+
+
+def test_duplicate_detections_of_one_surface_become_one_candidate():
+    """29 "bed"s in a suite with maybe three. relink cannot merge them: it
+    requires co-observation, which is right for an object and its own ghost and
+    wrong for a bed seen from two rooms on two different passes."""
+    a = _ScoredTrack(1, "bed", table(1, xz=(1.0, 1.0), top=0.5, half=(0.9, 0.2, 0.9),
+                                     label="bed").center, (0.9, 0.2, 0.9))
+    b = _ScoredTrack(2, "bed", table(2, xz=(1.4, 1.2), top=0.5, half=(0.8, 0.2, 0.8),
+                                     label="bed").center, (0.8, 0.2, 0.8))
+    far = _ScoredTrack(3, "bed", table(3, xz=(8.0, 8.0), top=0.5, half=(0.9, 0.2, 0.9),
+                                       label="bed").center, (0.9, 0.2, 0.9))
+    sg = _graph([a, b, far], container_min_obs=2, container_min_score=0.5, container_merge_m=1.0)
+    assert len(sg.containers) == 2, "the two overlapping beds are one piece of furniture"
+    merged = max(sg.containers.values(), key=lambda c: len(c.track_ids))
+    assert sorted(merged.track_ids) == [1, 2]
+
+
+def test_the_gates_are_off_by_default_so_old_behaviour_is_unchanged():
+    t = _ScoredTrack(1, "table", table(1).center, (0.6, 0.02, 0.4), n_obs=1, best_score=0.1)
+    assert set(_graph([t]).containers) == {1}

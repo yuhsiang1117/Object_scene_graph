@@ -249,6 +249,17 @@ class SceneGraphConfig:
     # resting on it. Generous, because a mask-moment ellipsoid fitted from a
     # partial view is a coarse estimate of where an object's bottom is.
     container_support_tol_m: float = 0.15
+    # A search candidate has to be a surface that is really there. Measured on
+    # the accumulated map: 112 containers for a six-object hotel suite, 29 of
+    # them "bed", 34 seen exactly once, 46 scoring under 0.5 -- against a search
+    # budget of seven to nine inspections per episode. These gates cut it to 46
+    # and take a cross-anchor destination from rank 20 to rank 7.
+    container_min_obs: int = 2
+    container_min_score: float = 0.5
+    # Same-label surfaces this close are one piece of furniture. relink cannot
+    # merge them because it requires co-observation -- right for an object and
+    # its ghost, wrong for a bed seen on two different passes.
+    container_merge_m: float = 1.0
     presence: PresenceConfig = field(default_factory=PresenceConfig)
 
 

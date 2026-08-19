@@ -244,3 +244,38 @@ def test_proximity_is_dropped_once_the_object_is_known_to_have_moved():
     assert without > with_prox
     near = container_prior("bowl", "table", 0.75, 0.6, np.array([0.5, 0.0]), last_known_xy=None)
     assert near == pytest.approx(without), "with no last-known pose, distance stops mattering"
+
+
+def test_repeatedly_reselecting_one_surface_is_what_an_unreachable_goal_looks_like():
+    """The signature of the bug this guards: a surface whose goal cannot be
+    stood in is never 'arrived at', so it earns only the quarter credit for an
+    unreached look and stays top of the list. One real episode's whole search
+    was desk, desk, desk, desk, desk, desk, desk, desk -- priors 3.20, 2.56,
+    2.05, 1.64 ... each exactly 0.8 of the last -- at an unchanged 2.5 m path
+    cost. Eight inspections, one surface."""
+    log = InspectionLog()
+    d, unreached_credit = 0.8, 0.25
+    priors = []
+    for _ in range(4):
+        priors.append(round(log.factor(1), 3))
+        log.searched(1, d * unreached_credit)          # never arrived
+    assert priors == [1.0, 0.8, 0.64, 0.512]
+
+    log2 = InspectionLog()
+    log2.searched(2, d)                                 # arrived and looked
+    assert log2.factor(2) == pytest.approx(0.2), "a real inspection must retire it"
+
+
+def test_choosing_a_surface_must_also_drive_to_it():
+    """The defect that invalidated every earlier C3 result: only GOTO_FRONTIER
+    follows _goal_xy, and the surface selection set the goal while leaving the
+    state EXPLORE. The agent never moved, re-selected the same surface five
+    steps later, and scored it "never reached" each time -- eight inspections of
+    one desk at an unchanged 2.3 m path cost."""
+    import inspect
+    from osg.agent import nav_agent
+
+    src = inspect.getsource(nav_agent.NavAgent._select_new_frontier)
+    chose = src.index("self._search_container = int(surface.ref_id)")
+    after = src[chose:]
+    assert "State.GOTO_FRONTIER" in after, "a chosen surface must be driven to"

@@ -74,7 +74,7 @@ def make_cfg(**agent_overrides) -> types.SimpleNamespace:
             min_det_score=0.35, min_det_bbox_px=1500.0, confirm_baseline_m=0.0,
             repeat_view_discount=0.2,
             container_top_h_m=(0.2, 1.4), container_min_area_m2=0.06,
-            container_support_tol_m=0.15,
+            container_support_tol_m=0.15, container_min_obs=2, container_min_score=0.5, container_merge_m=1.0,
         ),
         agent=types.SimpleNamespace(
             agent_radius=0.18, forward_m=0.25, turn_deg=30.0, initial_scan=False,
