@@ -163,8 +163,17 @@ class PresenceConfig:
     max_tracks: int = 64
     z_overlap_iou: float = 0.05
     # Minimum belief for a track to be proposed as a navigation candidate.
-    # 0 keeps every track eligible and lets presence act through RANKING only.
-    min_presence: float = 0.0
+    # This is what replaces blacklisting when an approach finds nothing: the
+    # track stays in the map, drops below the bar, and comes back if it is seen
+    # again. The value is set by the arithmetic -- a belief reloaded at 0.82
+    # lands at 0.485 after one detector-strength absence reading and 0.36 after
+    # a VLM one, while a freshly detected object starts at 0.82. 0.45 sits
+    # between those two: ONE detector-strength absence is not enough to retire a
+    # track (its silence at close range is measurably unreliable -- it misses a
+    # bowl 0.8 m in front of it), a second one is, and a single VLM answer is
+    # decisive on its own. That asymmetry is the whole point of having two
+    # sensors with different error rates.
+    min_presence: float = 0.45
     # JSONL of expectation features per keyframe, for scripts/fit_recall_model.py.
     log_path: str = ""
 

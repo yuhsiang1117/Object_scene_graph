@@ -1401,7 +1401,14 @@ class NavAgent:
                 "cause": f"absent_on_arrival:{reason}",
             }
         )
-        self.object_layer.blacklist(track.id)
+        # Deliberately NOT blacklisted. Blacklisting is permanent, and C1's
+        # whole premise is that no state is absorbing: the belief carries the
+        # information, and `min_presence` keeps a disbelieved track out of the
+        # candidate list until evidence brings it back. Measured cost of getting
+        # this wrong: on a CORRECT map the agent abandoned the bowl, wandered,
+        # and finished the episode standing 0.088 m from the goal -- inside the
+        # success radius -- unable to stop, because the only track that could
+        # have been the answer had been struck off for good.
         self._candidate_id = None
         self._target_obj_xy = None
         self._target_confirmed_moved = True

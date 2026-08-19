@@ -1095,6 +1095,51 @@ retirement, the same-room bonus, or dropping proximity once moved) has made the 
 wander past a target it had already reached. That regression is worth bisecting before any
 further search work.
 
+### Bisecting the regression: it was the blacklist, not the search
+
+The previous entry blamed one of the search changes for an episode that ended 0.126 m from
+its goal without stopping. **That was wrong**, and bisecting says so plainly: with the
+search posterior turned off entirely the same episode fails identically, and so do variants
+with the glance retirement off and the same-room bonus off. Four variants, one outcome.
+
+What every failing variant does share is `absence_abandon: 1` — on a **correct** map the
+agent walks to where the bowl really is, does not see it, concludes absence, and
+**blacklists the track permanently**. When it later stands 0.088 m from the goal, the only
+track that could have been the answer has been struck off, so it cannot stop. It finishes
+the episode standing on the answer.
+
+The blacklist was mine, and it contradicts C1's own premise that no state is absorbing --
+written into the spec as "never hard-delete: an instance at p≈0.02 stays in the map and can
+be resurrected", then violated in the code that acts on absence. Absence now lowers the
+belief and nothing else; `min_presence` keeps a disproved track out of the candidate list
+until evidence brings it back. The threshold comes from the arithmetic rather than taste:
+from a belief reloaded at 0.82, one detector-strength absence reading lands at 0.485 and a
+second at 0.166, while one VLM-strength reading lands at 0.359 — so 0.45 makes a single
+round of detector silence non-decisive (measured, it misses a bowl 0.8 m in front of it),
+two rounds decisive, and one VLM answer decisive on its own. Two sensors with different
+error rates should carry different weight; that is the point of having both.
+
+**Result, 21 episodes, three attempts per query, 500 steps:**
+
+| condition | n | SR | SPL |
+|---|---|---|---|
+| in_anchor | 9 | **0.556** | 0.376 |
+| cross_anchor | 9 | 0.000 | 0.000 |
+| static (control) | 3 | 0.000 | 0.000 |
+| **overall** | **21** | **0.238** | **0.161** |
+
+In-anchor is the best it has been -- 0.444 in the baseline, 0.333 while the blacklist was
+in -- and the **cracker box converts for the first time** (SPL 0.873), having been 0/7
+throughout. Per target: bowl 0.429, cracker box 0.143, soup can 0.143.
+
+**Two things remain open, and the second is the more troubling.** Cross-anchor is still
+0/9, for the detection-range reason established above. And the static control is still
+0/3: on a map that is *correct*, the agent still concludes absence at the target's true
+location, because the detector genuinely does not see these objects from the viewpoint the
+approach ends at. The belief machinery then behaves exactly as designed on evidence that is
+wrong. Until the detector can confirm a small object at the range the approach terminates
+at, the control condition will keep undercutting every dynamic number measured against it.
+
 ---
 
 ## Phase 4 — C4 change log

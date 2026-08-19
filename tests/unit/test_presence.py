@@ -396,3 +396,48 @@ def test_repeated_looks_from_one_pose_are_not_independent_evidence():
     pf.apply_reading(tr2, False, recall=0.8)
     assert many < -5.0, "twelve correlated looks would read as near-certain absence"
     assert tr2.presence.log_odds > start - 2.0, "one look is properly modest"
+
+
+def test_a_disproved_track_is_excluded_by_belief_not_struck_off():
+    """Blacklisting on a failed approach is permanent, and C1's premise is that
+    no state is absorbing. Measured cost of getting it wrong: on a CORRECT map
+    the agent abandoned the bowl, wandered, and ended the episode standing
+    0.088 m from the goal -- inside the success radius -- unable to stop,
+    because the only track that could have been the answer was struck off."""
+    from osg.objects.object_layer import ObjectLayer
+
+    layer = ObjectLayer()
+    t = track(1, label="chair")
+    t.best_score, t.observations = 0.9, [None] * 5
+    layer._tracks[t.id] = t
+    pf = filt()
+
+    mp = 0.45  # PresenceConfig.min_presence
+    assert layer.candidates("chair", min_presence=mp) == [t]
+
+    pf.apply_reading(t, False, recall=0.8)          # walked there, saw nothing
+    assert layer.candidates("chair", min_presence=mp) == [t], (
+        "one round of detector silence must not retire a track -- measured, the "
+        "detector misses a bowl 0.8 m in front of it")
+    pf.apply_reading(t, False, recall=0.8)          # and again
+    assert layer.candidates("chair", min_presence=mp) == [], "twice is enough"
+
+    for _ in range(2):                              # seen again later
+        pf.apply_reading(t, True, recall=0.8)
+    assert layer.candidates("chair", min_presence=mp) == [t], "should come back"
+
+
+def test_one_vlm_absence_retires_a_track_where_one_detector_miss_does_not():
+    """Two sensors with different error rates should carry different weight;
+    that asymmetry is the point of fusing them."""
+    from osg.objects.object_layer import ObjectLayer
+
+    layer = ObjectLayer()
+    a, b = track(1, label="chair"), track(2, label="chair")
+    for t in (a, b):
+        t.best_score, t.observations = 0.9, [None] * 5
+        layer._tracks[t.id] = t
+    pf = filt()
+    pf.apply_reading(a, False, recall=0.8)              # detector silence
+    pf.apply_reading(b, False, recall=0.9, q=0.2)       # VLM says bare
+    assert a.presence.p > 0.45 > b.presence.p
