@@ -333,3 +333,24 @@ def test_a_sweep_that_ever_expected_the_object_counts_as_having_looked():
     assert _Agent(0).blocked(expected_now=False) is True
     assert _Agent(3).blocked(expected_now=False) is False, "the sweep saw the place"
     assert _Agent(0).blocked(expected_now=True) is False
+
+
+def test_the_arrival_sweep_turns_toward_the_object_not_blindly():
+    """Captured from a real absence decision on a CORRECT map: the saved frame
+    was a wall and a painting, with the target's table off to the right. A blind
+    360-degree sweep ends on the heading it began with -- the navmesh follower's
+    arrival heading -- so the decision was taken on whatever happened to be in
+    front. The VLM answered 'bare' and was right about the pixels it was shown."""
+    import numpy as np
+    from osg.planning.controller import _wrap
+
+    def turn_needed(agent_xy, obj_xy, heading):
+        err = _wrap(float(np.arctan2(*(np.asarray(obj_xy) - np.asarray(agent_xy))[::-1])) - heading)
+        return abs(err) > np.radians(15.0), err
+
+    # object due east, agent facing north -> must turn, and turn the short way
+    need, err = turn_needed((0, 0), (1, 0), np.radians(90))
+    assert need and err < 0
+    # already facing it -> no turn, decide on this frame
+    need, _ = turn_needed((0, 0), (1, 0), np.radians(5))
+    assert not need

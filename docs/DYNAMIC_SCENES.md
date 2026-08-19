@@ -1140,6 +1140,42 @@ approach ends at. The belief machinery then behaves exactly as designed on evide
 wrong. Until the detector can confirm a small object at the range the approach terminates
 at, the control condition will keep undercutting every dynamic number measured against it.
 
+### "Detection at terminal range" was not a detection problem
+
+The static control was failing because the agent concluded absence at the target's true
+location, and the obvious reading was that the detector cannot see a small object from
+where the approach ends. Saving the frame the decision was actually taken on settles it:
+**a wall and a painting**, with the bowl's table off frame to the right. The VLM answered
+"bare" and was correct about the pixels it was shown.
+
+The cause is the arrival sweep. A viewpoint is a pose the object is visible *from*, but the
+navmesh follower arrives on whatever heading the path ended with, and the blind
+twelve-turn sweep ends on the heading it began with — so the absence decision was being
+taken on whatever happened to be in front. The sweep now turns **toward** the object and
+stops as soon as it is facing it, because that is the informative frame; a miss there means
+something, a miss pointed at a wall does not.
+
+One three-turn correction restores the control:
+
+| | SR | SPL | static | in_anchor | cross_anchor |
+|---|---|---|---|---|---|
+| before | 0.238 | 0.161 | 0.000 | 0.556 | 0.000 |
+| facing the target | **0.286** | **0.197** | **0.333** | 0.556 | 0.000 |
+
+The static bowl goes from 500 steps and an abandon to **success in 46 steps at SPL 0.757**,
+with three face-turns and no abandon at all. Per target, bowl rises to 0.571. This is the
+best overall number so far, and more importantly the control condition is no longer
+undercutting everything measured against it.
+
+It is worth naming the mistake in the earlier diagnosis: "the detector cannot see it at
+this range" was inferred from an outcome, while "the agent is looking at a wall" was
+visible in one saved frame the whole time. The absence machinery had been behaving
+correctly on evidence that was worthless, and no amount of tuning recall, thresholds or
+sensors would have fixed a heading.
+
+Cross-anchor is unchanged at 0/9, and that remains a detection-range-times-candidate-count
+problem rather than a heading one.
+
 ---
 
 ## Phase 4 — C4 change log

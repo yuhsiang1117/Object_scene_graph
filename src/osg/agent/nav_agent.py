@@ -1299,6 +1299,31 @@ class NavAgent:
             return None
         if self._scan_turns_left <= 0:
             return None
+        # Turn TOWARD the object, not blindly. A full blind sweep ends on the
+        # heading it started from -- the navmesh follower's arrival heading --
+        # so the absence decision was being taken on whatever happened to be in
+        # front. Captured at the moment of one such decision on a CORRECT map:
+        # a wall and a painting, with the bowl's table off frame to the right.
+        # The VLM answered "bare" and was right about the pixels it was shown.
+        from ..planning.controller import TURN_LEFT, TURN_RIGHT, _wrap, agent_heading
+
+        if self._target_obj_xy is not None:
+            agent_xy = frame.camera_position[list(PLANE)]
+            to_obj = self._target_obj_xy - agent_xy
+            if float(np.linalg.norm(to_obj)) > 1e-3:
+                err = _wrap(
+                    float(np.arctan2(to_obj[1], to_obj[0])) - agent_heading(frame.T_wc)
+                )
+                if abs(err) > np.radians(15.0):
+                    self._scan_turns_left -= 1
+                    self.stats["approach_face_turns"] = (
+                        self.stats.get("approach_face_turns", 0) + 1
+                    )
+                    return TURN_RIGHT if err > 0 else TURN_LEFT
+                # Facing it and still nothing: that is the informative frame, so
+                # decide here rather than sweeping on past it.
+                self._scan_turns_left = 0
+                return None
         # Record whether the object was EXPECTED at any heading of the sweep.
         # The decision below used to test only the frame the sweep ended on --
         # after a full circle, the arrival heading again, which need not face
