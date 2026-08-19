@@ -872,6 +872,11 @@ next experiment.
 
 ### Why four of six YCB targets were invisible — and getting three of them back
 
+> **Superseded in part (2026-08-19).** The resolution table below was measured against
+> a contaminated ground-truth mask and three of its six rows are wrong; the pitcher is
+> recoverable and the choice of `imgsz 1280` it justified was the direct cause of the
+> cracker box never converting. See *The cracker box: fifteen tracks for one box*.
+
 Three separate causes, only one of which was the asset.
 
 **1. Detector resolution.** Measured at each object's best authored viewpoint, with the
@@ -1228,6 +1233,294 @@ The lesson is the same one this document keeps recording: the failing data was
 self-diagnosing several rounds before it was read. "Constant path cost, arrived=False,
 same surface" says "it never went" and nothing else.
 
+### The cracker box: fifteen tracks for one box
+
+The cracker box had never converted in a cross-anchor episode, and unlike every other
+failure in this document it did not look like search or staleness. Six of its seven
+episodes ended at *exactly* 194 steps with all three attempts spent, standing 8–11 m from
+the goal, on a map where the box is mapped 0.15 m from the truth. The agent was not
+failing to find the cracker box. It was finding the wrong one, three times, and running
+out of tries.
+
+**The accumulated map holds fifteen tracks labelled "cracker box" for a house containing
+one.** The bowl has one; the soup can has one. Under the run's own candidate gates
+(`min_obs=1`, `min_score=0.30`, `min_bbox_px=200`, `min_evidence=0.2`, `min_presence=0.45`):
+
+| label | tracks in map | pass the gates | ranked candidates, by distance to the real object |
+|---|---|---|---|
+| cracker box | 15 | 5 | 4.29 m, 2.29 m, 3.85 m, 2.91 m, 1.55 m |
+| tomato soup can | 1 | 1 | **0.01 m** |
+| bowl | 1 | 1 | **0.06 m** |
+
+Every candidate the agent can choose for "cracker box" is a false positive. The two tracks
+that *are* the cracker box — 0.15 m and 0.35 m from the authored pose, best scores 0.61
+and 0.75 — sit at the belief floor, p = 0.0025, and `min_presence` excludes them before the
+episode takes a step. Three attempts, three imposters, 194 steps.
+
+Three independent causes, none of them visible from an episode log, plus a fourth found
+while checking the repair.
+
+#### 1. `imgsz` is a precision decision, and it was made on recall alone
+
+`scripts/probe_ycb_detection.py mode=fp` puts the agent at 300 random navigable poses,
+runs the benchmark's own vocabulary, and asks of every detection carrying a YCB label
+whether it overlaps that YCB object:
+
+| imgsz | "cracker box" TP | FP | FP ≥ 0.30 gate | max FP score |
+|---|---|---|---|---|
+| 512 | 1 | 7 | **0** | 0.18 |
+| 768 | 1 | 17 | **2** | 0.39 |
+| 960 | 1 | 33 | 5 | 0.46 |
+| 1280 | 2 | 125 | **28** | 0.66 |
+
+Every other YCB label is clean at every size — the soup can produces zero false positives
+at 1280, the bowl three, none above 0.16. "Cracker box" alone is promiscuous, and it gets
+worse with resolution: at 1280 the detector calls 28 things in this house a cracker box
+with more confidence than the gate demands, and each of those is a track.
+
+#### 2. The table that chose 1280 was measured against a contaminated ground truth
+
+The earlier probe scored a detection by its overlap with `semantic == authored.semantic_id`.
+The collector's semantic ids are 26–95; this HM3D scene annotates 252 instances as 0–251.
+So `95` is the cracker box **and** `picture_95`, `35` is the plate **and** `wall_35`. When
+the twin was in frame the "ground-truth" mask was the union, the IoU test failed, and a
+perfectly good detection was recorded as 0.00. The plate's mask reached 124506 px of a
+307200 px frame.
+
+*The benchmark itself was never affected*, and it is worth being precise about why: its
+manifest simulator carries a semantic sensor **alone**, and habitat then renders the whole
+scene as a single blob, so the ids never collide there. Attach a colour sensor — as any
+probe must — and they do. `_viewpoints_for_object` now raises if a target mask covers more
+than a fifth of the frame, because a 25 cm object at 0.8 m occupies under 5% and anything
+larger is scene geometry wearing the object's id. Phase 4 plans to use these ids as
+ground truth for re-ID accuracy; it would have inherited the same bug silently.
+
+Re-measured with the injected ids offset out of the scene's range — recall at the 0.30
+admission gate over 20 navigable viewpoints per object, which is a harder and more useful
+number than the best single view the old table reported:
+
+| target | imgsz 512 | 768 | 1280 |
+|---|---|---|---|
+| bowl | 0.90 | 0.90 | 1.00 |
+| plate | 0.60 | **0.65** | 0.15 |
+| tomato soup can | 0.40 | 0.90 | 1.00 |
+| cracker box | 0.20 | 0.70 | 0.90 |
+| blue plastic pitcher | 0.60 | 0.60 | — |
+| scissors | 0.00 | 0.00 | 0.00 |
+
+The cracker box was never 0.00 at 512, and the plate was never 0.00 at 960. **768 is the
+operating point**: it keeps recall usable for every target, brings the plate back as a
+usable target rather than a documented casualty, and costs 4 ms per keyframe over the 512
+default against a ~250 ms control loop.
+
+#### 3. The true track is disbelieved, because the recall model is a constant
+
+The presence filter sizes every negative update by `P(detected | present, this view)`, and
+that has been a constant 0.6 since C1 landed — described in its own docstring as "the
+honest default before anything is fitted". The map's own counters say what it should have
+been. Detection-when-expected, from `n_expected` and `n_missed` on the tracks that really
+are the object:
+
+| track | n_expected | n_missed | empirical recall | log-odds |
+|---|---|---|---|---|
+| cracker box (0.35 m) | 41 | 37 | **0.10** | −6.0 |
+| cracker box (0.15 m) | 31 | 31 | **0.00** | −6.0 |
+| bowl (0.06 m) | 40 | 28 | 0.30 | +3.0 |
+| soup can (0.01 m) | 3 | 0 | 1.00 | +1.5 |
+
+At r = 0.6 a miss costs log(0.4/0.95) = −0.87; at the measured r = 0.10 it should cost
+log(0.9/0.95) = −0.05. Seventeen times too much, thirty-seven times over, and the belief
+is on the floor.
+
+The reason the filter is expecting detections it cannot get is a coupling that was
+deliberate and correct in isolation. `min_area_px` is bound to the layer's admission gate
+— "expecting a detection at a size ObjectLayer would have filtered out anyway
+manufactures a false negative on every distant object in the room" — and that gate was
+lowered from 1500 px to 300 px so small YCB objects could be mapped at all. Lowering it
+also extended the filter's expectation horizon from ~1.8 m to ~2.5 m. Measured recall over
+that range, at 768, pooled across the four detectable targets:
+
+| viewpoint radius | 0.8 m | 1.2 m | 1.6 m | 2.0 m | 2.5 m | 3.0 m | 4.0 m |
+|---|---|---|---|---|---|---|---|
+| recall at the gate | 0.79 | 0.58 | 0.48 | 0.35 | 0.25 | 0.15 | 0.12 |
+| median apparent size | 1600 px | 857 px | 515 px | 347 px | 194 px | 127 px | 75 px |
+
+The constant 0.6 is right at about 1.2 m and wrong everywhere else. A change made to admit
+small objects propagated, through a coupling written to prevent exactly this class of bias,
+into the belief update — which is a nice illustration of why the two thresholds were tied
+together in the first place, and why tying them was not enough.
+
+`scripts/fit_recall_model.py` and `PresenceConfig.recall_model_path` have existed since C1
+and had never been run. Fitted on 13692 logged expectations from one mapping pass
+(detection rate 0.366):
+
+```
+bias -2.2015   log_area_px +0.3545   depth_m +0.8424   cos_incidence -3.2344
+Brier 0.2123 against 0.2321 for the constant predictor
+```
+
+The calibration table is monotone and close over eight bins. The `depth_m` coefficient is
+positive, which reads backwards until you remember it is conditioned on apparent area: at
+a fixed number of pixels, more distance means a physically larger object, and those are
+easier. It is a confound, not physics, and the honest reading of this fit is the
+calibration table rather than the signs.
+
+#### 4. A rejection from one episode was being saved into the map forever
+
+Found while checking the rebuilt map: **exactly one track of 587 is saved
+`blacklisted`, and it is the pitcher's only correct track** — 0.00 m from the authored
+pose, score 0.68, belief 0.82. Every pitcher episode of the next benchmark would have been
+unwinnable before it started, and nothing in an episode log would have said why: the track
+is in the map, at the right place, with a good score and a healthy belief, and
+`candidates()` skips it on the first line.
+
+The blacklist is an episode-scoped device — *this attempt already tried that candidate,
+choose another* — set by `_rearm_agent` between attempts and by `_check_candidates` for an
+unreachable or VLM-rejected candidate. `save_map` records it and `apply_map` restores it,
+so a rejection taken under one episode's evidence becomes a permanent strike-off in every
+later session, including sessions where the world has since changed.
+
+This is the same mistake as blacklisting on absence, one layer down, and the earlier fix
+named the principle it violates: *no state is absorbing; an instance at p≈0.02 stays in the
+map and can be resurrected*. `apply_map` now clears the blacklist on load, alongside the two
+things it already refused to carry across intact — a saturated belief and raw frame ids.
+Keeping a disproved track out of the candidate list is `min_presence`'s job, because that
+is the version a later detection can undo.
+
+#### The map after the fixes
+
+One mapping pass over six targets at 768, otherwise the same two-pass protocol:
+
+| label | tracks (1280) | tracks (768) | pass the gates | best candidate's error |
+|---|---|---|---|---|
+| cracker box | 15 | **1** | 1 | **0.02 m** |
+| tomato soup can | 1 | 1 | 1 | 0.00 m |
+| bowl | 1 | 6 | 6 | 0.09 m |
+| plate | — | 2 | 2 | 0.03 m |
+| blue plastic pitcher | — | 1 | 1 | 0.00 m |
+| bleach bottle | — | 1 | 1 | 0.01 m |
+
+The cracker box now has exactly one track, 0.02 m from the authored pose. Every target is
+mapped within 3 cm and every one of them is proposable. The map is larger overall (587
+tracks against 448) because episodes that no longer stop on an imposter run their full
+budget and see more house.
+
+The bowl's several tracks are not a regression of the same kind: the two best are the real
+bowl at 0.09 m and 0.10 m, so the ranking is right even though the label is looser than it
+was. And the bleach bottle is what shows the third cause mattering on its own: under the
+constant recall it was mapped at 0.00 m and still failed the gates, 11 expectations and 8
+misses taking it to p = 0.11; under the fitted model the same object reads p = 0.95 and is
+proposable. The cracker box's own track tells the same story from the other side — 21
+expectations, 5 misses, an empirical recall of 0.76 where the old map recorded 0.10.
+
+
+#### Results: the cracker box triples, and its failures move to the last metre
+
+42 episodes — six targets × seven layouts — three attempts, 500 steps, the same protocol
+as the 21-episode batch: **SR 0.405, SPL 0.219**. That number is not comparable to the
+0.381 baseline, because two of its six targets did not exist before. The comparable thing
+is the same three targets over the same seven layouts:
+
+| | baseline (21 eps) | after (21 eps) |
+|---|---|---|
+| static | 0.333 / 0.252 | 0.333 / 0.231 |
+| in_anchor | 0.444 / 0.311 | 0.444 / 0.314 |
+| cross_anchor | 0.333 / 0.086 | **0.444** / 0.095 |
+| **overall** | **0.381** / 0.206 | **0.429** / 0.208 |
+
+| target | SR before | SR after |
+|---|---|---|
+| cracker box | 0.143 | **0.429** |
+| tomato soup can | 0.286 | 0.286 |
+| bowl | **0.714** | 0.571 |
+
+**The cracker box result is not really the success rate; it is the shape of the failures.**
+Distance to goal at the end of its seven episodes:
+
+```
+before   0.13   3.35   4.56   8.25  11.17  11.45  11.46      (six ended at 194 steps,
+after    0.03   0.08   0.11   0.16   0.67   0.92   0.95       all three attempts spent)
+```
+
+Every cracker box episode now ends within a metre of the target; five of seven used to end
+between three and eleven metres away, having spent all three attempts on imposters at 194
+steps. The map was the whole disease. What is left is a different and much smaller problem:
+**one episode ended 0.03 m from the goal — inside the 0.18 m success radius — and ran the
+full 500 steps without stopping**, which is the terminal-decision failure this document has
+now recorded three times.
+
+**The bowl paid for it, and the mechanism is the one just fixed, arriving somewhere else.**
+Bowl cross-anchor goes 1/3 to 0/3, and the losing episodes end 3.2-6.1 m out with all three
+attempts spent — the cracker box's old signature exactly. The cause is the fitted recall
+model doing its job indiscriminately: it correctly says "you would not have detected that
+anyway" for a small distant track, which keeps the *real* bleach bottle proposable, and
+keeps six bowl tracks alive too, including false positives at 2.05 m, 3.32 m and 4.92 m.
+Precision was bought at the detector for the cracker box and given back at the filter for
+the bowl. A per-track prior on how many instances of a class a house holds, or a
+false-positive channel that is not the same channel as absence, is the next thing to try;
+the current design has only one way to say "this track is not real", and it is the same
+way it says "this object has moved".
+
+Of the 25 remaining failures, 16 end more than 4 m from the goal and 5 end within a metre:
+this benchmark is still mostly a search problem, not a terminal-precision one, and the
+cracker box is now the exception rather than the rule.
+
+### The pitcher was a naming problem; the scissors are not recoverable
+
+Both had been recorded as "recognition limits of this asset set". One of them was not.
+
+**The pitcher renders correctly.** The mesh is 14.9 × 14.5 × 24.2 cm with the handle in the
+geometry, and the texture in the shipped `.glb` is the blue Sterilite pitcher, unaltered —
+so "renders as a plain dark vessel with no handle or spout" was a description of a 50 × 97
+px crop, not of a broken asset. What was broken was the prompt. Candidate names swapped
+*into* the vocabulary in place of "pitcher", one at a time, recall at the 0.30 gate over 20
+viewpoints:
+
+| name | imgsz 512 | 768 |
+|---|---|---|
+| **blue plastic pitcher** | **0.60** | **0.60** |
+| blue pitcher | 0.35 | 0.50 |
+| water pitcher | 0.15 | 0.25 |
+| kettle | 0.10 | 0.15 |
+| jug / water jug / plastic jug / watering can | 0.00 | 0.10 |
+| carafe / vase / bucket | 0.00 | ≤0.05 |
+| pitcher | **0.00** | **0.00** |
+
+Swapped, not added, and the distinction is the finding. An open-vocabulary head runs
+class-competitive NMS across its own vocabulary, so putting "tin can" beside "tomato soup
+can" hands the detection to the synonym and the target label reads 0.00 — which is how a
+probe that adds every candidate at once measures the competition rather than the name. The
+earlier survey tried jug, water jug, vase, mug and cup, all single nouns, and concluded the
+asset was at fault.
+
+**The scissors are genuinely gone.** Eight names, two resolutions, twenty viewpoints, and
+0.00 recall at the gate in every cell; the best single score anywhere is 0.27. The object
+is a median 315 px — about a thousandth of the frame — and what the detector *does* say
+about it is "lamp" at 0.40. There is nothing here to rescue.
+
+So the slot is refilled instead. `scripts/author_substitute_layout.py` swaps the asset and
+keeps everything else: same x and z, same rotation, same anchor, same relocation structure
+across static / in_anchor / cross_anchor. Only the height is recomputed, because two meshes
+have different origin-to-base offsets and a pose authored for flat-lying scissors would
+bury a bottle to its shoulders — the replacement's AABB base is placed on the plane the
+scissors rested on. Four candidates, measured at the scissors' own poses:
+
+| replacement | median apparent size | recall @512 | @768 | @1280 |
+|---|---|---|---|---|
+| **021_bleach_cleanser** ("bleach bottle") | 2068 px | 0.30 | **0.45** | 0.70 |
+| 006_mustard_bottle | 1389 px | 0.30 | 0.30 | 0.35 |
+| 053_mini_soccer_ball | 1335 px | 0.10 | 0.30 | 0.15 |
+| 077_rubiks_cube | 455 px | 0.00 | 0.00 | 0.05 |
+| *037_scissors (being replaced)* | *315 px* | *0.00* | *0.00* | *0.00* |
+
+`021_bleach_cleanser` wins at the 768 operating point and is checked for the fault that
+started this section: over 300 random poses "bleach bottle" produces one false positive
+above the gate and "blue plastic pitcher" none.
+
+**Nothing under `data/` is edited.** The source root is opened read-only and a new root is
+written (`outputs/substituted_layouts`), the same separation `import_collector_layouts.py`
+already keeps between DualMap's authoring session and ours, and each rewritten layout
+records its substitution and its source path in its own `authoring` block.
 ---
 
 ## Phase 4 — C4 change log
@@ -1367,6 +1660,23 @@ python scripts/run_eval.py +experiment=ycb_authored_nav \
 Compare SR / SPL / step counts against the pre-change baseline; inspect the new
 `containers` block in the episode's `to_json` dump and confirm the counts look sane
 (a bedroom should yield a bed and a nightstand, not fourteen containers).
+
+**Before trusting any detection claim**, measure it rather than inferring it from an
+episode outcome — three rounds of this document did the latter and were wrong each time:
+
+```bash
+# what the detector scores at the authored viewpoints, per imgsz
+python scripts/probe_ycb_detection.py +experiment=ycb_authored_nav \
+  ycb.layout_root=outputs/substituted_layouts \
+  +probe.mode=views '+probe.imgsz=[512,768,1280]' +probe.views=20
+
+# whether a different NAME recovers a target the benchmark's label misses
+python scripts/probe_ycb_detection.py ... +probe.mode=labels +probe.handles=[019_pitcher_base]
+
+# how often a label fires on something that is not the object -- the number that
+# should have chosen imgsz, and did not
+python scripts/probe_ycb_detection.py ... +probe.mode=fp +probe.fp_samples=300
+```
 
 **Per phase afterwards:** unit tests first (everything except Phase 2 and the eval runs
 is simulator-free by construction), then the YCB run with `verification=off`, then the

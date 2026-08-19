@@ -30,28 +30,45 @@ defaults:
 # navigation. With these values the same episode succeeds (SPL 0.32) and the
 # bowl is mapped 0.03 m from its authored pose.
 
-# Detection for small tabletop objects, measured at each object's best authored
-# viewpoint with the pipeline's own vocabulary and exact-label matching:
+# Detection for the authored targets, measured by scripts/probe_ycb_detection.py
+# against the semantic sensor's own mask, over 20 navigable viewpoints per
+# object. The number is RECALL at the 0.30 admission gate, not a best-case score:
 #
-#            imgsz 512   768   960  1280      cost/frame
-#   bowl          0.90  0.94  0.95  0.88      512:  34 ms
-#   plate         0.43  0.23  0.00  0.14      768:  38 ms
-#   soup can      0.31  0.58  0.54  0.63      960:  42 ms
-#   cracker box   0.00  0.39  0.50  0.62     1280:  51 ms
-#   pitcher       0.00  0.00  0.00  0.00
-#   scissors      0.00  0.00  0.00  0.00
+#                        imgsz 512   768  1280      cost/frame
+#   bowl                       0.90  0.90  1.00     512:  34 ms
+#   plate                      0.60  0.65  0.15     768:  38 ms
+#   tomato soup can            0.40  0.90  1.00     960:  42 ms
+#   cracker box                0.20  0.70  0.90    1280:  51 ms
+#   blue plastic pitcher       0.60  0.60     --
+#   bleach bottle              0.30  0.45  0.70
+#   scissors                   0.00  0.00  0.00
 #
-# At the 512 default only the bowl and (marginally) the plate clear the 0.35
-# admission gate; at 1280 the soup can and cracker box join them, for 17 ms per
-# keyframe against a ~250 ms control loop. The pitcher renders as an untextured
-# dark cylinder with no handle or spout -- a broken asset, not a detection
-# problem -- and the scissors are too thin to survive at any resolution.
+# Recall alone chose 1280, and that was a mistake, because "cracker box" is a
+# promiscuous label at high resolution. Over 300 random navigable poses in this
+# scene it fires above the gate on 28 things that are NOT the cracker box, against
+# 2 at 768 and 0 at 512 -- and the accumulated map held FIFTEEN "cracker box"
+# tracks for a house containing one, five of which outranked the real object. 768
+# keeps recall usable everywhere, brings the plate back as a usable target, and
+# costs 4 ms per keyframe over the 512 default against a ~250 ms control loop.
+#
+# An earlier version of this table read 0.00 for the cracker box at 512 and for
+# the plate at 960. Those were measurement artifacts. The probe scored a detection
+# by its overlap with `semantic == authored.semantic_id`; the collector's semantic
+# ids are 26..95 and this scene annotates 252 HM3D instances as 0..251, so the
+# "cracker box" mask was the box UNION picture_95 and the "plate" mask was
+# wall_35, covering 124506 px of a 307200 px frame. The benchmark itself never saw
+# this -- its manifest simulator carries a semantic sensor ALONE and habitat then
+# renders the whole scene as one blob -- but every conclusion drawn from that
+# table was contaminated, imgsz 1280 among them.
 detector:
-  imgsz: 1280
+  imgsz: 768
   # The vocabulary is DEFAULT_VOCABULARY plus the episode target, so a mapping
   # run for one target has no class for the others and cannot map them. A
-  # multi-target benchmark needs every target present from the start.
-  vocabulary: ["chair", "sofa", "armchair", "plant", "bed", "toilet", "tv_monitor", "table", "desk", "cabinet", "shelf", "dresser", "wardrobe", "nightstand", "lamp", "pillow", "cushion", "picture", "mirror", "window", "door", "sink", "bathtub", "shower", "towel", "counter", "stool", "bench", "refrigerator", "oven", "microwave", "washing machine", "stove", "fireplace", "stairs", "rug", "curtain", "clothes", "book", "box", "basket", "banana", "bowl", "cracker box", "mug", "pitcher", "plate", "scissors", "tomato soup can"]
+  # multi-target benchmark needs every target present from the start. The names
+  # are the ones the detector answers to rather than the ones a person would use:
+  # "pitcher" scores 0.00 on this asset at every resolution and against eight
+  # synonyms, "blue plastic pitcher" reaches 0.71.
+  vocabulary: ["chair", "sofa", "armchair", "plant", "bed", "toilet", "tv_monitor", "table", "desk", "cabinet", "shelf", "dresser", "wardrobe", "nightstand", "lamp", "pillow", "cushion", "picture", "mirror", "window", "door", "sink", "bathtub", "shower", "towel", "counter", "stool", "bench", "refrigerator", "oven", "microwave", "washing machine", "stove", "fireplace", "stairs", "rug", "curtain", "clothes", "book", "box", "basket", "banana", "bowl", "cracker box", "mug", "blue plastic pitcher", "plate", "bleach bottle", "tomato soup can"]
 
 scene_graph:
   min_det_bbox_px: 300

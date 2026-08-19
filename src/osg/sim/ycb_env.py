@@ -21,6 +21,10 @@ from .ycb_layouts import (
 )
 
 
+# Above this share of the frame, a "target" mask is scene geometry with a
+# colliding semantic id rather than a tabletop object. See _viewpoints_for_object.
+SEMANTIC_COLLISION_FRAC = 0.2
+
 MANIFEST_SCHEMA_VERSION = 1
 MANIFEST_GENERATOR_VERSION = 1
 
@@ -319,6 +323,22 @@ def _viewpoints_for_object(simulator: _ManifestSimulator, authored, cfg) -> List
             rotation = _yaw_facing(snapped, target)
             semantic = simulator.semantic_at(snapped, rotation)
             visible_pixels = int(np.count_nonzero(semantic == int(authored.semantic_id)))
+            # A YCB object is at most ~25 cm across and these viewpoints stand at
+            # 0.8 m or further, so it cannot occupy a fifth of the frame -- 25 cm
+            # at 0.8 m is under 5%. A mask that large means the authored semantic
+            # id is also some SCENE instance's id, and every number derived from
+            # this mask is then about a wall. The collector's ids are 26..95 and
+            # this HM3D scene annotates 252 instances as 0..251, so the collision
+            # is real; it stays invisible only because the manifest simulator
+            # carries a semantic sensor alone and habitat then renders the scene
+            # as a single blob. Attach a colour sensor here and the ids appear.
+            if visible_pixels > SEMANTIC_COLLISION_FRAC * semantic.size:
+                raise YCBLayoutError(
+                    f"{authored.handle} (semantic id {authored.semantic_id}) covers "
+                    f"{visible_pixels}/{semantic.size} px at {radius:.1f} m -- that is "
+                    "scene geometry sharing the id, not the object. Re-author the "
+                    "layout with ids outside the scene's instance range."
+                )
             if visible_pixels < int(cfg.ycb.viewpoint_min_visible_pixels):
                 continue
             viewpoints.append(

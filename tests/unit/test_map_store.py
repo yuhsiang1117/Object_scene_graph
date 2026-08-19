@@ -131,14 +131,29 @@ def test_presence_belief_survives(tmp_path):
     assert restored.presence.p < 0.05
 
 
-def test_blacklist_and_links_survive(tmp_path):
+def test_links_survive(tmp_path):
+    """Linking reunites fragments of one object that a single ellipsoid cannot
+    cover; losing it splits an L-shaped sofa back into two tracks."""
     a, b = track(1), track(2)
-    a.blacklisted = True
     a.linked_ids, b.linked_ids = {2}, {1}
     out = roundtrip(agent_with([a, b]), tmp_path)
-    assert out.object_layer.get(1).blacklisted is True
     assert out.object_layer.get(1).linked_ids == {2}
-    assert [t.id for t in out.object_layer.tracks()] == [2], "blacklisted track proposed"
+
+
+def test_the_blacklist_does_not_survive_a_reload(tmp_path):
+    """It is an EPISODE-scoped device -- "this attempt already tried that
+    candidate" -- and persisting it makes an episode's rejection a permanent
+    strike-off in every later session. Measured: one track in a 587-track map was
+    saved blacklisted, and it was the pitcher's only correct track (0.00 m from
+    the authored pose, score 0.68, belief 0.82), which made every pitcher episode
+    of the next benchmark unwinnable before it started. No state may be
+    absorbing; `min_presence` over a belief is the recoverable version of this.
+    """
+    a = track(1)
+    a.blacklisted = True
+    out = roundtrip(agent_with([a, track(2)]), tmp_path)
+    assert out.object_layer.get(1).blacklisted is False
+    assert [t.id for t in out.object_layer.tracks()] == [1, 2]
 
 
 def test_next_track_id_does_not_collide_after_load(tmp_path):

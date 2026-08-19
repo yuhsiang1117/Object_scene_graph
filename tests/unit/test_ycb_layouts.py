@@ -155,16 +155,20 @@ def test_rebase_collector_paths_and_canonical_labels(tmp_path):
         "/app/data/scene_datasets/hm3d/scene.glb", root
     ) == root / "scene_datasets/hm3d/scene.glb"
     assert rebase_collector_path("objects/ycb/configs", root) == root / "objects/ycb/configs"
-    assert YCB_TARGET_LABELS == {
-        "003_cracker_box": "cracker box",
-        "005_tomato_soup_can": "tomato soup can",
-        "011_banana": "banana",
-        "019_pitcher_base": "pitcher",
-        "024_bowl": "bowl",
-        "025_mug": "mug",
-        "029_plate": "plate",
-        "037_scissors": "scissors",
-    }
+    # The label is the class the DETECTOR is asked for, which is not always the
+    # object's common name: YOLOE scores "pitcher" at 0.00 on this asset at every
+    # resolution and against eight synonyms, and "blue plastic pitcher" at 0.71
+    # (scripts/probe_ycb_detection.py, mode=labels).
+    assert YCB_TARGET_LABELS["019_pitcher_base"] == "blue plastic pitcher"
+    for handle, label in (
+        ("003_cracker_box", "cracker box"),
+        ("005_tomato_soup_can", "tomato soup can"),
+        ("021_bleach_cleanser", "bleach bottle"),
+        ("024_bowl", "bowl"),
+        ("029_plate", "plate"),
+        ("037_scissors", "scissors"),
+    ):
+        assert YCB_TARGET_LABELS[handle] == label
 
 
 def test_wildcard_discovers_future_scenes_and_reports_incomplete(tmp_path):
@@ -324,3 +328,41 @@ def test_manifest_cache_reuse_and_layout_hash_invalidation(tmp_path, monkeypatch
     third = prepare_ycb_benchmark(cfg)
     assert len(calls) == 2
     assert third.cache_files != first.cache_files
+
+
+def test_a_target_mask_covering_the_frame_is_a_semantic_id_collision():
+    """The collector's semantic ids are 26..95 and HM3D annotates this scene's
+    252 instances as 0..251, so `semantic == authored.semantic_id` can select a
+    wall. It stays invisible because the manifest simulator carries a semantic
+    sensor ALONE and habitat then renders the scene as one blob -- attach a
+    colour sensor and a "plate" mask covers 124506 px. A 25 cm object at 0.8 m
+    occupies under 5% of the frame, so anything larger is scene geometry."""
+    import numpy as np
+    import pytest
+    from types import SimpleNamespace
+
+    from osg.sim.ycb_env import _viewpoints_for_object
+    from osg.sim.ycb_layouts import AuthoredObject, YCBLayoutError
+
+    authored = AuthoredObject(
+        semantic_id=35, handle="029_plate", label="plate",
+        translation=(0.0, 0.9, 0.0), rotation=(0.0, 0.0, 0.0, 1.0),
+        anchor_object_id="table_1", anchor_category="table",
+    )
+    frame = np.full((48, 64), 35, dtype=np.int32)  # every pixel "the plate"
+    simulator = SimpleNamespace(
+        sim=SimpleNamespace(pathfinder=SimpleNamespace(
+            snap_point=lambda point: np.asarray(point, dtype=np.float32))),
+        semantic_at=lambda position, rotation: frame,
+    )
+    cfg = SimpleNamespace(ycb=SimpleNamespace(
+        viewpoint_radii_m=[0.8], viewpoint_angular_samples=4,
+        viewpoint_max_snap_m=0.5, viewpoint_dedup_m=0.2,
+        viewpoint_min_visible_pixels=20,
+    ))
+    with pytest.raises(YCBLayoutError, match="scene geometry sharing the id"):
+        _viewpoints_for_object(simulator, authored, cfg)
+
+    frame[:] = 0
+    frame[10:20, 10:20] = 35  # 100 px of a 3072 px frame: an actual plate
+    assert _viewpoints_for_object(simulator, authored, cfg)

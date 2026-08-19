@@ -134,34 +134,55 @@ def test_displacement_disagreeing_with_the_declared_type_is_reported_not_silent(
 # ------------------------------------------------- what the detector can see
 
 
-def test_the_ycb_experiment_offers_every_target_as_a_class():
+# The handles the collector actually places in 00829-QaLdnwvtxbs, after the
+# scissors substitution. `YCB_TARGET_LABELS` is a catalogue of every handle the
+# benchmark can name, which is a larger set -- an entry there is not a promise
+# that the object is in any scene.
+PLACED_HANDLES = (
+    "003_cracker_box",
+    "005_tomato_soup_can",
+    "019_pitcher_base",
+    "021_bleach_cleanser",
+    "024_bowl",
+    "029_plate",
+)
+
+
+def _experiment_config():
+    import yaml
+    from pathlib import Path
+
+    return yaml.safe_load(
+        (Path(__file__).resolve().parents[2] / "configs/experiment/ycb_authored_nav.yaml")
+        .read_text(encoding="utf-8")
+    )
+
+
+def test_the_ycb_experiment_offers_every_placed_target_as_a_class():
     """The detector's vocabulary is DEFAULT_VOCABULARY plus the EPISODE's
     target, so a mapping run for one object has no class for the others and
     cannot map them at all -- which is why a map built while chasing the bowl
     contained no soup can. A multi-target benchmark needs every target present
     from the start."""
-    import yaml
-    from pathlib import Path
     from osg.core.config import YCB_TARGET_LABELS
 
-    cfg = yaml.safe_load(
-        (Path(__file__).resolve().parents[2] / "configs/experiment/ycb_authored_nav.yaml")
-        .read_text(encoding="utf-8")
+    vocab = {v.lower() for v in _experiment_config()["detector"]["vocabulary"]}
+    missing = sorted(
+        YCB_TARGET_LABELS[handle].lower()
+        for handle in PLACED_HANDLES
+        if YCB_TARGET_LABELS[handle].lower() not in vocab
     )
-    vocab = {v.lower() for v in cfg["detector"]["vocabulary"]}
-    missing = sorted({v.lower() for v in YCB_TARGET_LABELS.values()} - vocab)
     assert not missing, f"targets absent from the detector vocabulary: {missing}"
 
 
-def test_the_ycb_experiment_runs_the_detector_at_small_object_resolution():
-    """Measured at each object's best authored viewpoint: at imgsz 512 the
-    cracker box scores 0.00 and the soup can 0.31 (below the 0.35 gate); at 1280
-    they reach 0.62 and 0.63, for 34 -> 51 ms per frame."""
-    import yaml
-    from pathlib import Path
+def test_the_ycb_experiment_trades_recall_against_a_promiscuous_label():
+    """imgsz is a precision decision, not only a recall one.
 
-    cfg = yaml.safe_load(
-        (Path(__file__).resolve().parents[2] / "configs/experiment/ycb_authored_nav.yaml")
-        .read_text(encoding="utf-8")
-    )
-    assert cfg["detector"]["imgsz"] >= 960
+    Recall at the 0.30 gate over 20 authored viewpoints rises with resolution --
+    the cracker box goes 0.20 / 0.70 / 0.90 at 512 / 768 / 1280 -- but so does
+    the number of things the detector calls a cracker box. Over 300 random
+    navigable poses it fires above the gate on 0 / 2 / 28 non-boxes, and at 1280
+    the accumulated map held fifteen "cracker box" tracks for a house with one.
+    Anything at or above 960 reintroduces that; 512 costs too much recall.
+    """
+    assert 640 <= _experiment_config()["detector"]["imgsz"] <= 768

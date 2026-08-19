@@ -190,7 +190,7 @@ def apply_map(agent, blob: Dict[str, Any], *, max_log_odds: float = 1.5) -> int:
 
     Called after NavAgent.__init__ (which resets), before the first act().
 
-    Two things are deliberately NOT carried across intact:
+    Three things are deliberately NOT carried across intact:
 
     `max_log_odds` caps how sure a restored belief may be. The map was built in
     another session; the world had every opportunity to change in between, and a
@@ -205,11 +205,23 @@ def apply_map(agent, blob: Dict[str, Any], *, max_log_odds: float = 1.5) -> int:
     mistake a previous session's frames for this one's -- in particular
     `relink`, which must not merge a fresh track with a track last seen before
     the world changed.
+
+    The blacklist is cleared. It is an EPISODE-scoped device -- "this attempt
+    already tried that candidate, choose another" -- and persisting it turns a
+    rejection taken under one episode's evidence into a permanent, unrecoverable
+    strike-off in every later session. Measured: one track in a 587-track map was
+    saved blacklisted, and it was the pitcher's only correct track (0.00 m from
+    the authored pose, score 0.68, belief 0.82), so every pitcher episode in the
+    next benchmark was unwinnable before it started. This is the same mistake as
+    blacklisting on absence, one layer down: no state may be absorbing, and
+    `min_presence` over a belief is the recoverable way to keep a disproved track
+    out of the candidate list.
     """
     layer = agent.object_layer
     layer._tracks = {}
     for rec in blob.get("tracks", []):
         track = _track_from_record(rec)
+        track.blacklisted = False
         track.presence.log_odds = min(float(track.presence.log_odds), float(max_log_odds))
         for obs in track.observations:
             obs.frame_id = int(obs.frame_id) - PRIOR_SESSION_OFFSET

@@ -613,15 +613,24 @@ class EvalConfig:
     hfov_deg: float = 79.0
 
 
+# Handle -> the class name the detector is asked for. Not always the object's
+# common name: YOLOE's text head scores "pitcher" at 0.00 on this asset at every
+# resolution and "blue plastic pitcher" at 0.71, so the descriptive phrase is the
+# label (scripts/probe_ycb_detection.py, mode=labels).
 YCB_TARGET_LABELS: Dict[str, str] = {
+    "002_master_chef_can": "coffee can",
     "003_cracker_box": "cracker box",
     "005_tomato_soup_can": "tomato soup can",
+    "006_mustard_bottle": "mustard bottle",
     "011_banana": "banana",
-    "019_pitcher_base": "pitcher",
+    "019_pitcher_base": "blue plastic pitcher",
+    "021_bleach_cleanser": "bleach bottle",
     "024_bowl": "bowl",
     "025_mug": "mug",
     "029_plate": "plate",
     "037_scissors": "scissors",
+    "053_mini_soccer_ball": "soccer ball",
+    "077_rubiks_cube": "rubiks cube",
 }
 
 
