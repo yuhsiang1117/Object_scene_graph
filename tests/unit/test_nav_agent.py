@@ -63,6 +63,7 @@ def make_cfg(**agent_overrides) -> types.SimpleNamespace:
             search_proximity_len_m=4.0, search_frontier_weight=1.0,
             affinity_llm=False, affinity_cache="",
             search_arrival_m=1.2, search_max_steps=60, search_unreached_credit=0.25,
+            search_glance_detect_prob=0.35, search_glance_range_m=4.0, search_same_room_bonus=4.0,
         ),
         scene_graph=types.SimpleNamespace(
             room_min_radius_m=0.9, room_door_width_m=1.2,

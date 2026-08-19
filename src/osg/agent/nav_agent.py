@@ -486,6 +486,8 @@ class NavAgent:
 
         if self.kf_selector.is_keyframe(frame.T_wc):
             self._on_keyframe(frame)
+            if getattr(self.cfg.exploration, "search_posterior", False):
+                self._glance_at_surfaces(frame)
 
         # Candidate target check happens in every state except terminal ones
         if self.state in (State.INIT, State.EXPLORE, State.GOTO_FRONTIER):
@@ -955,6 +957,42 @@ class NavAgent:
         else:
             self._block_frontier(best, 50)
 
+    def _glance_at_surfaces(self, frame: FrameData) -> None:
+        """A surface in plain view has been searched, without driving to it.
+
+        Measured: a full inspection costs the agent about fifty steps -- approach,
+        arrival, commitment budget -- so a 500-step episode manages seven to nine
+        of them. Simulating the search order over this scene's 112 surfaces says
+        the target is typically reached after 37-45 inspections but only 33-40 m
+        of travel, so the budget that binds is inspections, not distance. Most of
+        those surfaces are simply in view along the way; looking counts.
+
+        A glance is weaker evidence than standing at the surface, so it retires
+        belief at a lower rate -- the search log already expresses that as
+        (1 - d), and a passing look gets a smaller d.
+        """
+        pf = self.object_layer.presence_filter
+        containers = getattr(self.scene_graph, "containers", None)
+        if pf is None or not containers:
+            return
+        d = float(getattr(self.cfg.exploration, "search_glance_detect_prob", 0.35))
+        rng = float(getattr(self.cfg.exploration, "search_glance_range_m", 4.0))
+        K, T_cw = frame.intrinsics.K(), frame.T_cw
+        h, w = frame.depth.shape
+        for cid, node in containers.items():
+            p_cam = T_cw[:3, :3] @ node.center + T_cw[:3, 3]
+            z = float(p_cam[2])
+            if not (0.3 <= z <= rng):
+                continue
+            uv = K @ p_cam
+            u, v = float(uv[0] / z), float(uv[1] / z)
+            if not (0 <= u < w and 0 <= v < h):
+                continue
+            measured = float(frame.depth[int(v), int(u)])
+            if measured > 1e-3 and measured < z - 0.5:
+                continue  # something solid between us and the surface
+            self._search_log.searched(cid, d)
+
     def _select_surface(self, agent_xy, best_frontier):
         """The best mapped surface, if it beats the best frontier on b*d/c.
 
@@ -980,6 +1018,19 @@ class NavAgent:
         )
         if not cands:
             return None
+        # Prefer surfaces in the room the agent is already in. Simulated over
+        # this scene: room-grouped order reaches the target in a median 37
+        # inspections and 33 m against 45 and 40 m for a plain global argmax,
+        # because crossing the house repeatedly is what the global index does
+        # once the nearby surfaces are retired.
+        room_bonus = float(getattr(cfg, "search_same_room_bonus", 1.0))
+        if room_bonus > 1.0 and getattr(self.scene_graph, "rooms", None):
+            here = self.scene_graph.room_of_point(agent_xy)
+            if here is not None:
+                for c in cands:
+                    node = self.scene_graph.containers.get(c.ref_id)
+                    if node is not None and node.room_id == here.id:
+                        c.prior *= room_bonus
         surface = select_candidate(
             cands, self.planner, self.costmap, agent_xy,
             top_n=int(getattr(cfg, "top_n_frontiers", 5)),

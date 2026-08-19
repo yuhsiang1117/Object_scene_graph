@@ -1008,6 +1008,58 @@ Enabling the search also costs the other conditions -- overall SR fell 0.238 to 
 because the permissive absence gate false-abandons on correct maps. That trade is real and
 should be settled by a better absence sensor rather than by a threshold.
 
+### Room reasoning, and the measurement that ended the search line
+
+Room-level reasoning was the recommended next lever. It is implemented, and on this scene
+it does not help — for reasons worth recording, because they are about the benchmark
+rather than the idea.
+
+**The room prior has almost nothing to discriminate with here.** The accumulated map
+segments six rooms, and inferring each one's type from its contents gives **three bedrooms
+and three bathrooms — no kitchen at all**; this HM3D scene is a hotel suite. A prior that
+says "a bowl belongs in a kitchen" cannot choose among three bedrooms. Measured offline
+over all nine relocations against 112 candidate surfaces:
+
+| variant | median rank of true destination | in the top 8 |
+|---|---|---|
+| surface prior only | 20 | 3/9 |
+| + room weighted by how many plausible surfaces it holds | 19 | 3/9 |
+| + room weighted by inferred type | 20 | 3/9 |
+
+A related check: only **6 of 9** cross-anchor relocations actually cross a room boundary,
+so even a perfect room prior would leave a third of them untouched. (An earlier version of
+this analysis reported 3/9 because it read room id 0 — which means *unassigned*, not a
+room — as a room; using the scene graph's own nearest-room fallback fixes that.)
+
+**Ordering the search by room does help, modestly, and it is implemented.** Simulating both
+orders over the real surface layout: a plain global argmax reaches the destination after a
+median 45 inspections and 40 m, room-grouped after 37 and 33 m. `search_same_room_bonus`
+keeps the agent finishing a room before crossing the house.
+
+**The simulation also produced the number that ends this line of work.** The target is
+reached after a median 37-45 inspections — and a real inspection costs the agent about
+**fifty steps** (approach, arrival, commitment budget), so a 500-step episode buys seven to
+nine. That is a 4-5x gap, so `search_glance_detect_prob` now lets a surface in plain view
+count as searched without driving to it, on the theory that the binding budget was
+inspections rather than travel.
+
+It was not enough, and then the decisive test: **raising the budget to 2000 steps still
+gives 0/3 on cross-anchor**, with every episode running the full budget. So the search is
+not merely starved. The reason is detection range: a bowl scores 0.90 from an authored
+viewpoint 0.8 m away and nothing at all from the 2-4 m a passing search affords, so
+"inspecting" a surface really means approaching it to within a metre and looking — the
+fifty steps — for each of 112 candidates. In-anchor works precisely because the object
+stays within about a metre of its remembered pose, so the approach to the ghost brings it
+into detection range anyway.
+
+**Conclusion for C3 on this benchmark.** Cross-anchor is not a search-policy problem, it
+is a detection-range-times-candidate-count problem, and no reordering of the same
+expensive inspections closes it. What would: a detector that recognises these objects at
+3-4 m (higher resolution helped once already, 512 to 1280, and more may be available), or
+far fewer candidate surfaces, or a sensor that can check a surface without standing at it.
+Ordering was never the binding constraint, and two batches spent on priors would have been
+better spent measuring inspection cost first.
+
 ---
 
 ## Phase 4 — C4 change log

@@ -276,6 +276,12 @@ class ExplorationConfig:
     # inspectable afterwards.
     # How close counts as having inspected a surface, and how long to stay
     # committed to reaching one before giving up on it.
+    # A surface in plain view counts as searched without driving to it: the
+    # binding budget is inspections (about fifty steps each), not travel.
+    search_glance_detect_prob: float = 0.35
+    search_glance_range_m: float = 4.0
+    # Finishing the room you are in beats crossing the house and coming back.
+    search_same_room_bonus: float = 4.0
     search_arrival_m: float = 1.2
     search_max_steps: int = 60
     # Credit for a surface the agent set off towards but never reached: it has
