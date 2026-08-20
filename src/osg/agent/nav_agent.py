@@ -1298,16 +1298,23 @@ class NavAgent:
                 with self.profiler.timeit("verification"):
                     ok = self.verifier.verify(track, self.target)
                 if not ok:
-                    # The VLM looked at this exact object and said it is not the
-                    # target. That is an identity verdict and belongs in the
-                    # identity channel; blacklisting would make it permanent and
-                    # unrecoverable, which is the mistake this file has had to
-                    # unlearn three times. Count it at full weight so one clear
-                    # "no" retires the candidate.
-                    track.identity_rejections += int(getattr(
-                        getattr(self.cfg.scene_graph, "presence", None),
-                        "max_identity_rejections", 0,
-                    )) or 1
+                    # The VLM looked at a picture of this object and said it is
+                    # not the target. That is identity evidence and belongs in
+                    # the identity channel; blacklisting would make it permanent,
+                    # which is the mistake this file has had to unlearn three
+                    # times.
+                    #
+                    # It counts as ONE piece of evidence, not a verdict, and that
+                    # is a measurement rather than caution. The picture is the
+                    # stored crop of the best detection, and for these targets it
+                    # is 46-101 px on its longest side -- there is no more image
+                    # to be had, the objects are simply small in the frame. Given
+                    # decisive weight it cost real successes: of the first three
+                    # rejections in a pilot run all three were CORRECT
+                    # candidates, and two of them had converted in the run
+                    # without the gate. One doubt plus one failed approach
+                    # retires a track; one doubt alone does not.
+                    track.identity_rejections += 1
                     self._candidate_id = None
                     self.stats["verify_reject"] = self.stats.get("verify_reject", 0) + 1
                     return
