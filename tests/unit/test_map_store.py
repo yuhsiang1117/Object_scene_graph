@@ -344,3 +344,41 @@ def test_verify_still_there_is_a_forced_choice_and_blocked_means_nothing():
     c = _Client("bare")
     VLMVerifier(c).verify_still_there(img, bbox, "bowl")
     assert "bare" in c.seen_user and "blocked" in c.seen_user
+
+
+def test_the_identity_crop_survives_so_the_vlm_gate_is_not_a_no_op(tmp_path):
+    """`verify()` judges a candidate from a picture of it, and a restored track
+    used to have neither the frame nor the crop -- so it fell through to
+    `_ask(None)`, which fails OPEN. The VLM candidate gate was therefore a silent
+    no-op on exactly the tracks that produce most false-positive commits (62 of
+    72 in the 96-episode run came from the prior map)."""
+    import numpy as np
+
+    t = track(1)
+    crop = np.zeros((40, 30, 3), dtype=np.uint8)
+    crop[10:20, 5:15] = (200, 30, 30)
+    t.best_crop = crop
+    out = roundtrip(agent_with([t]), tmp_path)
+    restored = out.object_layer.get(1).best_crop
+    assert restored is not None
+    assert restored.shape == crop.shape
+    assert restored[15, 10, 0] > 150 and restored[0, 0, 0] < 50
+
+
+def test_an_oversized_crop_is_stored_small(tmp_path):
+    """A snapshot holds hundreds of tracks; the crop is a thumbnail for a VLM,
+    not an archive."""
+    import numpy as np
+
+    from osg.graph.map_store import CROP_MAX_PX
+
+    t = track(1)
+    t.best_crop = np.full((900, 600, 3), 120, dtype=np.uint8)
+    out = roundtrip(agent_with([t]), tmp_path)
+    restored = out.object_layer.get(1).best_crop
+    assert restored is not None and max(restored.shape[:2]) <= CROP_MAX_PX
+
+
+def test_a_track_with_no_crop_still_round_trips(tmp_path):
+    out = roundtrip(agent_with([track(1)]), tmp_path)
+    assert out.object_layer.get(1).best_crop is None

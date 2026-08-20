@@ -36,6 +36,52 @@ class MapStoreError(RuntimeError):
     """A snapshot cannot be written or read."""
 
 
+# Longest side of a stored identity crop. 128 px is well above what the VLM
+# needs to name a boxed object and keeps a 600-track snapshot in the low MB.
+CROP_MAX_PX = 128
+
+
+def _encode_crop(crop) -> Optional[str]:
+    """PNG + base64, or None. Never fail a snapshot over a thumbnail."""
+    if crop is None or getattr(crop, "size", 0) == 0:
+        return None
+    try:
+        import base64
+
+        import cv2
+        import numpy as np
+
+        img = np.asarray(crop)
+        if img.ndim != 3 or img.shape[2] < 3:
+            return None
+        longest = max(img.shape[:2])
+        if longest > CROP_MAX_PX:
+            scale = CROP_MAX_PX / float(longest)
+            img = cv2.resize(img, (max(1, int(img.shape[1] * scale)),
+                                   max(1, int(img.shape[0] * scale))),
+                             interpolation=cv2.INTER_AREA)
+        ok, buf = cv2.imencode(".png", img[..., ::-1])
+        return base64.b64encode(buf.tobytes()).decode("ascii") if ok else None
+    except Exception:  # noqa: BLE001 - a thumbnail is never worth a failed save
+        return None
+
+
+def _decode_crop(blob) -> Optional["np.ndarray"]:
+    if not blob:
+        return None
+    try:
+        import base64
+
+        import cv2
+        import numpy as np
+
+        raw = np.frombuffer(base64.b64decode(blob), dtype=np.uint8)
+        img = cv2.imdecode(raw, cv2.IMREAD_COLOR)
+        return None if img is None else img[..., ::-1].copy()
+    except Exception:  # noqa: BLE001
+        return None
+
+
 def _f(values) -> List[float]:
     return [float(v) for v in np.asarray(values, dtype=float).ravel()]
 
@@ -53,6 +99,15 @@ def _track_record(track: ObjectTrack) -> Dict[str, Any]:
         "best_cam_xy": None if track.best_cam_xy is None else _f(track.best_cam_xy),
         "first_cam_xy": None if track.first_cam_xy is None else _f(track.first_cam_xy),
         "blacklisted": bool(track.blacklisted),
+        # The candidate verifier's only evidence about a track's IDENTITY is a
+        # picture of it, and a track restored from a snapshot had neither the
+        # frame nor the crop -- so `verify()` fell through to `_ask(None)`, which
+        # fails open, and the VLM gate was a silent no-op on exactly the tracks
+        # that cause most false-positive commits (62 of 72 in the 96-episode
+        # run). The full frame is far too large to store per track; the crop is
+        # what `verify_crop` wants anyway, and capped at CROP_MAX_PX it costs a
+        # few KB.
+        "best_crop_png": _encode_crop(track.best_crop),
         "evidence": float(track.evidence),
         "refined_at_obs": int(track.refined_at_obs),
         "linked_ids": sorted(int(i) for i in track.linked_ids),
@@ -97,6 +152,7 @@ def _track_from_record(rec: Dict[str, Any]) -> ObjectTrack:
     if rec.get("first_cam_xy") is not None:
         track.first_cam_xy = np.asarray(rec["first_cam_xy"], dtype=float)
     track.blacklisted = bool(rec.get("blacklisted", False))
+    track.best_crop = _decode_crop(rec.get("best_crop_png"))
     track.evidence = float(rec.get("evidence", 0.0))
     track.refined_at_obs = int(rec.get("refined_at_obs", 0))
     track.linked_ids = {int(i) for i in rec.get("linked_ids", [])}
