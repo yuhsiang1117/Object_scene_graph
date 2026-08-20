@@ -1261,6 +1261,10 @@ class NavAgent:
             min_presence=getattr(
                 getattr(self.cfg.scene_graph, "presence", None), "min_presence", 0.0
             ),
+            max_identity_rejections=int(getattr(
+                getattr(self.cfg.scene_graph, "presence", None),
+                "max_identity_rejections", 0,
+            )),
         )
         if not candidates:
             return
@@ -1294,7 +1298,16 @@ class NavAgent:
                 with self.profiler.timeit("verification"):
                     ok = self.verifier.verify(track, self.target)
                 if not ok:
-                    self.object_layer.blacklist(track.id)
+                    # The VLM looked at this exact object and said it is not the
+                    # target. That is an identity verdict and belongs in the
+                    # identity channel; blacklisting would make it permanent and
+                    # unrecoverable, which is the mistake this file has had to
+                    # unlearn three times. Count it at full weight so one clear
+                    # "no" retires the candidate.
+                    track.identity_rejections += int(getattr(
+                        getattr(self.cfg.scene_graph, "presence", None),
+                        "max_identity_rejections", 0,
+                    )) or 1
                     self._candidate_id = None
                     self.stats["verify_reject"] = self.stats.get("verify_reject", 0) + 1
                     return
@@ -1445,6 +1458,10 @@ class NavAgent:
         if p >= float(getattr(vc, "abandon_below_p", 0.35)):
             return None  # still believed: stop as before, and keep the evidence
         self.stats["absence_abandon"] = self.stats.get("absence_abandon", 0) + 1
+        # Walking to a mapped pose and not finding the TARGET says something the
+        # belief cannot carry, because a false positive is an object that is
+        # genuinely there and will be re-detected on the very next keyframe.
+        track.identity_rejections += 1
         self.presence_events.append(
             {
                 "step": int(self.step_count),

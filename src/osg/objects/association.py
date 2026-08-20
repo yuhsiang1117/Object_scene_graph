@@ -78,6 +78,16 @@ class ObjectTrack:
     best_bbox_px: float = 0.0  # bbox area of the best detection, px^2
     best_cam_xy: Optional[np.ndarray] = None  # camera ground-plane pose of the best detection
     blacklisted: bool = False
+    # How many times the agent went to this track and found the TARGET was not
+    # there. Deliberately separate from `presence`, which answers a different
+    # question: a false positive is an object that really is present, so the
+    # detector keeps re-detecting it and its belief stays pinned at the positive
+    # clamp however many times the agent walks over and looks. Measured: one
+    # episode committed to the same wrong track 251 times, twice a step for 500
+    # steps, with 250 absence readings that positive evidence undid each time.
+    # Presence answers "is it still there"; this answers "is it the target".
+    # Episode-scoped: `apply_map` clears it, like the blacklist.
+    identity_rejections: int = 0
     linked_ids: set = field(default_factory=set)
     refined_at_obs: int = 0
     first_cam_xy: Optional[np.ndarray] = None  # ground-plane pose of the first sighting

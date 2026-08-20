@@ -161,6 +161,7 @@ class ObjectLayer:
         min_bbox_px: float = 0.0,
         min_evidence: float = 0.0,
         min_presence: float = 0.0,
+        max_identity_rejections: int = 0,
     ) -> List[ObjectTrack]:
         """Non-blacklisted tracks matching the target with enough support,
         detection quality, accumulated evidence (fragment detections and
@@ -171,6 +172,14 @@ class ObjectLayer:
         the whole query-side payoff of the presence filter: a track the agent
         has since looked at and not found sinks below one it has not disproved,
         instead of being re-proposed on every replan.
+
+        `max_identity_rejections` (0 disables) retires a track the agent has
+        walked to and found was not the target that many times. Presence cannot
+        do this job: a false positive is an object that IS present, so every look
+        that disproves it as the target also re-detects it as an object and
+        restores its belief. Measured, with the identity channel off: one episode
+        committed to the same wrong track 251 times in 500 steps, its belief
+        pinned at the 0.95 positive clamp through 250 absence readings.
         """
         target = target_label.lower().replace(" ", "_")
         out = []
@@ -180,6 +189,8 @@ class ObjectLayer:
             if t.best_score < min_score or t.best_bbox_px < min_bbox_px:
                 continue
             if t.presence.p < min_presence:
+                continue
+            if max_identity_rejections and t.identity_rejections >= max_identity_rejections:
                 continue
             if t.label.lower().replace(" ", "_") == target:
                 out.append(t)

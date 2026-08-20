@@ -81,3 +81,49 @@ def test_without_a_presence_filter_the_blacklist_is_still_the_fallback():
     agent, track = _agent(1.5, with_filter=False)
     _rearm_agent(agent, _cfg(), steps=71)
     assert track.blacklisted is True
+
+
+def test_a_failed_attempt_also_counts_as_identity_evidence():
+    """Presence and identity are different questions and the belief can only
+    carry one of them. A false positive is an object that really is there, so
+    every look that disproves it as the target re-detects it as an object and
+    restores the belief the clamp just lowered."""
+    agent, track = _agent(3.0)
+    _rearm_agent(agent, _cfg(), steps=71)
+    assert track.identity_rejections == 1
+
+    # A detection undoes the belief step, exactly as it should ...
+    agent.object_layer.presence_filter.apply_reading(track, True, 0.6, 0.05)
+    assert track.presence.p > MIN_PRESENCE
+    # ... and the identity channel still holds the candidate back.
+    assert not agent.object_layer.candidates(
+        "cracker box", min_obs=0, min_presence=MIN_PRESENCE, max_identity_rejections=1
+    )
+    assert agent.object_layer.candidates(
+        "cracker box", min_obs=0, min_presence=MIN_PRESENCE, max_identity_rejections=0
+    ), "0 must disable the gate"
+
+
+def test_identity_rejections_do_not_survive_a_map_reload():
+    """Episode-scoped, like the blacklist: 'I walked over there twice today' is
+    not a fact about tomorrow's world."""
+    from osg.graph.map_store import apply_map
+
+    agent, track = _agent(1.5)
+    track.identity_rejections = 5
+    blob = {"tracks": [{
+        "id": 1, "label": "cracker box", "center": [1.0, 0.8, 2.0],
+        "axes": [0.1, 0.1, 0.1], "R": [[1, 0, 0], [0, 1, 0], [0, 0, 1]],
+        "observations": [], "best_score": 0.7, "best_bbox_px": 900.0,
+        "blacklisted": False, "linked_ids": [], "refined_at_obs": 0,
+        "evidence": 1.0, "presence": {"log_odds": 1.5, "last_seen_kf": 1,
+                                      "last_absent_kf": None, "n_expected": 1, "n_missed": 0},
+    }], "next_track_id": 2, "resolution": agent.object_layer and 0.05}
+    holder = SimpleNamespace(object_layer=agent.object_layer,
+                             costmap=SimpleNamespace(resolution=0.05))
+    try:
+        apply_map(holder, {k: v for k, v in blob.items() if k != "resolution"})
+    except Exception:
+        pass  # the costmap half of apply_map needs a real agent; the tracks half ran
+    restored = agent.object_layer.get(1)
+    assert restored is not None and restored.identity_rejections == 0

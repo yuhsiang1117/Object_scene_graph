@@ -254,6 +254,12 @@ def _rearm_agent(agent, cfg, steps: int) -> None:
         # lower there is nothing else that stops the next attempt repeating this
         # candidate, so the blacklist stays as the fallback.
         agent.object_layer.blacklist(track.id)
+    if track is not None:
+        # An attempt that ended without scoring is also evidence about IDENTITY,
+        # and that is the half the belief cannot hold: a false positive is an
+        # object that is really there, so the next keyframe re-detects it and
+        # restores the belief the clamp just lowered.
+        track.identity_rejections += 1
     agent._candidate_id = None
     agent._target_obj_xy = None
     agent._goal_xy = None

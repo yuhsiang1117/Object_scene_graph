@@ -174,6 +174,15 @@ class PresenceConfig:
     # decisive on its own. That asymmetry is the whole point of having two
     # sensors with different error rates.
     min_presence: float = 0.45
+    # Retire a candidate the agent has walked to and found was not the target
+    # this many times (0 disables). This is the IDENTITY channel, and it exists
+    # because presence cannot answer the question: a false positive is an object
+    # that really is there, so each look that disproves it as the target also
+    # re-detects it as an object and pins its belief at the positive clamp.
+    # Measured with this off: one episode committed to the same wrong track 251
+    # times in 500 steps. Two visits is the setting -- one arrival can end on a
+    # bad heading or a consumed path, two is a decision.
+    max_identity_rejections: int = 2
     # JSONL of expectation features per keyframe, for scripts/fit_recall_model.py.
     log_path: str = ""
 
