@@ -24,11 +24,23 @@ class ViewpointPlanner:
         costmap: Costmap2D,
         exclude: Optional[List[np.ndarray]] = None,
         exclude_radius_m: float = 0.5,
+        require_line_of_sight: bool = True,
+        allow_unknown: bool = False,
     ) -> Optional[np.ndarray]:
         """Best world-xy pose to observe the object from, or None if the
         object is not yet observable from mapped free space. `exclude` lists
         previously tried viewpoints (e.g., where the detector could not see
-        the object due to 3D occlusion the 2D map misses)."""
+        the object due to 3D occlusion the 2D map misses).
+
+        The two relaxations exist for the fallback in `_start_approach`, and
+        both are about the difference between "I know this is bad" and "I do not
+        know yet". `allow_unknown` accepts UNKNOWN cells: unmapped is not
+        unstandable, and the navmesh follower will find out for real. Dropping
+        `require_line_of_sight` accepts a pose whose ray to the object crosses
+        occupied cells, which on a 2D costmap includes the object's own
+        supporting table. A relaxed viewpoint is a worse place to stand than a
+        strict one; it is a far better place than the object's own centre, which
+        is what the fallback used to be."""
         exclude = exclude or []
         clearance = ndimage.distance_transform_edt(costmap.grid != OCCUPIED) * costmap.resolution
         best, best_score = None, -1.0
@@ -39,9 +51,12 @@ class ViewpointPlanner:
                 if any(np.linalg.norm(cand - e) < exclude_radius_m for e in exclude):
                     continue
                 rc = costmap.world_to_grid(cand)
-                if not costmap.in_bounds(rc) or costmap.grid[rc[0], rc[1]] != FREE:
+                if not costmap.in_bounds(rc):
                     continue
-                if not self._line_of_sight(costmap, cand, obj_xy):
+                cell = costmap.grid[rc[0], rc[1]]
+                if cell == OCCUPIED or (cell != FREE and not allow_unknown):
+                    continue
+                if require_line_of_sight and not self._line_of_sight(costmap, cand, obj_xy):
                     continue
                 # Prefer clearance and a mid-range viewing distance (~1.2 m)
                 score = float(clearance[rc[0], rc[1]]) - 0.3 * abs(radius - 1.2)

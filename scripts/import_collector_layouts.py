@@ -30,7 +30,7 @@ import argparse
 import json
 import math
 from pathlib import Path
-from typing import Dict, List
+from typing import Dict, List, Tuple
 
 # The collector's own scene paths point at machines that no longer exist
 # (/home/eku/..., which rebase_collector_path cannot map because it has no
@@ -57,10 +57,51 @@ def scene_block(scene: str) -> Dict[str, str]:
     return {k: v.format(scene=scene, stem=stem) for k, v in SCENE_BLOCK.items()}
 
 
+def dedupe_instances(objects: List[dict], mapping: Dict[str, str],
+                     where: str) -> Tuple[List[dict], List[dict]]:
+    """One instance per semantic id, keeping the first and reporting the rest.
+
+    00848-ziup5kvtCCR places TWO mugs and gives both semantic id 98. The schema
+    keys goals, viewpoints and relocation pairs on that id, so two objects
+    wearing it is not a scene with two mugs -- it is a scene where "the mug" has
+    no referent. The collector's own data is already inconsistent about it: one
+    of the seven layouts omits the second mug entirely, so the object sets do
+    not match across layouts either, and the importer's identical-object-sets
+    check would reject the scene for that alone.
+
+    Dropping the extra instance costs a distractor that is never a target here
+    and buys a usable scene. It is recorded in the layout rather than done
+    quietly, and the collector's files are not touched.
+    """
+    kept, dropped, seen = [], [], set()
+    for obj in objects:
+        sid = int(obj["semantic_id"])
+        if sid in seen:
+            dropped.append(obj)
+            print(f"  {where}: dropping a second instance of "
+                  f"{mapping[str(sid)]} (semantic id {sid}) at "
+                  f"{[round(v, 2) for v in obj['translation']]}")
+            continue
+        seen.add(sid)
+        kept.append(obj)
+    return kept, dropped
+
+
+def _dropped_note(dropped: List[dict], mapping: Dict[str, str]) -> List[dict]:
+    return [
+        {"semantic_id": int(o["semantic_id"]), "handle": mapping[str(o["semantic_id"])],
+         "translation": [float(v) for v in o["translation"]],
+         "reason": "duplicate semantic id; the schema allows one instance per id"}
+        for o in dropped
+    ]
+
+
 def convert_static(raw: dict, scene: str) -> dict:
     mapping = raw["id_handle_mapping"]
+    raw_objects, dropped = dedupe_instances(
+        raw["objects"], mapping, "static_scene_config.json")
     objects = []
-    for obj in raw["objects"]:
+    for obj in raw_objects:
         handle = mapping[str(obj["semantic_id"])]
         objects.append(
             {
@@ -79,6 +120,7 @@ def convert_static(raw: dict, scene: str) -> dict:
             "relocated_semantic_ids": [],
             "imported_by": "scripts/import_collector_layouts.py",
             "anchors": "derived: one anchor per static object (all >2 m apart)",
+            "dropped_duplicate_instances": _dropped_note(dropped, mapping),
         },
     }
 
@@ -87,8 +129,9 @@ def convert_dynamic(raw: dict, static_raw: dict, scene: str, layout_type: str,
                     index: int, source: str) -> dict:
     mapping = static_raw["id_handle_mapping"]
     static_by_id = {o["semantic_id"]: o for o in static_raw["objects"]}
+    raw_objects, dropped = dedupe_instances(raw["objects"], mapping, source)
     objects = []
-    for obj in raw["objects"]:
+    for obj in raw_objects:
         sid = obj["semantic_id"]
         handle = mapping[str(sid)]
         if layout_type == "in_anchor":
@@ -121,6 +164,7 @@ def convert_dynamic(raw: dict, static_raw: dict, scene: str, layout_type: str,
             "relocated_semantic_ids": [int(o["semantic_id"]) for o in objects],
             "imported_by": "scripts/import_collector_layouts.py",
             "source": source,
+            "dropped_duplicate_instances": _dropped_note(dropped, mapping),
             "anchors": "derived from the collector's directory type",
         },
     }
@@ -130,8 +174,12 @@ def displacement_report(static_raw: dict, raw: dict, layout_type: str) -> List[s
     mapping = static_raw["id_handle_mapping"]
     static_by_id = {o["semantic_id"]: o for o in static_raw["objects"]}
     lines, disagree = [], []
+    seen = set()
     for obj in raw["objects"]:
         sid = obj["semantic_id"]
+        if sid in seen:
+            continue
+        seen.add(sid)
         before = static_by_id[sid]["translation"]
         d = math.dist(before, obj["translation"])
         lines.append(f"    {mapping[str(sid)]:22s} {d:5.2f} m")

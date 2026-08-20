@@ -1597,15 +1597,42 @@ class NavAgent:
             # is angular -- at worst half the sampling step, about 0.10 m.
             view_xy = self.viewpoint_planner.approach_viewpoint(obj_xy, self.costmap)
             if view_xy is not None:
-                self._goal_xy = np.asarray(view_xy, dtype=float).copy()
-                self._approach_at_viewpoint = True
                 self.stats["approach_viewpoint"] = self.stats.get("approach_viewpoint", 0) + 1
             else:
-                # Not observable from mapped free space yet: fall back rather
-                # than refuse to approach.
-                self._goal_xy = obj_xy.copy()
+                # Not observable from mapped FREE space yet. The fallback used to
+                # be the object's own centre, and that is unwinnable by
+                # construction: a tabletop object's centre is an occupied cell
+                # inside the furniture, so the follower stalls against it and the
+                # agent ends up INSIDE the innermost 0.8 m viewpoint ring, where
+                # HM3D cannot score a success however well the object was found.
+                # Measured over 42 episodes: 23 approaches took this branch, and
+                # the 10 episodes that ended on such a goal scored SR 0.100
+                # against 0.516 for the rest, stalling at 0.54-1.51 m.
+                #
+                # So relax the viewpoint search instead of abandoning it --
+                # unmapped is not unstandable, and a ray that clips the object's
+                # own table is not a blocked view. Any pose ON a ring beats any
+                # pose off it.
+                view_xy = self.viewpoint_planner.approach_viewpoint(
+                    obj_xy, self.costmap, require_line_of_sight=False, allow_unknown=True
+                )
                 self.stats["approach_viewpoint_none"] = (
                     self.stats.get("approach_viewpoint_none", 0) + 1
+                )
+                if view_xy is not None:
+                    self.stats["approach_viewpoint_relaxed"] = (
+                        self.stats.get("approach_viewpoint_relaxed", 0) + 1
+                    )
+            if view_xy is not None:
+                self._goal_xy = np.asarray(view_xy, dtype=float).copy()
+                self._approach_at_viewpoint = True
+            else:
+                # Every ring pose is out of bounds. The nearest free cell is
+                # still a cell the agent can stand in, which the object's own
+                # centre is not.
+                self._goal_xy = self._nearest_free_xy(obj_xy)
+                self.stats["approach_goal_nearest_free"] = (
+                    self.stats.get("approach_goal_nearest_free", 0) + 1
                 )
         elif self._use_navmesh:
             # Navigate to the object itself; the navmesh snaps to the nearest

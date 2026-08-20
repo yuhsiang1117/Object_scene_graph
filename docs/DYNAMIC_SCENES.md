@@ -1521,6 +1521,164 @@ above the gate and "blue plastic pitcher" none.
 written (`outputs/substituted_layouts`), the same separation `import_collector_layouts.py`
 already keeps between DualMap's authoring session and ours, and each rewritten layout
 records its substitution and its source path in its own `authoring` block.
+### Three scenes, a standable goal, and a recoverable rejection
+
+Three things changed together — the benchmark grew from one scene to three, the terminal
+approach stopped aiming at cells the agent cannot stand in, and a failed attempt stopped
+striking its candidate off. They are reported together because they were measured together;
+the per-lever attribution is an ablation that has not been run.
+
+#### The benchmark is three scenes now, and one of them needed a decision
+
+`data/dualmap/HM3D_collect` holds three collected scenes, not one, each with a static
+layout and three in_anchor plus three cross_anchor relocations. 00880 imported unchanged.
+
+**00848 places two mugs and gives both semantic id 98.** The schema keys goals, viewpoints
+and relocation pairs on that id, so two objects wearing it is not a scene with two mugs —
+it is a scene where "the mug" has no referent. The collector's data is already inconsistent
+about it: one of the seven layouts omits the second mug, so the object sets do not match
+across layouts either. The importer now keeps the first instance of a duplicated id, drops
+the rest, and records what it dropped in the layout's `authoring` block. It costs a
+distractor that is never a target here and buys a usable scene.
+
+**Targets are chosen per scene by measurement, not assumed.** Detectability is not a
+property of the asset alone — the same cracker box mesh reads 0.75 in one scene and 0.00 in
+another. Recall at the 0.30 gate, 20 viewpoints per object, imgsz 768:
+
+| target | 00829 | 00848 | 00880 |
+|---|---|---|---|
+| bowl | 0.90 | — | 1.00 |
+| tomato soup can | 0.90 | **0.00** | 0.25 |
+| cracker box | 0.75 | 0.40 | **0.00** |
+| plate | 0.65 | 0.85 | 0.50 |
+| blue plastic pitcher | 0.60 | 0.20 | 0.35 |
+| bleach bottle | 0.45 | 0.90 | 0.65 |
+| banana | — | 0.25 | — |
+| mug | — | **0.00** | — |
+
+The zeroes are excluded, giving 6 + 5 + 5 targets over six dynamic layouts each: **96
+episodes**. Static is no longer a scored condition — the static comparison belongs on HM3D's
+own ObjectNav split — but the static layout is still what pass 1 maps.
+
+#### "box" and "book" were eating the targets
+
+00848's cracker box scores **0.00 at all twenty viewpoints** while occupying a median 5185
+px. It is authored side-on: the nutrition panel reads as a menu, and `book` (0.76) and
+`box` (0.72) win the class-competitive NMS that an open-vocabulary head runs over its own
+vocabulary. This is the same effect as the pitcher's, seen from the other side — there the
+target label was wrong, here two generic labels were right enough to steal it.
+
+Dropping the two classes, recall at the gate:
+
+| target | 00829 | 00848 |
+|---|---|---|
+| cracker box | 0.60 → **0.75** | 0.00 → **0.40** |
+| tomato soup can | 0.77 → **0.90** | 0.00 |
+| plate | 0.47 → **0.65** | 0.85 |
+| bowl | 0.93 → 0.90 | — |
+
+Nothing measurable is lost, and the container-surface candidate set the search posterior
+walks gets smaller too. The general lesson is worth stating plainly: **on an
+open-vocabulary detector the vocabulary is a hyperparameter of every class in it, not a
+free list.** Adding a name takes probability from its neighbours.
+
+#### The approach goal was a cell the agent cannot stand in
+
+When `ViewpointPlanner.approach_viewpoint()` found nothing — no ring pose that was mapped
+FREE with clear line of sight — `_start_approach` fell back to the object's own centre. For
+a tabletop object that is an occupied cell inside the furniture, so the follower stalls
+against it and the agent ends up **inside** the innermost 0.8 m ring, where HM3D's success
+criterion cannot fire however well the object was found. Over the previous 42-episode run:
+
+| final approach goal cell | n | SR | where the agent stalled |
+|---|---|---|---|
+| `occupied` | 10 | **0.100** | 0.54–1.51 m, never inside 0.18 m |
+| `free` | 31 | **0.516** | |
+
+The fallback fired 23 times in 42 episodes. It is not a rare path.
+
+The fix is to relax the viewpoint search rather than abandon it: accept UNKNOWN cells
+(unmapped is not unstandable — the navmesh follower finds out for real) and drop the
+line-of-sight test (on a 2D costmap the blocking cell is usually the object's own table).
+Any pose ON a ring beats any pose off it. Measured on 00829's 36 dynamic episodes, the
+relaxed search fired 22 times and returned a pose all 22 times, and **episodes ending on an
+occupied goal cell went from 8 to 0**.
+
+#### A failed attempt is not a permanent verdict
+
+`_rearm_agent` blacklisted the candidate an attempt had just failed on. That is the same
+absorbing-state mistake as blacklisting on absence and as persisting the blacklist through
+`apply_map`, and it bites hardest when the map is RIGHT: five of 42 episodes committed once
+to a track 0.00–0.39 m from the true object, failed, struck it off, and then had no way to
+stop — three cracker box episodes finished 0.67–0.95 m from the goal with 429 steps unspent.
+
+A failed attempt now applies a VLM-strength negative reading and holds the belief one
+detector-step under `min_presence` (p ≈ 0.255), so the next attempt must choose differently
+while one later detection (+2.5, to p ≈ 0.807) brings the track straight back. Of 45
+multi-attempt episodes, **40 re-committed after a failure**, which was structurally
+impossible before.
+
+**And it introduced an oscillation, in 7 of 96 episodes.** A false-positive track that the
+detector keeps re-detecting cycles: commit, walk, fail, belief clamped under the bar, detect
+again, commit again. One 00848 episode did this 251 times against a single track 7.9 m from
+the truth. The clamp is undone by exactly one detection, which is the property that makes it
+recoverable and also the property that makes it oscillate. The fix is not to restore the
+blacklist but to make the *count* of failed attempts on a track persist — a per-track
+penalty that raises that track's bar each time, recoverable but not free. That is not
+implemented.
+
+#### Results
+
+96 episodes, three scenes, dynamic conditions only, three attempts, 500 steps:
+
+| | n | SR | SPL |
+|---|---|---|---|
+| in_anchor | 48 | 0.438 | 0.276 |
+| cross_anchor | 48 | 0.292 | 0.129 |
+| **pooled** | **96** | **0.365** | **0.203** |
+
+| scene | n | SR | SPL |
+|---|---|---|---|
+| 00829-QaLdnwvtxbs | 36 | 0.472 | 0.271 |
+| 00880-Nfvxx8J5NCo | 30 | 0.367 | 0.246 |
+| 00848-ziup5kvtCCR | 30 | 0.233 | 0.080 |
+
+The spread across scenes is wider than any intervention measured in this document, which is
+the strongest argument yet that one scene was never enough to conclude anything from.
+
+On 00829, where a comparable prior run exists (same 36 dynamic episodes):
+
+| | before | after |
+|---|---|---|
+| in_anchor | 0.389 / 0.290 | **0.500** / **0.366** |
+| cross_anchor | 0.444 / 0.138 | 0.444 / 0.176 |
+| **overall** | **0.417 / 0.214** | **0.472 / 0.271** |
+
+Per target on that scene: cracker box 0.500 → 0.667, soup can 0.333 → 0.500, pitcher
+0.167 → 0.333, plate 0.167 → 0.333, bowl 0.500 → 0.500, bleach bottle 0.833 → 0.500. The
+bleach bottle is the one regression and at n = 6 it is one episode's worth of noise either
+way; it is recorded rather than explained.
+
+**The remaining failure is now one thing.** Pooled over 96 episodes:
+
+| | n |
+|---|---|
+| committed, succeeded | 35 |
+| **only ever committed to wrong tracks** | **50** |
+| committed to the right track and still failed | 8 |
+| never committed | 3 |
+
+Fifty of the sixty-one failures never see a correct candidate. Not a search problem, not a
+terminal problem, not staleness: false-positive tracks outranking the real object, which is
+the cracker box's original disease generalised to every target. The recall model made it
+worse by design — it correctly excuses a missed detection on a small distant track, and a
+false positive is exactly a small distant track. The system has one channel for "this track
+is not real" and it is the same channel it uses for "this object has moved", and until those
+are separated no amount of search or terminal work will move the number.
+
+One episode of 96 (00880, bleach bottle, cross_anchor) ended on a disconnected navmesh
+island with an infinite geodesic to every goal viewpoint. It is a failure either way; SPL and
+mean distance are computed over the finite 95.
 ---
 
 ## Phase 4 — C4 change log

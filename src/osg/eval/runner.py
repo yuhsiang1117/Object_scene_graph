@@ -205,13 +205,55 @@ def _rearm_agent(agent, cfg, steps: int) -> None:
 
     Everything learned survives -- presence beliefs, searched surfaces, objects
     mapped along the way -- because that carry-over is the whole point of
-    retrying. Only the navigation state is reset, and the candidate just
-    rejected is blacklisted so the next attempt cannot repeat it.
+    retrying. Only the navigation state is reset.
+
+    The candidate just rejected has its belief driven below `min_presence`
+    rather than being blacklisted. Blacklisting is permanent and C1's premise is
+    that no state is absorbing; this is the same mistake the absence path and
+    the map loader each had to have removed, and it bites hardest exactly when
+    the map is RIGHT. Measured over 42 episodes: five episodes committed once to
+    a track 0.00-0.39 m from the true object, failed the attempt, struck the
+    track off, and then had no way to stop -- three cracker box episodes finished
+    0.67-0.95 m from the goal with 429 steps unspent, and a soup can episode
+    ended 10.95 m away with 475 unspent.
+
+    One VLM-strength negative reading takes a belief reloaded at 0.82 to 0.36,
+    under the 0.45 bar. A track first detected in THIS episode sits at the +3.0
+    positive clamp, where the same reading lands at 0.75 and the next attempt
+    would simply repeat it, so the belief is additionally held just under the
+    bar -- that much is the attempt protocol's requirement rather than an
+    inference, and it is written as a clamp so it reads as one. What matters is
+    that it stays a belief: one later detection is worth +2.5 and puts the track
+    back above the bar, which is the whole difference from a blacklist.
     """
+    import math
+
     from ..agent.nav_agent import State
 
-    if agent._candidate_id is not None:
-        agent.object_layer.blacklist(agent._candidate_id)
+    track = (
+        agent.object_layer.get(agent._candidate_id)
+        if agent._candidate_id is not None else None
+    )
+    presence = getattr(agent.object_layer, "presence_filter", None)
+    if track is not None and presence is not None:
+        vc = getattr(cfg, "verification", None)
+        presence.apply_reading(
+            track, False,
+            float(getattr(vc, "vlm_recall", 0.9)),
+            float(getattr(vc, "vlm_q", 0.2)),
+        )
+        pc = getattr(cfg.scene_graph, "presence", None)
+        bar = float(getattr(pc, "min_presence", 0.45)) if pc else 0.45
+        bar = min(max(bar, 1e-3), 1.0 - 1e-3)
+        # One detector-strength step below the bar: far enough that this attempt
+        # is over, near enough that one sighting undoes it.
+        under_the_bar = math.log(bar / (1.0 - bar)) - 0.87
+        track.presence.log_odds = min(float(track.presence.log_odds), under_the_bar)
+    elif track is not None:
+        # No presence filter running (the C1-off ablation): without a belief to
+        # lower there is nothing else that stops the next attempt repeating this
+        # candidate, so the blacklist stays as the fallback.
+        agent.object_layer.blacklist(track.id)
     agent._candidate_id = None
     agent._target_obj_xy = None
     agent._goal_xy = None

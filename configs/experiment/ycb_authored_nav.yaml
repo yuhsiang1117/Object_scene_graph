@@ -68,7 +68,25 @@ detector:
   # are the ones the detector answers to rather than the ones a person would use:
   # "pitcher" scores 0.00 on this asset at every resolution and against eight
   # synonyms, "blue plastic pitcher" reaches 0.71.
-  vocabulary: ["chair", "sofa", "armchair", "plant", "bed", "toilet", "tv_monitor", "table", "desk", "cabinet", "shelf", "dresser", "wardrobe", "nightstand", "lamp", "pillow", "cushion", "picture", "mirror", "window", "door", "sink", "bathtub", "shower", "towel", "counter", "stool", "bench", "refrigerator", "oven", "microwave", "washing machine", "stove", "fireplace", "stairs", "rug", "curtain", "clothes", "book", "box", "basket", "banana", "bowl", "cracker box", "mug", "blue plastic pitcher", "plate", "bleach bottle", "tomato soup can"]
+  #
+  # "box" and "book" are DELIBERATELY ABSENT. An open-vocabulary head runs
+  # class-competitive NMS over its own vocabulary, so a generic class that fits
+  # a target loosely takes the detection away from the specific class that fits
+  # it exactly. Measured over 20 viewpoints per object, dropping the two of them
+  # (recall at the 0.30 gate):
+  #
+  #                        00829        00848        00880
+  #   cracker box       0.60->0.75   0.00->0.40      0.00
+  #   tomato soup can   0.77->0.90      0.00       0.25
+  #   plate             0.47->0.65      0.85       0.50
+  #   bowl              0.93->0.90        --       1.00
+  #
+  # The 00848 cracker box is the clearest case: it is authored side-on, its
+  # nutrition panel reads as a menu, and "book" scored 0.76 against "cracker
+  # box" 0.00 at every one of twenty viewpoints. Losing the two generic classes
+  # costs nothing measurable and also shrinks the container-surface candidate
+  # set the search posterior has to walk.
+  vocabulary: ["chair", "sofa", "armchair", "plant", "bed", "toilet", "tv_monitor", "table", "desk", "cabinet", "shelf", "dresser", "wardrobe", "nightstand", "lamp", "pillow", "cushion", "picture", "mirror", "window", "door", "sink", "bathtub", "shower", "towel", "counter", "stool", "bench", "refrigerator", "oven", "microwave", "washing machine", "stove", "fireplace", "stairs", "rug", "curtain", "clothes", "basket", "banana", "bowl", "cracker box", "mug", "blue plastic pitcher", "plate", "bleach bottle", "tomato soup can"]
 
 scene_graph:
   min_det_bbox_px: 300
