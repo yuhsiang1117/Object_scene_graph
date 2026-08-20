@@ -290,6 +290,73 @@ def _mode_labels(sim, cfg, layout, detector, probe, out_dir, handles):
     return records
 
 
+def _mode_zoom(sim, cfg, layout, detector, probe, out_dir, handles):
+    """Does cropping and upsampling recover detection at search range?
+
+    The binding constraint on re-finding a moved object is not which surface the
+    search ranks first, it is that an episode only ever reaches about five of
+    them: recall at the 0.30 gate falls 0.79 -> 0.35 -> 0.15 between 0.8 m, 2 m
+    and 3 m, so "inspecting" a surface means driving to within a metre of it.
+    If a crop around a distant surface, upsampled to the detector's own imgsz,
+    detects as well as standing there does, a surface can be checked from across
+    the room and the arithmetic changes completely.
+
+    Full-frame detection and crop detection are scored on the SAME frames, so
+    the comparison isolates resolution from everything else.
+    """
+    import cv2
+
+    imgsz = int(probe.get("imgsz", [cfg.detector.imgsz])[0])
+    n_views = int(probe.get("views", 40))
+    pad_frac = float(probe.get("zoom_pad", 1.5))
+    detector.set_vocabulary([str(v) for v in cfg.detector.vocabulary])
+    detector.imgsz = imgsz
+    records = []
+    for authored in layout.objects:
+        if handles and authored.handle not in handles:
+            continue
+        for rank, view in enumerate(_authored_views(sim, cfg, authored, n_views)):
+            rgb, semantic = _observe(sim, view["position"], view["rotation"])
+            gt_mask = semantic == SEMANTIC_ID_OFFSET + int(authored.semantic_id)
+            box = _bbox_of(gt_mask)
+            if box is None:
+                continue
+            full = [d for d in detector.detect(rgb) if _iou(d.mask, gt_mask) > 0.1]
+            full_score = max([float(d.score) for d in full
+                              if d.label == authored.label], default=0.0)
+
+            # A crop the SIZE OF A SURFACE REGION, not of the object: the agent
+            # knows where a container is, never where the object is.
+            h, w = rgb.shape[:2]
+            cx, cy = (box[0] + box[2]) / 2.0, (box[1] + box[3]) / 2.0
+            half = max(box[2] - box[0], box[3] - box[1]) * (0.5 + pad_frac)
+            half = max(half, 32.0)
+            x1, y1 = int(max(0, cx - half)), int(max(0, cy - half))
+            x2, y2 = int(min(w, cx + half)), int(min(h, cy + half))
+            patch = rgb[y1:y2, x1:x2]
+            if patch.size == 0:
+                continue
+            scale = min(8.0, imgsz / max(1.0, float(max(patch.shape[:2]))))
+            big = cv2.resize(patch, None, fx=scale, fy=scale, interpolation=cv2.INTER_CUBIC)
+            sub_mask = gt_mask[y1:y2, x1:x2]
+            big_mask = cv2.resize(sub_mask.astype(np.uint8), (big.shape[1], big.shape[0]),
+                                  interpolation=cv2.INTER_NEAREST).astype(bool)
+            crop = [d for d in detector.detect(big) if _iou(d.mask, big_mask) > 0.1]
+            crop_score = max([float(d.score) for d in crop
+                              if d.label == authored.label], default=0.0)
+
+            records.append({
+                "mode": "zoom", "handle": authored.handle, "label": authored.label,
+                "radius_m": view["requested_radius_m"], "view_rank": rank,
+                "gt_pixels": int(np.count_nonzero(gt_mask)),
+                "crop_px": [int(x2 - x1), int(y2 - y1)], "upsample": round(scale, 2),
+                "full_score": round(full_score, 3), "crop_score": round(crop_score, 3),
+                "crop_best_label": max(crop, key=lambda d: d.score).label if crop else None,
+            })
+            print(json.dumps(records[-1]))
+    return records
+
+
 def _mode_fp(sim, cfg, layout, detector, probe, out_dir, handles):
     """False-positive census over random navigable poses, benchmark vocabulary."""
     imgsz = int(probe.get("fp_imgsz", cfg.detector.imgsz))
@@ -330,7 +397,7 @@ def _mode_fp(sim, cfg, layout, detector, probe, out_dir, handles):
     return records
 
 
-MODES = {"views": _mode_views, "labels": _mode_labels, "fp": _mode_fp}
+MODES = {"views": _mode_views, "labels": _mode_labels, "fp": _mode_fp, "zoom": _mode_zoom}
 
 
 @hydra.main(config_path="../configs", config_name="config", version_base="1.3")

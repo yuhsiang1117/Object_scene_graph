@@ -1679,6 +1679,98 @@ are separated no amount of search or terminal work will move the number.
 One episode of 96 (00880, bleach bottle, cross_anchor) ended on a disconnected navmesh
 island with an infinite geodesic to every goal viewpoint. It is a failure either way; SPL and
 mean distance are computed over the finite 95.
+### What the remaining failures actually are, and the two experiments that answer them
+
+The first classification of the 96-episode run said "50 of 61 failures never commit to a
+correct candidate", and that was wrong in a way worth naming: for a *dynamic* episode,
+committing to the remembered pose is the correct opening move, not a false positive.
+Scoring commits against the object's post-move position counts a perfectly good first
+attempt as an error. Splitting on the pre-move position too:
+
+| failure family | n |
+|---|---|
+| went to the remembered pose and never re-found the object | **28** |
+| only ever false positives | 13 |
+| the remembered pose, then false positives | 9 |
+| reached the right track and still failed | 8 |
+| never committed | 3 |
+
+So the dominant failure is the one the system exists to solve, and the false-positive
+problem is real but half the size. **All 28 of the first family never detected the object at
+its new pose at all** — not once, in any frame, at any point in 500 steps — and 27 of the 28
+ran the search. There is no gate to relax and no ranking to improve: the candidate was never
+created.
+
+**The arithmetic, measured on this run.** The search selects a median of 14 surfaces per
+episode and *arrives* at a median of **5**. It is not thrashing — 401 of 676 consecutive
+selections re-select the same surface and only 40 switch away before arriving — so five
+inspections per 500 steps is simply what an inspection costs when it means driving to within
+a metre of a surface. Against a house, five is not enough, and no reordering of the list
+changes that.
+
+That makes detection *range* the variable to move, and there are two ways to try.
+
+#### Cropping does not work, and it is worth knowing why
+
+If a distant surface could be checked by cropping its projected region and upsampling it to
+the detector's own `imgsz`, an inspection would cost nothing and the arithmetic would close.
+Measured on 00829, same frames scored both ways, recall at the 0.30 gate:
+
+| range | whole frame | crop, upsampled |
+|---|---|---|
+| 0.8 m | 0.66 | 0.56 |
+| 1.6 m | 0.40 | 0.20 |
+| 2.5 m | 0.19 | 0.15 |
+| 3.0 m | 0.19 | 0.05 |
+| ≥ 2.5 m pooled | **0.15** | **0.06** |
+
+It is worse everywhere. Interpolation adds no information — an object 76 px across at 4 m is
+76 px of sensor data however large the array holding it — and the crop also throws away the
+context the detector uses. This is the same lesson as the earlier `imgsz` sweep, in reverse:
+resolution helps only where there are photons behind it.
+
+#### More sensor pixels do work, and the cost is legible
+
+Rendering at 1280×960 instead of 640×480 adds real information. Recall at the gate, 00829,
+five targets, against range:
+
+| range | 640×480, imgsz 768 | 1280×960, imgsz 1280 |
+|---|---|---|
+| 0.8 m | 0.61 | 0.62 |
+| 1.2 m | 0.50 | 0.66 |
+| 1.6 m | 0.36 | **0.56** |
+| 2.0 m | 0.24 | **0.57** |
+| 2.5 m | 0.17 | **0.59** |
+| 3.0 m | 0.10 | 0.33 |
+| ≥ 2.5 m pooled | 0.10 | **0.31** |
+
+The shape matters more than any single cell: from 0.8 m to 2.5 m the curve is **flat**
+(0.62, 0.66, 0.56, 0.57, 0.59). A surface at 2.5 m becomes about as checkable as one the
+agent is standing at, which is exactly the property five-inspections-per-episode needs, and
+it roughly quadruples the area swept per metre travelled.
+
+Two costs, both measured rather than assumed. Detection goes 36.7 → 52.9 ms per keyframe
+against a control loop that currently runs at ~300 ms. And precision degrades: over 300
+random navigable poses, gate-clearing false positives go 3 → 7 (the cracker box 2 → 6, max
+score 0.39 → 0.52) while true positives go 35 → 53. That is a real trade and it must be run
+as an A/B, not adopted — the whole cracker-box episode in this document came from choosing a
+resolution on recall alone.
+
+#### The false-positive half has an instrument that has never been switched on
+
+`verification.absence_only=true` has been set on every batch here, which disables the
+terminal candidate gate: asking the VLM, before committing, whether the boxed object is the
+target. It was disabled deliberately to isolate the absence sensor and the note to turn it
+on has been outstanding since the seven-episode batch. It addresses 22 of the 61 failures
+directly and needs no new code.
+
+The structural version of the same fix is to stop using one channel for two questions. The
+presence filter answers "has this object moved", and the system reads the same number as
+"is this track real" — so a fitted recall model that correctly excuses a missed detection on
+a small distant track also protects every false positive, which is exactly a small distant
+track. A per-class instance count ("this house has one cracker box") ranks tracks of a label
+against each other rather than against a fixed bar, and is the smallest thing that separates
+them.
 ---
 
 ## Phase 4 — C4 change log
