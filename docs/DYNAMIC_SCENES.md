@@ -1771,6 +1771,112 @@ a small distant track also protects every false positive, which is exactly a sma
 track. A per-class instance count ("this house has one cracker box") ranks tracks of a label
 against each other rather than against a fixed bar, and is the smallest thing that separates
 them.
+### The ablation ladder: an identity channel, a VLM gate, and more sensor pixels
+
+Four conditions, 96 episodes each, three scenes, dynamic layouts only, three attempts,
+500 steps. Every cell differs from its neighbour by one thing, which is the only way the
+three levers proposed after the last run could be told apart.
+
+| | A baseline | B0 identity | B +VLM gate | C0 +hires |
+|---|---|---|---|---|
+| identity channel | — | yes | yes | yes |
+| VLM candidate gate | — | — | **yes** | — |
+| sensor | 640×480 / 768 | 640×480 / 768 | 640×480 / 768 | **1280×960 / 1280** |
+| **SR / SPL** | 0.365 / 0.203 | 0.385 / 0.210 | **0.260** / 0.142 | **0.458** / 0.223 |
+| in_anchor | 0.438 | 0.458 | 0.333 | **0.542** |
+| cross_anchor | 0.292 | 0.312 | 0.188 | **0.375** |
+
+B0 reuses A's maps, which are bit-identical across all 1704 tracks, so A → B0 is a genuine
+single-variable comparison. C0 needs its own map (a different sensor detects different
+things) and its pixel-denominated admission gates are scaled ×4 so the change is *sharper
+vision* rather than *a looser gate*.
+
+#### The VLM candidate gate is harmful here, and the reason is measurable
+
+It is the only lever that moves the number down, and it moves it a long way: **0.385 →
+0.260**. Eighty-one candidate rejections, and the damage lands exactly where a picture is
+hardest to read — pitcher 0.389 → 0.056, tomato soup can 0.333 → 0.000 — while the targets
+whose crops are large (bowl, cracker box, plate) are untouched. Episodes that never commit
+to anything go 3 → 11: the gate vetoes the only candidate and leaves the agent nothing to
+walk to.
+
+The cause is not the model. It is that **the picture does not exist**. `verify()` judges a
+restored track from the stored crop of its best detection, and for these targets that crop
+is **46–101 px on its longest side**. There are no more pixels to be had; the objects are
+small in a 640×480 frame. An 0.85-accuracy model asked a hard question at that size vetoes
+a good candidate about as often as it catches a bad one, and a benchmark where the target
+is the *only* instance of its class punishes a false veto much harder than a false accept.
+
+Two implementation faults were fixed on the way to this number and both are worth recording
+because either would have produced a *fake* null result:
+
+- the crop was not serialised at all, so `verify()` fell through to `_ask(None)`, which
+  fails open — the gate silently accepted everything, on precisely the restored tracks that
+  produce 62 of 72 false-positive commits;
+- with a rejection counted at full weight, one doubt retired a candidate. In the pilot the
+  first three rejections were all *correct* candidates and two had converted without the
+  gate. A rejection is now one piece of evidence, not a verdict.
+
+So the honest verdict is narrow: the gate is harmful *on stored crops of small objects*.
+Asking the same model about a live view at arrival, where the object is metres closer, is a
+different experiment and remains open.
+
+#### The identity channel removes the livelock and is worth +0.02
+
+A false positive is an object that really is present, so every look that disproves it as
+the target re-detects it as an object and restores the belief. Presence cannot retire it.
+With the identity channel:
+
+| | A | B0 |
+|---|---|---|
+| max goal commits in one episode | **251** | **6** |
+| episodes committing more than 10 times | 7 | **0** |
+| median search selections / arrivals | 3 / 0 | 9 / 1 |
+| SR | 0.365 | 0.385 |
+
+The livelock is gone outright and the search actually runs. The score barely moves, and the
+reason is visible in the failure families: the episodes that were livelocked were failing
+for the *other* reason as well, so freeing their budget bought attempts at a search that
+still could not see the object. A mechanism fixed, a symptom not yet cured — worth keeping
+because it is a precondition for anything the freed budget is spent on.
+
+#### More sensor pixels is the lever, and it hits the family it was aimed at
+
+**0.385 → 0.458**, the largest single move measured in this document, and the failure
+families say it is the predicted mechanism rather than luck:
+
+| | A | B0 | C0 |
+|---|---|---|---|
+| succeeded | 35 | 37 | **44** |
+| remembered pose only, never re-found it | 28 | 25 | **13** |
+| false positives only | 13 | 12 | **5** |
+| reached the right track, still failed | 8 | 9 | 13 |
+
+The dominant family halves, 25 → 13. That is exactly what the range sweep predicted: recall
+at the 0.30 gate goes 0.36 → 0.56 at 1.6 m, 0.24 → 0.57 at 2.0 m and 0.17 → 0.59 at 2.5 m,
+so a surface across the room becomes about as checkable as one underfoot and the five
+inspections an episode can afford cover four times the area. False positives also fall by
+more than half, because a sharper look resolves what a blurry one guessed at.
+
+The cost shows up where it should: "reached the right track and still failed" *rises*
+8 → 13. More episodes now get to the object, so more of them fail at the last metre instead
+of never arriving — the bottleneck moving down the pipeline is what progress looks like
+here. Per target, the plate goes 0.111 → 0.500 and the cracker box 0.417 → 0.667.
+
+Two things it does not fix. **00880 gets worse** (0.433 → 0.333) while 00829 goes
+0.500 → 0.611 and 00848 0.200 → 0.400; the scene spread remains larger than the
+intervention, which is the standing argument for more scenes rather than more tuning.
+And detection is 36.7 → 52.9 ms per keyframe with the control loop at ~1.6 fps against
+~3.3, so this buys accuracy with time and any real-time claim has to be restated at the new
+number.
+
+#### Where the failures are now
+
+Of C0's 52 failures: 13 never re-found the object, 17 went to the remembered pose and then
+chased a false positive, 13 reached the right track and failed anyway, 5 chased false
+positives only, 4 never committed. The distribution is flatter than it has ever been — no
+single cause is now more than a third — which is the first time this benchmark has not had
+one obvious next thing to fix.
 ---
 
 ## Phase 4 — C4 change log
