@@ -98,6 +98,13 @@ def make_cfg(**agent_overrides) -> types.SimpleNamespace:
     return cfg
 
 
+def _frame_at(xy) -> "object":
+    """A frame whose camera sits at this ground-plane point."""
+    T = np.eye(4)
+    T[0, 3], T[2, 3] = float(xy[0]), float(xy[1])
+    return make_frame(_INTRINSICS, T)
+
+
 def make_agent(cfg=None, target="chair") -> NavAgent:
     agent = NavAgent(cfg or make_cfg(), StubDetector(), AsyncScorer(_StubScorer()), None, target)
     agent.costmap.grid[:, :] = FREE
@@ -479,3 +486,48 @@ def test_the_reach_threshold_follows_the_planner_it_is_derived_from():
     cfg.exploration.voronoi_goal_near_m = 1.5
     agent = make_agent(cfg)
     assert agent._frontier_reach_m > 1.5 + 0.2
+
+
+def test_a_pursued_frontier_is_retired_however_the_pursuit_ended():
+    """Ending a pursuit must make the frontier unselectable, arrival or not.
+
+    The navigator returns None for arrived-or-unreachable alike and the FSM then
+    drops GOTO_FRONTIER -> EXPLORE. If nothing blocks the frontier the next
+    selection can pick the same one, and the agent freezes re-selecting it --
+    give-up cannot save it, because it counts steps *inside* GOTO_FRONTIER and
+    the re-entry resets the timer. Blocking used to be conditional on being far
+    from the goal, which quietly did this job too; making the reach threshold
+    correct removed the block for arrivals between 0.5 and 0.9 m and the
+    livelock returned, at a cost of 0.073 SR over 96 episodes.
+    """
+    agent = make_agent()
+    frame = _frame_at(np.zeros(2))
+    f = Frontier(id=7, cells=np.zeros((0, 2), dtype=int),
+                 centroid_xy=np.array([0.3, 0.0]), size=10)
+    agent._current_frontier = f
+    agent.state = State.GOTO_FRONTIER
+
+    # An ordinary arrival: well inside the reach threshold.
+    agent._retire_pursued_frontier(frame, np.array([0.3, 0.0]))
+    assert agent._blocked_frontier_pts, "an arrived-at frontier must still be retired"
+    assert 7 in agent._blocked_ids([f]), "and must not be selectable again"
+    assert agent.stats.get("frontier_reached") == 1
+    assert agent.stats.get("frontier_stub_block", 0) == 0
+    assert agent._last_giveup_pt is None, (
+        "an ordinary arrival is not a give-up point -- marking it suppresses the "
+        "all-frontiers-blocked fallback near somewhere already explored"
+    )
+
+
+def test_an_unreachable_frontier_is_retired_for_longer_and_marks_a_giveup():
+    agent = make_agent()
+    frame = _frame_at(np.zeros(2))
+    f = Frontier(id=9, cells=np.zeros((0, 2), dtype=int),
+                 centroid_xy=np.array([6.0, 0.0]), size=10)
+    agent._current_frontier = f
+    agent.state = State.GOTO_FRONTIER
+
+    agent._retire_pursued_frontier(frame, np.array([6.0, 0.0]))
+    assert 9 in agent._blocked_ids([f])
+    assert agent.stats.get("frontier_stub_block") == 1
+    assert agent._last_giveup_pt is not None
