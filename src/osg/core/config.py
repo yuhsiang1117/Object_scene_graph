@@ -117,6 +117,13 @@ class DetectorConfig:
     name: str = "yoloe"
     weights: str = "data/weights/yoloe-11s-seg.pt"
     conf: float = 0.3
+    # Per-class overrides of `conf`, {label: threshold}. One global gate prices
+    # every class the same and they are not the same: measured over 900 random
+    # navigable poses, dropping the gate 0.30 -> 0.20 costs the tomato soup can
+    # and the banana NOTHING in false positives while buying them 8-9 points of
+    # recall, and costs the cracker box eighteen false positives for six. See
+    # YoloeDetector for the full table.
+    class_conf: Dict[str, float] = field(default_factory=dict)
     imgsz: int = 512
     half: bool = True
     device: str = "cuda"
@@ -276,6 +283,13 @@ class SceneGraphConfig:
 class ExplorationConfig:
     scorer: str = "vlm"  # vlm | llm_text | nearest | random
     top_n_frontiers: int = 5
+    # HybridVoronoiPlanner navigates the medial axis and stops at the graph node
+    # nearest the goal, within this radius -- it stops NEAR a goal, not on it.
+    # Read by NavAgent both to build the planner and to derive
+    # `_frontier_reach_m`; those two must agree, or an ordinary arrival at a
+    # frontier is misread as a degenerate stub and the frontier is blocked for
+    # having been reached.
+    voronoi_goal_near_m: float = 0.7
     frontier_dedup_m: float = 1.0
     frontier_min_cells: int = 8
     subgraph_radius_m: float = 3.0
@@ -294,7 +308,36 @@ class ExplorationConfig:
     search_detect_prob: float = 0.8
     # Length scale for "things are moved short distances": b decays as
     # exp(-d/L) from where the object was last believed to be.
-    search_proximity_len_m: float = 4.0
+    #
+    # 1.0 m, not the 4.0 m this started at, because the benchmark's own
+    # displacements say so: in_anchor relocations move a median 0.72 m and
+    # cross_anchor ones 6.06 m, which is a short mode plus a long tail rather
+    # than one exponential with a 4 m scale. Scored offline against the true
+    # destination over 114 (scene, layout, target) combinations
+    # (scripts/rank_search_surfaces.py), share of cases where the true surface
+    # lands in the top 5 -- what one episode can afford to inspect:
+    #
+    #                                    overall   in_anchor  cross_anchor
+    #   proximity dropped after absence   12/114      5/57        7/57
+    #   L=4.0 with a 0.2 floor            20/114     19/57        1/57
+    #   L=1.0, no floor                   36/114     29/57        7/57
+    search_proximity_len_m: float = 1.0
+    # The floor used to be 0.2, and it was doing damage. `max(exp(-d/L), floor)`
+    # clips every candidate past ~6 m to the SAME value, so all of them tie and
+    # their order falls to whatever `sorted` does with equal keys -- track id.
+    # For a cross-anchor move, where the destination is 6 m away by
+    # construction, that discards the only signal left. Without the floor the
+    # far candidates stay ordered by distance and cross_anchor recovers from
+    # 1/57 to 7/57. Keep it at 0.0 unless something needs a genuine mixture.
+    search_proximity_floor: float = 0.0
+    # Belief carried by the single most plausible mapped surface. The candidate
+    # priors are affinity x proximity normalised so the best of them equals this,
+    # which separates the ORDERING (what the proximity model is for) from the
+    # SCALE (what `search_frontier_weight` prices unexplored space against).
+    # 0.5 because that is where the previously tuned model sat -- median top
+    # prior 0.479 over 19 (scene, target) pairs -- so sharpening proximity does
+    # not silently re-tune the search-versus-explore trade at the same time.
+    search_surface_mass: float = 0.5
     # Scales a frontier's utility against a surface's, i.e. the price of
     # preferring unmapped space over a plausible surface. Must be non-zero or
     # the agent stops exploring once its surfaces are exhausted.

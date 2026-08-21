@@ -60,7 +60,9 @@ def make_cfg(**agent_overrides) -> types.SimpleNamespace:
             # rather than testing anything.
             los_visibility_penalty=1.0, continuity_weight=0.0,
             search_posterior=False, search_detect_prob=0.8,
-            search_proximity_len_m=4.0, search_frontier_weight=1.0,
+            search_proximity_len_m=1.0, search_proximity_floor=0.0,
+            search_frontier_weight=1.0, voronoi_goal_near_m=0.7,
+            search_surface_mass=0.5,
             affinity_llm=False, affinity_cache="",
             search_arrival_m=1.2, search_max_steps=60, search_unreached_credit=0.25,
             search_glance_detect_prob=0.35, search_glance_range_m=4.0, search_same_room_bonus=4.0,
@@ -411,3 +413,69 @@ def test_portal_goal_keeps_its_target_floor_height():
     agent._portal_active = True
     agent._follow_path(_frame((0.0, 0.0)))
     assert calls[-1] == 2.8, "portal pursuit lost its target floor height"
+
+
+def test_absence_does_not_erase_where_the_object_used_to_be():
+    """Confirming the object is not at its old POSE does not refute "objects are
+    moved short distances" -- it refutes one surface.
+
+    `_last_known_target_xy` used to return None once absence was confirmed, which
+    flattened the search prior over every mapped surface in the house. With the
+    proximity term unclipped the same evidence is better spent the other way:
+    the object is usually a metre or two away, on a neighbouring surface, and
+    the surface just ruled out is retired by the InspectionLog instead. Measured
+    over 114 relocations, keeping the term takes the true destination into the
+    top 5 in 29 of 57 in_anchor cases against 5 of 57 with it dropped.
+    """
+    from osg.objects.association import ObjectTrack
+    from osg.objects.ellipsoid import Ellipsoid
+
+    agent = make_agent(target="chair")
+    track = ObjectTrack(
+        id=7, label="chair",
+        ellipsoid=Ellipsoid(center=np.array([2.0, 0.5, 3.0]),
+                            axes=np.array([0.2, 0.2, 0.2]),
+                            R=np.eye(3)),
+    )
+    agent.object_layer._tracks[track.id] = track
+
+    # The agent goes there and the target is not there: the belief drops to the
+    # floor and the identity channel records a rejection. Neither is allowed to
+    # erase the fact that this is where the object was last seen.
+    track.presence.log_odds = -6.0
+    track.identity_rejections = 2
+
+    where = agent._last_known_target_xy()
+    assert where is not None, "absence must lower a belief, not delete the memory"
+    assert np.allclose(where, np.array([2.0, 3.0]))
+
+
+def test_a_frontier_the_agent_reached_is_not_called_unreachable():
+    """`_frontier_reach_m` has to be derived from the planner, not picked.
+
+    HybridVoronoi navigates the medial axis and stops at the graph node nearest
+    the goal, within `voronoi_goal_near_m`; WaypointController then reports
+    arrival within its own tolerance of that endpoint. So an ordinary, correct
+    arrival can leave the agent `goal_near_m + arrival_tol` from the frontier
+    goal. Against the old fixed 0.5 m that was classified as a degenerate stub:
+    the frontier was blocked for 100 rounds and `_last_giveup_pt` was set --
+    which also suppresses the all-frontiers-blocked fallback near that point --
+    as the consequence of having got there.
+    """
+    from osg.agent.nav_agent import FRONTIER_ARRIVAL_TOL_M
+
+    cfg = make_cfg()
+    agent = make_agent(cfg)
+    worst_case_arrival = cfg.exploration.voronoi_goal_near_m + FRONTIER_ARRIVAL_TOL_M
+    assert agent._frontier_reach_m > worst_case_arrival, (
+        f"a correct arrival can leave the agent {worst_case_arrival} m from the "
+        f"goal, but anything past {agent._frontier_reach_m} m is called a stub"
+    )
+
+
+def test_the_reach_threshold_follows_the_planner_it_is_derived_from():
+    """Change the planner's stopping radius and the classification follows."""
+    cfg = make_cfg()
+    cfg.exploration.voronoi_goal_near_m = 1.5
+    agent = make_agent(cfg)
+    assert agent._frontier_reach_m > 1.5 + 0.2

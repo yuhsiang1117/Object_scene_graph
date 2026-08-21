@@ -116,6 +116,7 @@ def build_detector(cfg):
         return YoloeDetector(
             weights=cfg.detector.weights,
             conf=cfg.detector.conf,
+            class_conf=dict(getattr(cfg.detector, "class_conf", {}) or {}),
             imgsz=cfg.detector.imgsz,
             half=cfg.detector.half,
             device=cfg.detector.device,

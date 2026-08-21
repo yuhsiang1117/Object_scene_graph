@@ -8,7 +8,7 @@ from __future__ import annotations
 from abc import ABC, abstractmethod
 import os
 from pathlib import Path
-from typing import List
+from typing import Dict, List, Optional
 
 import numpy as np
 
@@ -32,6 +32,7 @@ class YoloeDetector(Detector):
         imgsz: int = 512,
         half: bool = True,
         device: str = "cuda",
+        class_conf: Optional[Dict[str, float]] = None,
     ) -> None:
         from ultralytics import YOLOE  # deferred: heavy import
 
@@ -42,6 +43,25 @@ class YoloeDetector(Detector):
         # the model is fp32. Inference still runs fp16 via predict(half=True).
         self.model.model.float()
         self.conf = conf
+        # Per-class admission thresholds, overriding `conf` for the labels named.
+        #
+        # One global threshold prices every class the same, and they are not the
+        # same. Measured at imgsz 1280 over 900 random navigable poses in three
+        # scenes, moving the gate 0.30 -> 0.20 and counting detections above the
+        # 1200 px node gate -- extra false positives against the recall gained at
+        # the objects' own authored viewpoints:
+        #
+        #   tomato soup can    +0 FP   +0.09 recall     cracker box  +18 FP  +0.06
+        #   banana             +0 FP   +0.08            bleach bottle +9 FP  +0.09
+        #   plate              +2 FP   +0.06            bowl          +0 FP  +0.00
+        #   blue plastic pitcher +3 FP +0.13
+        #
+        # Globally that is +8 true positives for +32 false ones, which is a bad
+        # trade. Per class it is a good one for exactly the labels that are weak
+        # to begin with, and no trade at all for the two promiscuous ones.
+        self.class_conf = {
+            self._normalize(k): float(v) for k, v in (class_conf or {}).items()
+        }
         self.imgsz = imgsz
         self.half = half
         self.device = device
@@ -81,10 +101,20 @@ class YoloeDetector(Detector):
             torch.cuda.empty_cache()
         self._classes = classes
 
+    def _floor_conf(self) -> float:
+        """Inference has to run at the LOWEST threshold anyone asks for, because
+        a detection ultralytics never returns cannot be admitted afterwards."""
+        if not self.class_conf:
+            return self.conf
+        return min(self.conf, min(self.class_conf.values()))
+
+    def _admits(self, label: str, score: float) -> bool:
+        return score >= self.class_conf.get(self._normalize(label), self.conf)
+
     def detect(self, rgb: np.ndarray) -> List[Detection]:
         results = self.model.predict(
             rgb[..., ::-1],  # ultralytics expects BGR ndarray
-            conf=self.conf,
+            conf=self._floor_conf(),
             imgsz=self.imgsz,
             half=self.half,
             device=self.device,
@@ -98,14 +128,19 @@ class YoloeDetector(Detector):
         h, w = rgb.shape[:2]
         masks = r.masks.data.cpu().numpy()  # (N, mh, mw)
         for i in range(len(r.boxes)):
+            label = r.names[int(r.boxes.cls[i])]
+            score = float(r.boxes.conf[i])
+            # Before the mask resize, which is the expensive part of this loop.
+            if not self._admits(label, score):
+                continue
             mask = masks[i]
             if mask.shape != (h, w):
                 import cv2
 
                 mask = cv2.resize(mask, (w, h), interpolation=cv2.INTER_NEAREST)
             det = Detection(
-                label=r.names[int(r.boxes.cls[i])],
-                score=float(r.boxes.conf[i]),
+                label=label,
+                score=score,
                 bbox_xyxy=r.boxes.xyxy[i].cpu().numpy(),
                 mask=mask.astype(bool),
             )

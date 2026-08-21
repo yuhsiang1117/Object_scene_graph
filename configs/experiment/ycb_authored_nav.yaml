@@ -62,6 +62,40 @@ defaults:
 # table was contaminated, imgsz 1280 among them.
 detector:
   imgsz: 768
+  # Per-class admission gates. One threshold prices every class the same, and a
+  # false-positive census says they are not the same. Measured at imgsz 1280
+  # over 900 random navigable poses across the three scenes, counting detections
+  # that clear the node-creation gate -- extra FALSE positives against the recall
+  # gained at the target's own authored viewpoints, moving that class 0.30 -> 0.20:
+  #
+  #   tomato soup can       +0 FP   0.26 -> 0.34      cracker box    +18 FP  0.77 -> 0.82
+  #   banana                +0 FP   0.67 -> 0.75      bleach bottle   +9 FP  0.74 -> 0.83
+  #   plate                 +2 FP   0.50 -> 0.56      bowl            +0 FP  0.99 -> 0.99
+  #   blue plastic pitcher  +3 FP   0.36 -> 0.49
+  #
+  # Applied globally the same move is +8 true positives for +32 false ones and
+  # precision falls 0.59 -> 0.49, which is not a trade worth making. Applied per
+  # class it costs five false positives in total and lands on exactly the four
+  # weakest targets -- pitcher, soup can, plate and banana were the four lowest
+  # per-target success rates in the last full run. The cracker box and the
+  # bleach bottle stay at 0.30 because they are the promiscuous labels: "cracker
+  # box" alone accounts for eighteen of the thirty-two.
+  #
+  # OFF by default, because the census does not settle it. A six-episode pilot
+  # ran the same scene with and without these overrides: the tomato soup can
+  # succeeded in 31 steps at the global 0.30 gate and failed at 500 with its own
+  # 0.20 gate -- on the SAME single track, 0.97 m from truth, same n_obs, same
+  # best score. What differed was the presence belief on arrival: 0.457 against
+  # 0.095, the latter carrying nine missed expectations by step 31, so the
+  # absence check abandoned a correct candidate.
+  #
+  # The census counted detections above the node-creation gate at random poses.
+  # It never measured what admitting more of them does to the PRESENCE FILTER,
+  # which is where the cost landed: more admitted detections mean more frames in
+  # which a track is expected and unmatched, and a correct track can be
+  # disbelieved before the agent reaches it. Settling this needs the full
+  # 96-episode run, not a wider census.
+  class_conf: {}
   # The vocabulary is DEFAULT_VOCABULARY plus the episode target, so a mapping
   # run for one target has no class for the others and cannot map them. A
   # multi-target benchmark needs every target present from the start. The names

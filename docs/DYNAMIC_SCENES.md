@@ -1877,6 +1877,229 @@ chased a false positive, 13 reached the right track and failed anyway, 5 chased 
 positives only, 4 never committed. The distribution is flatter than it has ever been — no
 single cause is now more than a third — which is the first time this benchmark has not had
 one obvious next thing to fix.
+
+### The search posterior had never once delivered an episode
+
+The failure-family table above says *what* episodes did, not what was missing. Recut by
+whether the object was ever perceived at its new pose, C0's 52 failures split cleanly:
+
+| | n | burned the full 500 steps |
+|---|---|---|
+| never mapped it at the new pose | **40** | 33 |
+| mapped it and still failed | 12 | 10 |
+| succeeded | 44 | 0 (median 112 steps) |
+
+Seventy-seven percent of failures never perceive the object at all after it moves. The
+funnel for the whole run:
+
+```
+the new pose is within 0.5 m of a mapped container   96/96   100%
+the surface search ran at all                        53/96    55%
+the surface search ARRIVED at the true surface        0/96     0%
+committed to a track on the real object              57/96    59%
+...converted that into a success                     44/57    77%
+```
+
+Perfect candidate coverage, zero arrivals. Every one of the 44 successes came from the prior
+map (8 committed on step 1) or from frontier exploration finding the object incidentally.
+The search line engages only once the easy route has failed — SR 0.814 on the 43 episodes
+that never invoked it, **0.170** on the 53 that did.
+
+Three things this rules out. **Perception:** recall at the objects' authored *dynamic*
+viewpoints is 0.584 at imgsz 1280 (0.567 at 768), and its correlation with per-target SR is
++0.19 — the bowl has recall 0.99 and SR 0.50, the 00829 plate has recall 0.30 and SR 0.83.
+The resolution gain measured earlier was never about recognition quality: by ring radius it
+is −0.04 at 0.8 m, +0.13 at 1.2 m, +0.31 at 2.0 m. It buys sightings *in passing*, which is
+why it helped a search and would not repeat itself at higher resolution. **Step budget:**
+400 → 500 steps bought +0.02; successes are cheap or absent, 30 of 44 inside 150 steps.
+**Terminal navigation:** 77% conversion once the right object is committed to.
+
+What remained was ranking, and `scripts/rank_search_surfaces.py` scores it without a
+simulator — the prior map holds every container the posterior can propose, `container_prior`
+is a pure function of (class, label, top height, area, centre), and the authored layout says
+which one is right. An eight-hour benchmark becomes a second, and ranking work gets a number
+to move.
+
+#### The floor was clipping the far field into one tie
+
+Two defects, in order of size.
+
+The prior after absence was **category-only**: 65 candidates carrying *five distinct
+values*, with 12 tied desks, 10 tied cabinets and 36 things tied at the fallback. Since
+`select_candidate` cuts to the top 5 by prior *before* costing any path, the cut chose three
+arbitrary desks out of twelve and never planned to the rest — the tie-break was `sorted`'s
+stability, i.e. track id.
+
+The prior had a proximity term that would have broken those ties, and it was being discarded
+twice over. `_last_known_target_xy` returned None once absence was confirmed, on the
+reasoning that walking to the old pose and finding nothing refutes "objects move short
+distances". It does not: it refutes one *surface*. in_anchor relocations move a median
+0.72 m, so the object is usually a metre away on a neighbouring surface — and the surface
+actually ruled out is retired by the `InspectionLog`, which is the right instrument for it.
+
+And where the term did apply it was clipped. `max(exp(-d/L), 0.2)` does not mix "moved
+nearby" with "moved anywhere", it *clips*: every candidate past `L·ln(1/floor)` — 6.4 m at
+L=4 — receives an identical prior, so the entire far field ties and its order collapses to
+track id again. That is precisely the regime a cross-anchor move lives in, and it is why
+keeping the term used to measure badly there. Unclipped, the far candidates stay ordered by
+distance, which is weak evidence but is evidence.
+
+Scored over 114 (scene, layout, target) combinations, share where the true surface lands in
+the top 5 — what one episode can afford to inspect:
+
+| proximity model | overall | in_anchor | cross_anchor | median rank |
+|---|---|---|---|---|
+| dropped after absence (before) | 12/114 | 5/57 | 7/57 | 27 of 65 |
+| kept, `L=4` with a 0.2 floor | 20/114 | 19/57 | 1/57 | 9 |
+| **kept, `L=1`, no floor (now)** | **36/114** | **29/57** | **7/57** | **5** |
+
+Simulating the greedy search from each episode's real start pose — same candidate build,
+same top-N cut, same `b·d/c` argmax, same multiplicative decay — it reaches the true surface
+within an 8-inspection budget in **38/114 against 11/114**, median 1 inspection against 3.
+Cross-anchor is not paid for: 7/57 either way.
+
+Two things measured and *rejected* along the way. Breaking the top-N tie by distance to the
+agent made it worse (11 → 7): the utility already divides by path cost, so the tie-break
+merely narrows the pool to a local cluster. And an annulus — suppressing the radius just
+confirmed empty — was much worse (11 → 2), because at a median displacement of 0.72 m the
+object is usually *inside* the exclusion.
+
+#### Loosening the container gates is not the answer
+
+The true surface is not even a candidate in 45% of cases, lost at the container layer rather
+than mis-ranked: `container_min_score=0.5` rejects desks and counters detected at 0.36–0.43,
+the 0.2–1.4 m band rejects a shelf whose top lands at 2.06 m, and `container_merge_m=1.0`
+collapses same-label neighbours. But loosening them inflates the candidate list as fast as it
+adds coverage, and the top-5 rate barely moves:
+
+| gates | true surface is a candidate | candidates offered | top-5 |
+|---|---|---|---|
+| `min_obs=2 min_score=0.5 merge=1.0` (current) | 63/114 | 65 | 12/114 |
+| `min_obs=2 min_score=0.5 merge=0.0` | 68/114 | 86 | 12/114 |
+| `min_obs=1 min_score=0.3 merge=0.0` | 80/114 | 128 | 17/114 |
+
+So the gates stay as they are. This is worth restating as a general shape: with a ranker this
+coarse, *coverage is not the constraint* — the candidate set was already at 96/96 by the
+looser footprint test — and buying more of it costs exactly what it gains.
+
+### A frontier the agent reached was being called unreachable
+
+`frontier_stub_block` fired 2.87 times per failing episode against 0.39 per success, and
+33 of the 40 never-mapped failures had it. It is meant to catch a degenerate stub path — the
+planner handing back a goal snapped near the start because the frontier cannot be reached —
+but the threshold it used could not tell that apart from an ordinary arrival.
+
+`HybridVoronoiPlanner` navigates the medial axis and stops at the graph node nearest the
+goal, within `goal_near_m` = 0.7 m: it stops *near* a goal, not on it. `WaypointController`
+then reports arrival within 0.2 m of that endpoint. So a correct arrival leaves the agent up
+to **0.9 m** from the frontier goal, and `_frontier_reach_m` was a fixed **0.5 m**. Getting
+there was read as never having got there: the frontier was blocked for 100 rounds and
+`_last_giveup_pt` was set, which also suppresses the all-frontiers-blocked fallback anywhere
+near that point.
+
+The fix is to derive the threshold rather than pick it — `voronoi_goal_near_m` is now a real
+config field, read both to build the planner and to set `_frontier_reach_m`, so the two
+cannot drift apart. Two tests pin the invariant, one of them by moving the planner's stopping
+radius and checking the classification follows.
+
+(One correction to the earlier reading of these logs: `frontier_give_up` is not "exploration
+exhausted". It fires when the agent moves less than 0.2 m in 15 steps while pursuing a
+frontier — a stalled pursuit, not an exhausted map.)
+
+### One admission gate priced every class the same
+
+Recall at the 0.30 gate is 0.584; at 0.20 it is 0.660. Whether that is worth taking depends
+entirely on what arrives with it, so: a false-positive census over 900 random navigable poses
+across the three scenes at imgsz 1280, counting every detection carrying a YCB label that
+clears the 1200 px node-creation gate.
+
+Globally the move 0.30 → 0.20 is **+8 true positives for +32 false ones**, precision 0.59 →
+0.49. Not a trade worth making. Per class it is a different question:
+
+| target | extra false positives | recall 0.30 → 0.20 |
+|---|---|---|
+| tomato soup can | **0** | 0.26 → 0.34 |
+| banana | **0** | 0.67 → 0.75 |
+| plate | 2 | 0.50 → 0.56 |
+| blue plastic pitcher | 3 | 0.36 → **0.49** |
+| bleach bottle | 9 | 0.74 → 0.83 |
+| cracker box | **18** | 0.77 → 0.82 |
+| bowl | 0 | 0.99 → 0.99 |
+
+The four cheap ones are exactly the four weakest targets in the last full run — pitcher
+0.333, soup can 0.333, banana 0.333, plate 0.500 — and between them they cost five false
+positives. The two expensive ones are the promiscuous labels, and "cracker box" alone is
+eighteen of the thirty-two. So `DetectorConfig.class_conf` now holds per-class thresholds:
+inference runs at the lowest gate anyone asks for (a detection ultralytics never returns
+cannot be admitted afterwards) and each label is admitted against its own. The mechanism is
+symmetric — a *stricter* per-class gate works the same way — and with no overrides it is
+exactly the previous behaviour.
+
+The container layer is unaffected: `container_min_score = 0.5` gates surfaces independently,
+so a 0.20 detection cannot enlarge the search candidate set and undo the ranking work above.
+
+#### The census was measuring the wrong cost, so this ships OFF
+
+A six-episode pilot ran the same scene with and without the overrides. The tomato soup can —
+one of the two the census called *free* — succeeded in 31 steps at the global 0.30 gate and
+failed at 500 with its own 0.20 gate. Same single track, 0.97 m from truth, same `n_obs=3`,
+same `best_score=0.53`, same 1612 px. What differed was the belief on arrival: **0.457
+against 0.095**, the latter already carrying nine missed expectations by step 31, so the
+absence check abandoned a correct candidate.
+
+The census counted detections above the node-creation gate at random navigable poses. It
+never measured what admitting more of them does to the **presence filter**, and that is where
+the cost landed: more admitted detections mean more frames in which a track is expected and
+unmatched, and a correct track can be disbelieved before the agent gets to it. A wider census
+would not have caught this; only an end-to-end run does.
+
+So `class_conf` ships as a mechanism with an empty default. The machinery is worth having —
+it is the only way to price classes separately, and the per-class asymmetry it exposes is
+real — but it is one config line away from being switched on once the full 96-episode run has
+measured it against the presence filter rather than against a pose sample.
+
+#### What the pilot does and does not say
+
+Six episodes, 00829 in_anchor_01, against the same episodes from C0:
+
+| | SR | search ran | inspections | reached the true surface | stub blocks |
+|---|---|---|---|---|---|
+| C0 | 4/6 | 3/6 | 27 | **0/6** | 7 |
+| levers 1+2, unclipped only | 3/6 | 1/6 | 1 | 0/6 | 1 |
+| levers 1+2, scale normalised | 3/6 | 2/6 | 3 | **1/6** | 0 |
+| levers 1+2, no per-class gate | **4/6** | — | — | — | — |
+
+The first-ever arrival at the true surface is the result worth having: 0 in 96 C0 episodes,
+0 in the unnormalised pilot, 1 in 6 once the scale was fixed. Against that, the plate episode
+that C0 won at step 429 is now lost, and the soup can is won instead — one swap each way on
+six episodes, which is no evidence of a net change in either direction. The offline scorer is
+what argues for these changes; the pilot's job was to catch what it could not see, and it
+caught two things.
+
+#### The bug the offline scorer could not have caught
+
+Sharpening proximity from `max(exp(-d/4), 0.2)` to `exp(-d/1)` improved every ordering metric
+and switched the search line off. `_select_surface` compares a surface's `prior·d/cost`
+against a frontier's `β·score/cost`, so the *magnitude* of an unnormalised score decides
+whether the agent searches or explores. The top candidate barely moved (median 0.479 → 0.264
+over 19 (scene, target) pairs) but the tail collapsed by orders of magnitude, and once the
+few plausible nearby surfaces were retired by the `InspectionLog` nothing could out-score a
+frontier again: the pilot went from 27 inspections over six episodes to **one**.
+
+Ranking is scale-invariant and this comparison is not, which is exactly the class of bug an
+offline ranking metric is blind to. The fix separates them: candidate priors are normalised
+so the best of them equals `search_surface_mass` (0.5, matching where the previously tuned
+model sat), with the `InspectionLog` decay applied *after* the anchor — normalising post-decay
+would restore the best survivor to full mass every round and the agent would never hand back
+to exploration.
+
+#### Not yet measured end to end
+
+The offline ranker predicts the search reaches the true surface 3.5× more often. It does not
+predict a success rate: reaching a surface is necessary and not sufficient, the conversion
+from a committed correct track is 77%, and the conversion from a *searched* surface has never
+been measured at all — the sample having been zero until now. A full four-condition rerun is
+what settles it.
 ---
 
 ## Phase 4 — C4 change log

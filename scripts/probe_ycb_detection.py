@@ -225,7 +225,7 @@ def _mode_views(sim, cfg, layout, detector, probe, out_dir, handles):
         for rank, view in enumerate(_authored_views(sim, cfg, authored, n_views)):
             rgb, semantic = _observe(sim, view["position"], view["rotation"])
             gt_mask = semantic == SEMANTIC_ID_OFFSET + int(authored.semantic_id)
-            stem = f"{authored.handle}_v{rank}"
+            stem = f"{layout.scene_name}_{layout.layout_id}_{authored.handle}_v{rank}"
             _crop(out_dir / "crops" / f"{stem}.png", rgb, gt_mask)
             for imgsz in imgszs:
                 detector.imgsz = imgsz
@@ -413,28 +413,44 @@ def main(cfg: DictConfig) -> None:
     out_dir.mkdir(parents=True, exist_ok=True)
     handles = [str(v) for v in probe.get("handles", [])]
 
+    # Default "static", because that is the layout every earlier probe measured
+    # and the recall table in the experiment config is quoted against it. The
+    # question a dynamic run raises is different: an object is detectable at the
+    # pose it was AUTHORED in, but the benchmark moves it, and a shelf-corner
+    # pose can be unviewable while the original was not. Pass
+    # `+probe.layout_types=[in_anchor,cross_anchor]` to measure the poses the
+    # agent is actually scored against.
+    layout_types = [str(v) for v in probe.get("layout_types", ["static"])]
     discovery = discover_authored_layouts(
         layout_root=Path(str(cfg.ycb.layout_root)),
         data_root=Path(str(cfg.ycb.data_root)),
         scenes=[str(v) for v in cfg.ycb.scenes],
-        layout_types=["static"],
+        layout_types=layout_types,
         layout_indices=[int(v) for v in cfg.ycb.layout_indices],
         target_labels={str(k): str(v) for k, v in cfg.ycb.target_labels.items()},
     )
     if not discovery.layouts:
-        raise SystemExit("no static layout discovered")
-    layout = discovery.layouts[0]
+        raise SystemExit(f"no layout discovered for types {layout_types}")
 
     detector = YoloeDetector(
         weights=str(cfg.detector.weights), conf=float(probe.get("conf", 0.05)),
         imgsz=int(cfg.detector.imgsz), half=bool(cfg.detector.half),
         device=str(cfg.detector.device),
     )
-    sim = _sim_with_rgb(layout, cfg)
-    try:
-        records = MODES[mode](sim, cfg, layout, detector, probe, out_dir, handles)
-    finally:
-        sim.close()
+    # One simulator per layout: the injected rigid objects ARE the layout, so
+    # they cannot be swapped in place without re-instancing the scene.
+    records = []
+    for layout in discovery.layouts:
+        tag = f"{layout.scene_name}/{layout.layout_id}"
+        print(f"\n===== {tag} =====", flush=True)
+        sim = _sim_with_rgb(layout, cfg)
+        try:
+            for rec in MODES[mode](sim, cfg, layout, detector, probe, out_dir, handles):
+                rec.setdefault("scene", layout.scene_name)
+                rec.setdefault("layout_id", layout.layout_id)
+                records.append(rec)
+        finally:
+            sim.close()
 
     path = out_dir / f"probe_{mode}.json"
     path.write_text(json.dumps(records, indent=1), encoding="utf-8")

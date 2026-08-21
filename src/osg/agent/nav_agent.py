@@ -54,6 +54,10 @@ from ..planning.voronoi_planner import HybridVoronoiPlanner
 from ..verification.viewpoint import ViewpointPlanner
 
 STOP_ACTION = "stop"
+# WaypointController.act's default arrival tolerance. Named here because
+# _frontier_reach_m is derived from it: the two must agree or an ordinary
+# arrival is classified as an unreachable stub.
+FRONTIER_ARRIVAL_TOL_M = 0.2
 TURN_ACTION = "turn_left"
 
 
@@ -360,7 +364,23 @@ class NavAgent:
         # terminates within its arrival tolerance of the agent -- which also
         # happens for a degenerate stub path when the frontier is unreachable
         # (goal snapped to a nearby node). This threshold separates the two.
-        self._frontier_reach_m = 0.5
+        # How far from a frontier goal still counts as NOT having reached it.
+        #
+        # This has to be derived from the planner, not chosen: HybridVoronoi
+        # returns a path ending at a graph node within `goal_near_m` (0.7 m) of
+        # the goal -- it navigates the medial axis and deliberately stops near,
+        # not on, the goal -- and WaypointController reports arrival within
+        # `arrival_tol_m` (0.2 m) of that endpoint. A correct arrival therefore
+        # leaves the agent up to 0.9 m from the frontier goal. Against a fixed
+        # 0.5 m this was read as a degenerate stub: the frontier was blocked for
+        # 100 rounds and `_last_giveup_pt` was set, which also suppresses the
+        # all-frontiers-blocked fallback anywhere near it -- for the ordinary
+        # case of having got there. Measured over 96 dynamic episodes,
+        # `frontier_stub_block` fired 2.87 times per failing episode against
+        # 0.39 per success.
+        self._frontier_reach_m = float(
+            getattr(self.cfg.exploration, "voronoi_goal_near_m", 0.7)
+        ) + FRONTIER_ARRIVAL_TOL_M + 0.1
         self._candidate_id: Optional[int] = None
         self._goal_xy: Optional[np.ndarray] = None
         self._last_action: Optional[str] = None
@@ -396,7 +416,6 @@ class NavAgent:
         self._scan_turns_left = 0
         self._scan_expected = 0
         # Set once the agent has been to the last known place and found nothing.
-        self._target_confirmed_moved = False
         self.search_log_events: List[dict] = []
         self.goal_commit_log: List[dict] = []
         self._disbelieved: set = set()
@@ -1026,7 +1045,9 @@ class NavAgent:
             self._search_log,
             detect_prob=float(getattr(cfg, "search_detect_prob", 0.8)),
             last_known_xy=self._last_known_target_xy(),
-            proximity_len_m=float(getattr(cfg, "search_proximity_len_m", 4.0)),
+            proximity_len_m=float(getattr(cfg, "search_proximity_len_m", 1.0)),
+            proximity_floor=float(getattr(cfg, "search_proximity_floor", 0.0)),
+            surface_mass=float(getattr(cfg, "search_surface_mass", 0.5)),
             plane=PLANE,
             affinity_source=self._affinity,
         )
@@ -1076,20 +1097,27 @@ class NavAgent:
         return surface
 
     def _last_known_target_xy(self):
-        """Where the target was last believed to be, or None once it is known to
-        have left there.
+        """Where the target was last believed to be.
 
         Proximity encodes "objects are moved by someone doing a task, so short
-        displacements dominate". That holds until the agent goes and confirms
-        the object is NOT at its old place -- after which the premise the term
-        rests on has been refuted, and the surfaces it favours are exactly the
-        ones just ruled out. Measured on nine cross-anchor episodes: keeping the
-        term ranks the true destination 32nd of 112 surfaces on median, and puts
-        it in the top 8 (what one episode inspects) in 0 of 9. Dropping it once
-        absence is confirmed gives median 20 and 3 of 9.
+        displacements dominate". This used to return None once absence was
+        confirmed, on the reasoning that the premise had been refuted -- and
+        with the proximity model of the time it measured better that way.
+
+        It was the model that was wrong, not the premise. Confirming the object
+        is not at its old POSE does not refute short displacements; the
+        benchmark's in_anchor relocations move a median 0.72 m, so the object is
+        usually still within a metre or two of where it was, on a neighbouring
+        surface. What made keeping the term look bad was the 0.2 floor, which
+        tied every distant candidate together (see SearchConfig). With
+        exp(-d/1.0) and no floor, keeping the term takes the true destination
+        into the top 5 in 29 of 57 in_anchor cases against 5 of 57 when it is
+        dropped, and cross_anchor is unharmed at 7 of 57 either way.
+
+        Surfaces already looked at are retired by the InspectionLog, which is
+        the right instrument for "I have ruled this one out" -- a belief the
+        prior should not be trying to express a second time.
         """
-        if self._target_confirmed_moved:
-            return None
         best = None
         for track in self.object_layer.tracks(include_blacklisted=True):
             if str(track.label).lower().replace("_", " ") != str(self.target).lower().replace("_", " "):
@@ -1490,7 +1518,6 @@ class NavAgent:
         # have been the answer had been struck off for good.
         self._candidate_id = None
         self._target_obj_xy = None
-        self._target_confirmed_moved = True
         self.state = State.EXPLORE
         return TURN_ACTION
 

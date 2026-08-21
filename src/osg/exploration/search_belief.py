@@ -76,8 +76,8 @@ def container_prior(
     area_m2: float,
     centre_xy: np.ndarray,
     last_known_xy: Optional[np.ndarray] = None,
-    proximity_len_m: float = 4.0,
-    proximity_floor: float = 0.2,
+    proximity_len_m: float = 1.0,
+    proximity_floor: float = 0.0,
     affinity_source=None,
 ) -> float:
     """b(x) for a mapped surface: affordance x affinity x proximity.
@@ -105,12 +105,20 @@ def container_prior(
     prox = 1.0
     if last_known_xy is not None:
         d = float(np.linalg.norm(np.asarray(centre_xy, float) - np.asarray(last_known_xy, float)))
-        # A pure exponential says an object that moved 7 m is almost impossible,
-        # which is false -- cross-anchor moves in this benchmark average 5 m.
-        # The floor makes this a mixture of "moved nearby" and "moved anywhere",
-        # which also stops distance being punished twice: once in the prior and
-        # again in the cost term that already divides by path length.
-        prox = max(float(np.exp(-d / max(proximity_len_m, 1e-6))), float(proximity_floor))
+        # The floor here was 0.2, to stop a pure exponential from calling a 7 m
+        # move impossible when cross-anchor relocations average 5 m. The
+        # intention was right and the mechanism was not: `max(exp(-d/L), floor)`
+        # does not mix the two hypotheses, it CLIPS -- every candidate past
+        # L*ln(1/floor) gets exactly the same prior, so the whole far field ties
+        # and its order collapses to track id. That is precisely the regime a
+        # cross-anchor move lives in. An unclipped exponential keeps the far
+        # candidates ordered by distance, which is weak evidence but is evidence;
+        # measured, it takes cross_anchor from 1/57 to 7/57 in the top 5 while
+        # in_anchor goes 19/57 -> 29/57. Left configurable for a real mixture,
+        # w*exp(-d/L) + (1-w), if one is ever wanted -- but not as a clip.
+        prox = float(np.exp(-d / max(proximity_len_m, 1e-6)))
+        if proximity_floor > 0.0:
+            prox = max(prox, float(proximity_floor))
     return float(affinity * prox)
 
 
@@ -155,12 +163,13 @@ def build_container_candidates(
     log: InspectionLog,
     detect_prob: float = 0.8,
     last_known_xy: Optional[np.ndarray] = None,
-    proximity_len_m: float = 4.0,
-    proximity_floor: float = 0.2,
+    proximity_len_m: float = 1.0,
+    proximity_floor: float = 0.0,
     plane=(0, 2),
     affinity_source=None,
+    surface_mass: float = 0.5,
 ) -> List[SearchCandidate]:
-    out: List[SearchCandidate] = []
+    raw: List[tuple] = []
     for node in getattr(scene_graph, "containers", {}).values():
         centre_xy = np.asarray(node.center, dtype=float)[list(plane)]
         prior = container_prior(
@@ -170,12 +179,37 @@ def build_container_candidates(
         )
         if prior <= 0.0:
             continue
+        raw.append((node, centre_xy, prior))
+    if not raw:
+        return []
+
+    # Normalise the scale out of the ORDERING, because the two are used for
+    # different decisions and only one of them is meaningful.
+    #
+    # `affinity * proximity` is a relative score, never a calibrated
+    # probability, and its magnitude depends entirely on how peaked the
+    # proximity model happens to be. Ordering among surfaces is all it can
+    # honestly express -- but `_select_surface` also compares this number
+    # against a frontier's utility, where the magnitude decides whether the
+    # agent searches or explores. Sharpening proximity from exp(-d/4) clipped
+    # at 0.2 to exp(-d/1) improved the ordering (true surface into the top 5,
+    # 12/114 -> 36/114) and, silently, switched the search line off: a pilot
+    # went from 27 surface inspections over six episodes to ONE, because every
+    # candidate past the first few now scored below any frontier.
+    #
+    # Anchoring the best candidate at a fixed mass fixes the scale without
+    # touching the order. Decay is applied AFTER, so an inspected surface still
+    # falls away -- normalising post-decay would restore the best survivor to
+    # full mass every round and the agent would never hand back to exploration.
+    peak = max(prior for _, _, prior in raw)
+    out: List[SearchCandidate] = []
+    for node, centre_xy, prior in raw:
         out.append(
             SearchCandidate(
                 kind="container",
                 ref_id=int(node.id),
                 goal_xy=centre_xy,
-                prior=prior * log.factor(node.id),
+                prior=surface_mass * (prior / peak) * log.factor(node.id),
                 detect_prob=float(detect_prob),
                 label=str(node.label),
             )

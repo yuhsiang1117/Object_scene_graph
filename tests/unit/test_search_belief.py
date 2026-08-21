@@ -171,16 +171,37 @@ def test_surfaces_that_cannot_hold_the_target_are_not_offered_at_all():
     assert ids == {2}
 
 
-def test_proximity_has_a_floor_because_objects_do_travel():
-    """A pure exponential says an object that moved 7 m is almost impossible.
-    Cross-anchor moves in this benchmark average 5 m, so the prior is a mixture
-    of "moved nearby" and "moved anywhere" -- and distance is already paid for
-    once in the cost term."""
-    far = container_prior("bowl", "table", 0.75, 0.6, np.array([20.0, 0.0]),
-                          last_known_xy=np.zeros(2), proximity_len_m=4.0)
-    assert far == pytest.approx(1.0 * 0.2)
+def test_the_far_field_stays_ordered_by_distance():
+    """The proximity term used to be clipped at a 0.2 floor, so that an object
+    could not be called impossible for having moved 7 m. The intent was right,
+    the mechanism was not: `max(exp(-d/L), floor)` gives every candidate past
+    L*ln(1/floor) the SAME prior, so the whole far field ties and its order
+    falls to whatever `sorted` does with equal keys -- track id. That is exactly
+    the regime a cross-anchor relocation lives in, and it discarded the only
+    signal left. Measured over 114 relocations, unclipping took the true surface
+    into the top 5 in 7 of 57 cross-anchor cases against 1 of 57 clipped."""
+    far = [container_prior("bowl", "table", 0.75, 0.6, np.array([d, 0.0]),
+                           last_known_xy=np.zeros(2), proximity_len_m=1.0)
+           for d in (6.0, 8.0, 10.0, 20.0)]
+    assert far == sorted(far, reverse=True)
+    assert all(a > b for a, b in zip(far, far[1:]))
+    assert far[-1] > 0.0  # weak evidence is still evidence; never a hard zero
+
+
+def test_a_floor_is_still_available_when_one_is_asked_for():
+    """Unclipped is the default, not a prohibition: a genuine mixture is a
+    reasonable thing to want, and the parameter still expresses one."""
+    floored = container_prior("bowl", "table", 0.75, 0.6, np.array([20.0, 0.0]),
+                              last_known_xy=np.zeros(2), proximity_len_m=4.0,
+                              proximity_floor=0.2)
+    assert floored == pytest.approx(1.0 * 0.2)
+
+
+def test_nearer_the_last_known_pose_outranks_further_from_it():
     near = container_prior("bowl", "table", 0.75, 0.6, np.array([1.0, 0.0]),
-                           last_known_xy=np.zeros(2), proximity_len_m=4.0)
+                           last_known_xy=np.zeros(2), proximity_len_m=1.0)
+    far = container_prior("bowl", "table", 0.75, 0.6, np.array([8.0, 0.0]),
+                          last_known_xy=np.zeros(2), proximity_len_m=1.0)
     assert near > far
 
 
@@ -279,3 +300,48 @@ def test_choosing_a_surface_must_also_drive_to_it():
     chose = src.index("self._search_container = int(surface.ref_id)")
     after = src[chose:]
     assert "State.GOTO_FRONTIER" in after, "a chosen surface must be driven to"
+
+
+def test_the_best_candidate_carries_a_fixed_mass_whatever_the_prior_looks_like():
+    """Ordering and scale are used for different decisions and only one of them
+    is meaningful.
+
+    `affinity * proximity` is a relative score; its magnitude depends on how
+    peaked the proximity model happens to be. But `_select_surface` compares that
+    magnitude against a frontier's utility, so sharpening proximity silently
+    re-tunes search-versus-explore. Measured: sharpening exp(-d/4) clipped at 0.2
+    to exp(-d/1) took a pilot from 27 surface inspections over six episodes to
+    ONE, because every candidate past the first few now scored below any
+    frontier. Anchoring the peak decouples the two.
+    """
+    graph = _Graph([_Node(1, "counter", [0.0, 0.8, 0.0]),
+                    _Node(2, "table", [3.0, 0.8, 0.0]),
+                    _Node(3, "desk", [9.0, 0.8, 0.0])])
+    for length in (1.0, 4.0):
+        cands = build_container_candidates(
+            graph, "bowl", InspectionLog(), last_known_xy=np.zeros(2),
+            proximity_len_m=length, surface_mass=0.5,
+        )
+        assert max(c.prior for c in cands) == pytest.approx(0.5)
+    # ...and the ordering still follows the sharper model.
+    sharp = {c.ref_id: c.prior for c in build_container_candidates(
+        graph, "bowl", InspectionLog(), last_known_xy=np.zeros(2),
+        proximity_len_m=1.0, surface_mass=0.5)}
+    assert sharp[1] > sharp[2] > sharp[3]
+
+
+def test_an_inspected_surface_still_falls_away_after_normalisation():
+    """Decay is applied after the peak anchor, not before. Normalising
+    post-decay would restore the best survivor to full mass every round and the
+    agent would never hand back to exploration."""
+    graph = _Graph([_Node(1, "counter", [0.0, 0.8, 0.0]),
+                    _Node(2, "table", [3.0, 0.8, 0.0])])
+    log = InspectionLog()
+    before = {c.ref_id: c.prior for c in build_container_candidates(
+        graph, "bowl", log, last_known_xy=np.zeros(2), surface_mass=0.5)}
+    log.searched(1, 0.8)
+    after = {c.ref_id: c.prior for c in build_container_candidates(
+        graph, "bowl", log, last_known_xy=np.zeros(2), surface_mass=0.5)}
+    assert after[1] < before[1]
+    assert after[2] == pytest.approx(before[2])
+    assert max(after.values()) < 0.5
