@@ -2098,8 +2098,126 @@ to exploration.
 The offline ranker predicts the search reaches the true surface 3.5× more often. It does not
 predict a success rate: reaching a surface is necessary and not sufficient, the conversion
 from a committed correct track is 77%, and the conversion from a *searched* surface has never
-been measured at all — the sample having been zero until now. A full four-condition rerun is
-what settles it.
+been measured at all — the sample having been zero until now. A full rerun is what settles it.
+
+### The overnight campaign: D, E, F
+
+Three conditions of 96 episodes each, one change per rung, against the stored C0. A, B0 and B
+were **not** re-run: at ~4 hours a condition that is sixteen hours for rungs whose attribution
+(identity channel, VLM gate, sensor resolution) already stands, and it would have crowded out
+the iteration the campaign was for. The cost is that D-vs-C0 spans a commit rather than a
+config flag, which is what a ladder rung is anyway.
+
+| | C0 | D | E | change from the rung above |
+|---|---|---|---|---|
+| SR | **0.458** | 0.385 | 0.427 | |
+| SPL | 0.220 | 0.196 | 0.221 | |
+| in_anchor | 0.542 | 0.479 | 0.500 | |
+| cross_anchor | 0.375 | 0.292 | 0.354 | |
+| mapped it at the new pose | 52/96 | 44/96 | 46/96 | |
+| search ran at all | 53/96 | 37/96 | 38/96 | |
+| **search ARRIVED at the true surface** | **0/96** | **5/96** | **6/96** | |
+| committed to the real object | 57/96 | 47/96 | 53/96 | |
+| frontier selections per episode | 2.15 | **20.76** | 5.30 | |
+| surface inspections per episode | 3.34 | 0.88 | 1.24 | |
+
+**D lost, and the half that worked is not the half the score reflects.** The ranking did
+exactly what the offline scorer predicted: the first arrivals at a relocation destination this
+benchmark has ever produced, four of the five at inspection #1 or #2. What sank it was
+frontier exploration, and the cause was a change made for a good reason.
+
+`_frontier_reach_m` was doing two jobs. Deriving it from the planner's true stopping radius
+(0.5 → 1.0 m) is right in itself — `HybridVoronoi` stops at a node within `goal_near_m` of a
+goal and the controller arrives within its own tolerance of *that*, so a correct arrival could
+be 0.9 m out and was being called an unreachable stub. But the same test was the only thing
+blocking a frontier when a pursuit ended, and an unblocked frontier is immediately
+re-selectable: the FSM drops `GOTO_FRONTIER → EXPLORE`, picks the same frontier, and give-up
+cannot break the loop because it counts steps *inside* `GOTO_FRONTIER` and the re-entry resets
+its timer. In 00829, `plan_ok` went 1.4 → **39.4** per episode and episodes that ever mapped
+the object went 23/36 → 13/36.
+
+`_retire_pursued_frontier` separates the two jobs: the block is unconditional — retiring a
+frontier the agent reached costs nothing, it has been explored, which is the point — and the
+reach threshold now decides only how long the block lasts and whether this counts as a
+give-up point. **E** carries that single change and recovers to 0.427 with SPL back to parity,
+three episodes short of C0 and inside the ±0.05 binomial noise at n=96.
+
+**What E leaves is a search that is accurate but inactive.** Against C0 it runs in 38 episodes
+rather than 53, for 1.24 inspections rather than 3.34, and arrives at the true surface 6 times
+against 0. Ranking has stopped being the constraint. **F** therefore moves on the two axes
+that are left — `search_surface_mass` 0.5 → 1.0, because matching the old model's *top* prior
+under-funds a search whose tail is no longer propped up by a floor; and
+`_face_searched_surface`, because `_mark_surface_searched` multiplies a surface's belief by
+(1 − 0.8) on whatever heading the follower stopped at. That is the same mistake the candidate
+path already made and fixed, one layer up, and in D the search reached the true surface five
+times and converted one.
+
+#### A methodological note worth more than any of the deltas
+
+D is the second time on this benchmark that a change improved every offline metric and cost
+real success. Ranking is scale-invariant; `_select_surface`'s comparison against frontier
+utility is not, and sharpening the prior switched the search line off (27 inspections over six
+episodes → 1). The frontier livelock is the same shape one level up: a threshold that was
+*also* silently serving as an interlock, so correcting it removed a guarantee nobody had
+written down.
+
+The lesson is not "do not trust offline metrics" — the offline ranker is what found the real
+bottleneck and is 4 hours cheaper per iteration. It is that a proxy must be paired with a
+six-episode pilot before a four-hour condition is spent on it, and that the pilot should be
+read for *mechanism* counters (inspections, selections, arrivals) rather than for SR, which at
+n=6 says nothing.
+
+### The benchmark's relocations are not semantic, and that is a limitation to state
+
+Across all 114 relocations, where the destination surface is mapped, the objects land on:
+
+```
+bed 26,  desk 19,  table 6,  cabinet 3,  nightstand 3,  bench 2,  stool 2,  sofa 1,  shelf 1
+```
+
+**37 of 53 land on a category `CONTAINER_AFFINITY` does not list for that class.** A tomato
+soup can is placed on a bed seven times. Ranking the true surface among candidates:
+
+| prior | top-1 | top-5 | median rank |
+|---|---|---|---|
+| affinity × proximity (shipped) | 19/114 | 36/114 | 5 |
+| **proximity alone** | **26/114** | 38/114 | **2** |
+| affinity alone | 0/114 | 12/114 | 27 |
+| arbitrary order | 2/114 | 14/114 | 25 |
+
+Affinity alone is no better than arbitrary order, and multiplying it in makes proximity worse.
+The authoring appears to place relocated objects for reachability rather than for semantic
+plausibility, which means **this benchmark cannot reward a semantic search prior** — the
+system's headline contribution is being evaluated on data built to be indifferent to it. Any
+writeup has to say so, and a weak affinity term here is not evidence that semantic priors fail
+in general.
+
+Two separable responses, neither yet shipped. The unlisted-category weight of 0.25 sits
+*below* the lowest listed entry — positive evidence against — on the strength of one anecdote
+about a bed and a sofa tying with a sink as places to look for a bowl. A six-entry list is not
+exhaustive and absence from it is not evidence; raising it to 0.5 is a correctness fix that
+would be right on any data. Softening the ranking to a tie-breaker on top of that is
+calibrated to *this* benchmark and belongs behind a knob. Measured together offline: median
+rank 5 → 2, top-1 19 → 24, and the simulated greedy search finds the surface within one
+inspection in 28/114 against 21.
+
+#### The container gates are settled, twice
+
+The true surface is not a candidate at all in 45% of cases, lost at the container layer —
+`container_min_score=0.5` rejects desks detected at 0.36–0.43, the 0.2–1.4 m band rejects a
+shelf topping out at 2.06 m, `container_merge_m=1.0` collapses same-label neighbours. But
+loosening inflates the candidate list as fast as it adds coverage. Before the ranking fix,
+top-5 went 36 → 40 → 38 as the gates opened. After it, coverage rises 63 → 80 of 114 and the
+metric that matters — reaching the surface within the ~3 inspections an episode actually
+affords — goes the wrong way:
+
+| gates | true surface is a candidate | candidates offered | within 3 inspections |
+|---|---|---|---|
+| `min_obs=2 min_score=0.5` (shipped) | 63/114 | 65 | **35/114** |
+| `min_obs=1 min_score=0.4` | 70/114 | 91 | 33/114 |
+| `min_obs=1 min_score=0.3` | 76/114 | 102 | 33/114 |
+
+Coverage was never the constraint. The gates stay.
 ---
 
 ## Phase 4 — C4 change log
