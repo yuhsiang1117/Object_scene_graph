@@ -2280,11 +2280,25 @@ Per target the split is stark, and it explains the redistribution above:
 | bowl | **2.85 m** | 6/12 | 0.500 |
 | tomato soup can | **2.94 m** | 2/12 | 0.083 |
 
-The three worst are a flat plate, a shallow bowl and a small can — objects whose mask-moment
-ellipsoid is fitted from a thin or nearly-planar depth return, viewed obliquely, often resting
-on a bed. The three best are boxy and upright. This is the next thing to fix, and it is a
-different subsystem from everything this campaign touched: `objects/optimization.py` and the
-ellipsoid fit, not the search.
+**The causal reading of this table was wrong, and the correction matters more than the
+table.** Splitting the same episodes by *why* the nearest track is far away:
+
+| | n | SR |
+|---|---|---|
+| localized (≤ 0.25 m) | 37 | 0.892 |
+| only a **stale** track, at the remembered pose | 48 | 0.146 |
+| only false positives | 9 | 0.000 |
+| re-detected and **mis-placed** | **2** | 1.000 |
+
+Two. The per-target "localization error" above is not a fit error — it is the map still
+holding the object where it used to be. The tomato soup can's 2.94 m median is twelve episodes
+in which it was never re-detected once, not twelve bad ellipsoids. An upper bound on what a
+better fit could recover, counting every episode that is neither localized nor stale, is 11
+episodes, and 9 of those are false-positive-only.
+
+So the correlation is real and the diagnosis it suggested is not. `objects/optimization.py` is
+**not** the next thing to fix. The bottleneck is re-detection: **57 of 96 episodes never
+perceive the object at its new pose at all**, and 48 of them still hold it at the old one.
 
 It also reframes the earlier funnel. "Never mapped it at the new pose" was measured with a
 0.5 m threshold and read as a perception-coverage failure. Some of it is: 35 of 96 episodes
@@ -2335,10 +2349,19 @@ fewer angles. Trading coverage for precision in *navigation* traded away precisi
 
 This is worth stating plainly because it is easy to mistake for a null result. The search
 mechanism demonstrably works now — arrivals 0 → 8, engagement recovered, cross-anchor at its
-best — and it did not raise SR, because SR is gated on a subsystem the campaign never touched.
-The next iteration belongs in `objects/optimization.py`, and its metric is not SR but the
-share of episodes holding a track within 0.25 m of the target: 37/96 today, and the cliff says
-each one of those is worth 0.89 of an episode against 0.03.
+best — and it did not raise SR because it does not yet run often enough, or accurately enough,
+to change how many episodes re-detect the object.
+
+The metric to move is the share of episodes that hold a track within 0.25 m of the target:
+**37/96**, worth 0.89 of an episode each against 0.03 for the rest. What is *not* yet known is
+the split inside the 57 that fail it — whether the agent never looked at the new location, or
+looked and the detection fell under the gate. Those have different fixes and the episode logs
+cannot separate them, which is the next thing to build rather than the next thing to tune.
+
+Engagement is a smaller lever than it looks: of the 51 episodes where the search never ran, 34
+succeeded without it (median 125 steps) and only **9** burned 400+ steps without succeeding.
+And when the search does run it already inspects a median of 4 surfaces. The ceiling on
+"search more" is single digits of episodes; the ceiling on "re-detect at all" is 57.
 ---
 
 ## Phase 4 — C4 change log
