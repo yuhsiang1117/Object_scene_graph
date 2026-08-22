@@ -2219,6 +2219,79 @@ affords — goes the wrong way:
 
 Coverage was never the constraint. The gates stay.
 
+### G: the split, measured rather than argued
+
+Condition G carries the affinity fix and the ground-truth visibility instrument. The
+instrument projects the authored target position into every frame, discards it outside the
+image or behind the camera, and discards it again when the depth buffer puts something solid
+in front. What survives is *the agent was looking at the place where the object is*.
+
+Over 96 episodes:
+
+| | n | SR |
+|---|---|---|
+| localized — a track within 0.25 m | 37 | **0.89** |
+| **looked at it within 3 m and missed** | **35** | 0.23 |
+| looked, but only from beyond 3 m | 2 | 0.00 |
+| **never looked at the new pose** | **22** | 0.00 |
+
+Median in-view frames 14; median closest approach 1.07 m. So of the 59 episodes that fail to
+hold a track on the object, **35 had the agent standing within three metres of it**, a median
+of 12 frames at a median 1.16 m, and got nothing usable. Perception outweighs coverage
+roughly three to two, and every earlier iteration assumed the reverse.
+
+Splitting those 35 by what the detector did produce:
+
+| | n |
+|---|---|
+| nothing near the object at all (only stale or false tracks > 2 m) | 15 |
+| a track 0.5 – 2.0 m off | 11 |
+| a track 0.25 – 0.5 m off (a near miss) | 9 |
+
+And splitting the 22 that never looked: median displacement **6.84 m**, and 17 of 22 are
+cross_anchor. Never-looked is the long-move coverage problem, which is what the search line
+exists for; it is not the majority of the loss.
+
+So the remaining work divides three ways, and the shares are now known rather than guessed:
+
+* **22 coverage** — the agent never gets eyes on a destination six metres away.
+* **15 detection** — it stands at 1.2 m and the detector clears no gate. This is what
+  `DetectorConfig.class_conf` was built for, and the per-class census says the two worst
+  targets here cost nothing to admit at 0.20.
+* **20 localization** — a detection happens and the track lands a quarter to two metres out.
+
+Per target the shares are very uneven, and they point at the same two objects the campaign has
+been losing all along:
+
+| target | localized | looked + missed | never looked |
+|---|---|---|---|
+| tomato soup can | **0** | 9 | 3 |
+| plate | 4 | 9 | 5 |
+| blue plastic pitcher | 4 | 6 | 8 |
+| bowl | 5 | 5 | 2 |
+| bleach bottle | 11 | 3 | 4 |
+| cracker box | 8 | 2 | 2 |
+| banana | 5 | 1 | 0 |
+
+The tomato soup can is localized in **zero of twelve** episodes while being looked at within
+three metres in nine of them. Its measured detector recall on these poses is 0.13–0.35, and
+lowering its own admission gate to 0.20 costs zero extra false positives in a 900-pose census.
+
+#### The affinity fix did not transfer, and that was predictable
+
+G against F: SR 0.427 against 0.438, arrivals at the true surface identical at 8/96. Offline
+the same change took the true surface from median rank 5 to 2 and from 21 to 28 of 114 found
+within one inspection. None of it showed up.
+
+That is the third time an offline ranking gain has failed to become an online one, and here
+the reason is the benchmark rather than the metric: the fix makes the *semantic* half of the
+prior better behaved, and this benchmark's destinations are drawn without regard to semantics.
+It is worth keeping anyway — the unlisted-category penalty it removes was wrong on any data,
+and the change is cost-free at SR — but it should be re-measured on a dataset whose
+relocations are placed the way people place things. Until then the honest statement is that
+the semantic half of the search posterior has never been shown to do anything on this
+benchmark, in either direction.
+
 #### F, and the campaign's final ledger
 
 | | C0 | D | E | F |
