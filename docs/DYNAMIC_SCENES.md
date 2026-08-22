@@ -2290,6 +2290,43 @@ It also reframes the earlier funnel. "Never mapped it at the new pose" was measu
 0.5 m threshold and read as a perception-coverage failure. Some of it is: 35 of 96 episodes
 have nothing within 2 m. But the band between 0.25 m and 2 m — 24 episodes, SR 0.33 — is the
 object being seen and mis-placed, which no amount of better searching will recover.
+
+#### The error is along the ray, and more looking does not fix it
+
+Two measurements that narrow it further. Decomposing the error of the committed candidate
+against the camera pose of its best detection, the component **along** the camera-to-object
+ray is 0.18 m against 0.07 m **across** it — a depth-and-extent error, not a mask-centroid
+error, which is what a nearly-planar depth return on a plate or a shallow bowl would produce.
+And the error does not converge with evidence:
+
+| observations on the track | n | median error |
+|---|---|---|
+| 1–2 | 28 | 0.27 m |
+| 3–5 | 25 | 0.52 m |
+| 6–15 | 25 | 0.13 m |
+| 16+ | 24 | 0.57 m |
+
+No trend. "Observe it more" is not the fix; the estimator is biased, not noisy.
+
+#### Why a better search did not buy a better score
+
+The share of episodes whose best target track lands within 0.25 m — the number the cliff says
+decides everything — is **42/96 in C0 and 37/96 in F**. Both start from the same prior map, so
+the difference is tracks built during the episode, and it runs the wrong way for the condition
+with the better search.
+
+That is the campaign's real result. C0's search was inaccurate and its exploration wandered;
+the wandering was incidentally producing more and better-separated views of whatever it passed,
+and therefore better localization. F goes more directly to the right places and sees them from
+fewer angles. Trading coverage for precision in *navigation* traded away precision in
+*mapping*, and the second one is what the success criterion actually reads.
+
+This is worth stating plainly because it is easy to mistake for a null result. The search
+mechanism demonstrably works now — arrivals 0 → 8, engagement recovered, cross-anchor at its
+best — and it did not raise SR, because SR is gated on a subsystem the campaign never touched.
+The next iteration belongs in `objects/optimization.py`, and its metric is not SR but the
+share of episodes holding a track within 0.25 m of the target: 37/96 today, and the cliff says
+each one of those is worth 0.89 of an episode against 0.03.
 ---
 
 ## Phase 4 — C4 change log
