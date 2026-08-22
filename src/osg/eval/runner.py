@@ -210,6 +210,7 @@ class _GroundTruthVisibility:
         self.kf_detected = 0
         self.best_offaxis = float("inf")
         self.best_det_score = 0.0
+        self.visible_fraction_sum = 0.0
         self.by_framing = {k: [0, 0] for k in
                            ("close_centred", "close_peripheral",
                             "far_centred", "far_peripheral")}
@@ -251,7 +252,8 @@ class _GroundTruthVisibility:
         seen = self._project(frame)
         if seen is None:
             return
-        u, v, z = seen
+        u, v, z, fraction = seen
+        self.visible_fraction_sum += fraction
         k = frame.intrinsics
         # 0 at the optical axis, 1 at the nearer image edge, more into a corner.
         offaxis = math.hypot((u - k.cx) / (0.5 * k.width), (v - k.cy) / (0.5 * k.height))
@@ -277,20 +279,50 @@ class _GroundTruthVisibility:
         self.by_framing[key][0] += 1
         self.by_framing[key][1] += int(best > 0.0)
 
+    # Seven points, not one: the centre and +-6 cm on each axis, which is inside
+    # a YCB object rather than around it. Testing the centre pixel alone is far
+    # too permissive -- an object nine tenths hidden behind a chair back, with
+    # only its middle showing, passes -- and an instrument that counts those as
+    # "the agent looked at it" would understate in-situ recall by exactly the
+    # frames where the detector had no chance. The probe this is compared
+    # against requires a real pixel count and then keeps the ten best views, so
+    # the comparison is only honest if this end is not counting slivers.
+    PROBE_OFFSETS_M = 0.06
+    MIN_VISIBLE_FRACTION = 0.5
+
     def _project(self, frame):
-        p_c = frame.T_cw[:3, :3] @ self.target + frame.T_cw[:3, 3]
-        z = float(p_c[2])
-        if z <= 1e-3:
-            return None
+        """(u, v, z, visible fraction) at the object's centre, or None."""
         k = frame.intrinsics
-        u = k.fx * p_c[0] / z + k.cx
-        v = k.fy * p_c[1] / z + k.cy
-        if not (0 <= u < k.width and 0 <= v < k.height):
+        r = self.PROBE_OFFSETS_M
+        samples = [self.target]
+        for axis in range(3):
+            for sign in (-1.0, 1.0):
+                q = self.target.copy()
+                q[axis] += sign * r
+                samples.append(q)
+        centre = None
+        visible = 0
+        for i, point in enumerate(samples):
+            p_c = frame.T_cw[:3, :3] @ point + frame.T_cw[:3, 3]
+            z = float(p_c[2])
+            if z <= 1e-3:
+                continue
+            u = k.fx * p_c[0] / z + k.cx
+            v = k.fy * p_c[1] / z + k.cy
+            if not (0 <= u < k.width and 0 <= v < k.height):
+                continue
+            d = float(frame.depth[int(v), int(u)])
+            if d > 1e-3 and d < z - self.OCCLUSION_TOL_M:
+                continue
+            visible += 1
+            if i == 0:
+                centre = (u, v, z)
+        if centre is None:
             return None
-        d = float(frame.depth[int(v), int(u)])
-        if d > 1e-3 and d < z - self.OCCLUSION_TOL_M:
+        fraction = visible / len(samples)
+        if fraction < self.MIN_VISIBLE_FRACTION:
             return None
-        return u, v, z
+        return centre[0], centre[1], centre[2], fraction
 
     def fields(self) -> Dict[str, Any]:
         out = {
@@ -304,6 +336,8 @@ class _GroundTruthVisibility:
             "gt_best_offaxis": (round(self.best_offaxis, 3)
                                 if self.best_offaxis < float("inf") else None),
             "gt_best_det_score": round(self.best_det_score, 3),
+            "gt_mean_visible_fraction": (round(self.visible_fraction_sum / self.kf_in_view, 3)
+                                         if self.kf_in_view else None),
         }
         for key, (n, hit) in self.by_framing.items():
             out[f"gt_kf_{key}"] = n

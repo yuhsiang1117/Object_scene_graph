@@ -149,3 +149,30 @@ def test_the_keyframe_half_shares_the_occlusion_test():
     v.observe_keyframe(_frame(1.0), [_Det("bowl", 0.9, [0, 0, 640, 480])], "bowl")
     assert v.kf_in_view == 0, "a wall in front must hide it here too"
     assert v.kf_detected == 0
+
+
+def test_a_sliver_of_the_object_is_not_looked_at_it():
+    """Occlusion used to be tested at the centre pixel alone, so an object nine
+    tenths hidden behind a chair back -- with only its middle showing -- counted
+    as a frame the agent looked at it. That understates in-situ recall by
+    exactly the frames where the detector had no chance, and it is the end of
+    the comparison against a probe that requires a real pixel count.
+
+    Here the depth buffer puts a surface at 1.9 m everywhere except one pixel,
+    so only the object's centre sample survives: 1 of 7, below the half the
+    instrument now requires.
+    """
+    v = _GroundTruthVisibility([0.0, 0.0, 2.0])
+    frame = _frame(depth_value=1.5)          # a wall at 1.5 m, object at 2.0 m
+    frame.depth[240, 320] = 2.0              # ...with a peephole at the centre
+    v.observe_keyframe(frame, [], "bowl")
+    assert v.kf_in_view == 0
+
+
+def test_a_mostly_visible_object_still_counts():
+    v = _GroundTruthVisibility([0.0, 0.0, 2.0])
+    frame = _frame(depth_value=2.0)
+    frame.depth[200:220, 300:320] = 1.0      # a small occluder off to one side
+    v.observe_keyframe(frame, [], "bowl")
+    assert v.kf_in_view == 1
+    assert v.fields()["gt_mean_visible_fraction"] == 1.0
