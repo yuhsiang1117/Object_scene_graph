@@ -3,6 +3,7 @@
 #   ./run_condition.sh <TAG> [extra hydra overrides...]
 set -u
 TAG="$1"; shift
+MAPS="${MAPS:-outputs/maps_hires}"
 EXTRA=("$@")
 set -a; . /workspace/.env; set +a
 cd /workspace
@@ -30,7 +31,7 @@ run_scene () {
   echo "### $TAG / $scene  $(date +%H:%M:%S)"
   python3 scripts/run_eval.py "${COMMON[@]}" "${EXTRA[@]}" \
     "ycb.scenes=[$scene]" "ycb.targets=[$targets]" \
-    "ycb.map_in=outputs/maps_hires/$scene" \
+    "ycb.map_in=$MAPS/$scene" \
     "+run_tag=$TAG"
   echo "### $TAG / $scene rc=$?  $(date +%H:%M:%S)"
 }
