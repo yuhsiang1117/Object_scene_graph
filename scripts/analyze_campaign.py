@@ -202,6 +202,47 @@ FAMILIES = ["succeeded", "remembered pose only", "false positives only",
 
 # -------------------------------------------------------------------- report
 
+
+def redetection_split(rows: List[dict]) -> Optional[List[tuple]]:
+    """Why did an episode fail to hold a track on the object at its new pose?
+
+    Needs the ground-truth visibility fields the runner writes
+    (`gt_in_view_frames`), so it is skipped for runs that predate them. The
+    whole point is to separate two causes that every earlier analysis had to
+    guess between:
+
+      NEVER LOOKED    the object's new position never entered an unoccluded
+                      camera frustum -- a coverage and search problem;
+      LOOKED, MISSED  it did, at a range where detection is plausible, and no
+                      track came of it -- a detector and admission-gate problem.
+
+    A third bucket, LOOKED FAR, is kept separate rather than folded into either:
+    seeing something at six metres is not evidence the detector had a chance.
+    """
+    if not any("gt_in_view_frames" in r for r in rows):
+        return None
+    out = collections.Counter()
+    won = collections.Counter()
+    for r in rows:
+        now = truth_xy(r)
+        tracks = r.get("target_tracks") or []
+        err = min((math.hypot(t["center"][0] - now[0], t["center"][2] - now[1])
+                   for t in tracks), default=None)
+        if err is not None and err <= 0.25:
+            key = "localized (<= 0.25 m)"
+        elif int(r.get("gt_in_view_close_frames", 0)) > 0:
+            key = "LOOKED at it within 3 m, MISSED"
+        elif int(r.get("gt_in_view_frames", 0)) > 0:
+            key = "looked, but only from beyond 3 m"
+        else:
+            key = "NEVER LOOKED at the new pose"
+        out[key] += 1
+        won[key] += int(r["success"])
+    order = ["localized (<= 0.25 m)", "LOOKED at it within 3 m, MISSED",
+             "looked, but only from beyond 3 m", "NEVER LOOKED at the new pose"]
+    return [(k, out[k], won[k]) for k in order if out[k]]
+
+
 def _rate(rows, pred) -> str:
     n = len(rows)
     k = sum(1 for r in rows if pred(r))
@@ -249,6 +290,28 @@ def report(conds: Dict[str, List[dict]]) -> None:
     print(f"\n{'conversion once committed':38}"
           + "".join(f"{_conv(conds[n]):>{W}}" for n in names))
 
+    if any(redetection_split(conds[n]) for n in names):
+        head("WHY THE OBJECT WAS NOT HELD AT ITS NEW POSE")
+        keys = ["localized (<= 0.25 m)", "LOOKED at it within 3 m, MISSED",
+                "looked, but only from beyond 3 m", "NEVER LOOKED at the new pose"]
+        print(f"{'':36}" + "".join(f"{n:>{W}}" for n in names))
+        for key in keys:
+            row = f"{key:36}"
+            for n in names:
+                split = redetection_split(conds[n])
+                cell = "--"
+                if split:
+                    hit = [x for x in split if x[0] == key]
+                    if hit:
+                        _, cnt, w = hit[0]
+                        cell = f"{cnt:3d}  SR {w / cnt:.2f}"
+                row += f"{cell:>{W}}"
+            print(row)
+        print(f"\n{'in-view frames, median':36}"
+              + "".join(f"{_median_field(conds[n], 'gt_in_view_frames'):>{W}}" for n in names))
+        print(f"{'closest approach while in view':36}"
+              + "".join(f"{_median_field(conds[n], 'gt_min_range_m'):>{W}}" for n in names))
+
     head("FAILURE FAMILIES")
     print(f"{'':32}" + "".join(f"{n:>{W}}" for n in names))
     for fam in FAMILIES:
@@ -277,6 +340,11 @@ def report(conds: Dict[str, List[dict]]) -> None:
         if max(vals) < 0.01:
             continue
         print(f"{s:30}" + "".join(f"{v:>{W}.2f}" for v in vals))
+
+
+def _median_field(rows, field: str) -> str:
+    vals = sorted(r[field] for r in rows if r.get(field) is not None)
+    return f"{vals[len(vals) // 2]:.2f}" if vals else "--"
 
 
 def _conv(rows) -> str:
