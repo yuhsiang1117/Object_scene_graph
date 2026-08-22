@@ -2292,6 +2292,64 @@ The tomato soup can is localized in **zero of twelve** episodes while being look
 three metres in nine of them. Its measured detector recall on these poses is 0.13–0.35, and
 lowering its own admission gate to 0.20 costs zero extra false positives in a 900-pose census.
 
+### H: the per-class gate is a small positive, and it is not the fix for the 30
+
+Condition H turns `class_conf` on for the four classes the census called cheap — pitcher, soup
+can, banana, plate at 0.20; cracker box and bleach bottle stay at 0.30, since between them they
+would supply 27 of the 32 false positives a global move adds.
+
+| | G | H |
+|---|---|---|
+| SR | 0.427 | 0.448 |
+| SPL | 0.211 | 0.228 |
+| median steps | 335 | **264** |
+| in_anchor | 0.479 | 0.521 |
+| cross_anchor | 0.375 | 0.375 |
+
+Three things are worth separating here.
+
+**The mechanism is correctly class-scoped.** Split by whether a class was gated, the ungated
+half is *exactly* unchanged — SR 0.571 → 0.571, localized 24 → 24 — while the gated half moves
+0.315 → 0.352. That is what a per-class threshold is supposed to look like, and it is the
+strongest evidence that the implementation does what it says.
+
+**The score movement is not significant.** Three episodes flip to success and one flips back;
++2 on 96 is comfortably inside the noise. The efficiency movement is larger and cleaner:
+median steps fall 21%, and SPL rises while SR barely does, which is what happens when episodes
+that were already winnable resolve sooner.
+
+**The harm the pilot predicted did not appear.** A six-episode pilot had shown a correct
+candidate disbelieved before arrival, with the presence filter as the mechanism. At population
+scale `presence_disbelieved` moves 90.86 → 90.48 and `absence_abandon` 0.66 → 0.65 — flat. The
+pilot's deciding evidence was one episode, and one episode is what it was worth.
+
+#### But the population it was aimed at did not move
+
+| | G | H |
+|---|---|---|
+| localized (≤ 0.25 m) | 37 | 38 |
+| **looked within 3 m and missed** | **35** | **34** |
+| never looked | 22 | 22 |
+
+One episode. The gate does not convert the 30 detection failures, and the reason is a
+misreading of what the census measured: recall at *authored viewpoints* is best-case, poses
+sampled on rings around the object and pointed at it. The agent's own sightings are at a median
+1.07 m but at whatever heading and framing the navmesh follower left it with. So those 30 are
+not detections sitting just under a threshold — at the angles the agent actually achieves there
+is no detection to admit at any threshold this side of noise.
+
+That is a different problem from the one `class_conf` solves, and it wants a different
+measurement before another fix: **where in the frame, and how large, is the object when the
+instrument says it was "in view"?** The instrument records range and occlusion at the centre
+pixel and nothing about image position, so an object clipped to the periphery — where a
+wide-FOV camera distorts it and the detector is weakest — is currently indistinguishable from
+one centred at the same range. Adding the projected pixel position and an apparent-size
+estimate is a few lines on the same instrument, and it is the next thing to measure rather than
+the next thing to tune.
+
+`class_conf` stays on: correctly scoped, no measurable harm, a small gain in efficiency, and it
+is the right mechanism for the cases where a detection genuinely is marginal.
+
 #### The affinity fix did not transfer, and that was predictable
 
 G against F: SR 0.427 against 0.438, arrivals at the true surface identical at 8/96. Offline
