@@ -2240,13 +2240,28 @@ hold a track on the object, **35 had the agent standing within three metres of i
 of 12 frames at a median 1.16 m, and got nothing usable. Perception outweighs coverage
 roughly three to two, and every earlier iteration assumed the reverse.
 
-Splitting those 35 by what the detector did produce:
+Splitting those 35 by what the detector did produce — **and the first cut of this was wrong,
+in a way worth recording.** Bucketing by the distance of the *nearest* track suggested 15
+episodes with nothing near the object and 20 with a track a quarter to two metres out, which
+reads as a localization problem. It is not. In 15 of those 20 the track sits **0.00–0.06 m
+from the remembered pose**: it is the stale track, untouched, close to the new position only
+because the object moved a short way. Separating tracks that are still on the remembered pose
+from genuinely fresh ones:
 
-| | n |
+| the 59 episodes that hold no track within 0.25 m | n |
 |---|---|
-| nothing near the object at all (only stale or false tracks > 2 m) | 15 |
-| a track 0.5 – 2.0 m off | 11 |
-| a track 0.25 – 0.5 m off (a near miss) | 9 |
+| looked within 3 m; **no fresh track near the object at all** — detection | **30** |
+| never looked, or only from beyond 3 m — coverage | 24 |
+| looked; a fresh track 0.25 – 2.0 m off — localization | **5** |
+
+The five genuine localization errors run 0.28 to 0.59 m, median 0.29. So localization is worth
+five episodes, not twenty, and the earlier "22 coverage / 15 detection / 20 localization" split
+should read **24 coverage / 30 detection / 5 localization**. Detection is the largest single
+cause of failure in the benchmark, by a clear margin.
+
+The lesson is the same one this document keeps recording: *nearest track* is not *the object's
+track*, and any metric that does not separate a stale hypothesis from a fresh observation will
+attribute a perception failure to whatever subsystem happens to own the number.
 
 And splitting the 22 that never looked: median displacement **6.84 m**, and 17 of 22 are
 cross_anchor. Never-looked is the long-move coverage problem, which is what the search line
@@ -2254,11 +2269,11 @@ exists for; it is not the majority of the loss.
 
 So the remaining work divides three ways, and the shares are now known rather than guessed:
 
-* **22 coverage** — the agent never gets eyes on a destination six metres away.
-* **15 detection** — it stands at 1.2 m and the detector clears no gate. This is what
-  `DetectorConfig.class_conf` was built for, and the per-class census says the two worst
-  targets here cost nothing to admit at 0.20.
-* **20 localization** — a detection happens and the track lands a quarter to two metres out.
+* **30 detection** — the agent stands at 1.2 m for a dozen frames and no fresh track appears.
+  This is what `DetectorConfig.class_conf` was built for, and the per-class census says the two
+  worst targets here cost nothing at all to admit at 0.20.
+* **24 coverage** — it never gets eyes on a destination a median 6.84 m away.
+* **5 localization** — a fresh detection lands 0.28–0.59 m out.
 
 Per target the shares are very uneven, and they point at the same two objects the campaign has
 been losing all along:
