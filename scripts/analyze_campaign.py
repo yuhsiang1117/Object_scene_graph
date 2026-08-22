@@ -243,6 +243,37 @@ def redetection_split(rows: List[dict]) -> Optional[List[tuple]]:
     return [(k, out[k], won[k]) for k in order if out[k]]
 
 
+
+FRAMING_BUCKETS = ("close_centred", "close_peripheral", "far_centred", "far_peripheral")
+
+
+def insitu_recall(rows: List[dict]) -> Optional[dict]:
+    """What the detector does on the frames the agent actually gets.
+
+    The probe in `scripts/probe_ycb_detection.py` measures recall at AUTHORED
+    viewpoints: navigable poses on rings around the object, ranked by how many
+    pixels of it they see, top ten kept. That is a best case by construction.
+    This is the same question asked of the frames the agent really collected --
+    every keyframe where the object was in view and unoccluded, against the
+    detections that keyframe produced.
+
+    The gap between the two is the difference between "the detector can see this
+    object" and "the detector saw this object", and only the second one decides
+    an episode.
+    """
+    if not any("gt_kf_in_view" in r for r in rows):
+        return None
+    seen = sum(int(r.get("gt_kf_in_view", 0)) for r in rows)
+    hit = sum(int(r.get("gt_kf_detected", 0)) for r in rows)
+    out = {"keyframes_in_view": seen, "detected": hit,
+           "recall": (hit / seen) if seen else float("nan"), "buckets": {}}
+    for key in FRAMING_BUCKETS:
+        n = sum(int(r.get(f"gt_kf_{key}", 0)) for r in rows)
+        d = sum(int(r.get(f"gt_kf_{key}_detected", 0)) for r in rows)
+        out["buckets"][key] = (n, d)
+    return out
+
+
 def _rate(rows, pred) -> str:
     n = len(rows)
     k = sum(1 for r in rows if pred(r))
@@ -311,6 +342,35 @@ def report(conds: Dict[str, List[dict]]) -> None:
               + "".join(f"{_median_field(conds[n], 'gt_in_view_frames'):>{W}}" for n in names))
         print(f"{'closest approach while in view':36}"
               + "".join(f"{_median_field(conds[n], 'gt_min_range_m'):>{W}}" for n in names))
+
+    if any(insitu_recall(conds[n]) for n in names):
+        head("WHAT THE DETECTOR DOES ON THE FRAMES THE AGENT ACTUALLY GETS")
+        print(f"{'':34}" + "".join(f"{n:>{W}}" for n in names))
+        for label, fn in (
+            ("keyframes with it in view", lambda d: f"{d['keyframes_in_view']}"),
+            ("of those, detected by name", lambda d: f"{d['detected']}"),
+            ("IN-SITU RECALL", lambda d: f"{d['recall']:.3f}"),
+        ):
+            row = f"{label:34}"
+            for n in names:
+                d = insitu_recall(conds[n])
+                row += f"{(fn(d) if d else '--'):>{W}}"
+            print(row)
+        print()
+        for key in FRAMING_BUCKETS:
+            row = f"  recall, {key:24}"
+            for n in names:
+                d = insitu_recall(conds[n])
+                cell = "--"
+                if d:
+                    cnt, hit = d["buckets"][key]
+                    cell = f"{hit}/{cnt} = {hit / cnt:.2f}" if cnt else "0/0"
+                row += f"{cell:>{W}}"
+            print(row)
+        print()
+        print("  Compare the authored-viewpoint probe: 0.584 at imgsz 1280 over the ten")
+        print("  best viewpoints of each object. That is what the detector CAN do; the")
+        print("  number above is what it DID.")
 
     head("FAILURE FAMILIES")
     print(f"{'':32}" + "".join(f"{n:>{W}}" for n in names))
