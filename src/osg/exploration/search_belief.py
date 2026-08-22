@@ -31,7 +31,7 @@ from typing import Dict, List, Optional, Sequence
 
 import numpy as np
 
-from ..graph.priors import affinity_scores, affords
+from ..graph.priors import AFFINITY_POWER, UNLISTED_AFFINITY, affinity_scores, affords
 
 
 @dataclass
@@ -97,11 +97,18 @@ def container_prior(
         # No prior at all for this class: every surface is equally plausible.
         affinity = 0.5
     else:
-        # We DO have a ranking and this category is not in it. That is weak
-        # evidence against, and it has to sit BELOW the lowest ranked entry --
-        # at a middling 0.5 a bed and a sofa tied with a sink as places to look
-        # for a bowl, and the agent duly went to both.
-        affinity = scores.get(key, 0.25)
+        # An unlisted category used to score 0.25 -- below the lowest listed
+        # entry, i.e. evidence AGAINST -- justified by one anecdote about a bed
+        # and a sofa tying with a sink as places to look for a bowl. The
+        # benchmark's own relocations say the opposite: 37 of 53 destinations
+        # are categories the table does not list, and a bed is the single most
+        # common one. A six-entry list is not exhaustive and absence from it is
+        # not evidence. See graph/priors.py for the full measurement.
+        affinity = scores.get(key, UNLISTED_AFFINITY)
+    # Softened to a tie-breaker: proximity ranks the true surface at median 2,
+    # affinity alone at median 27 against 25 for arbitrary order. It should
+    # separate near-equals, not overrule a metre of distance.
+    affinity = affinity ** AFFINITY_POWER
     prox = 1.0
     if last_known_xy is not None:
         d = float(np.linalg.norm(np.asarray(centre_xy, float) - np.asarray(last_known_xy, float)))

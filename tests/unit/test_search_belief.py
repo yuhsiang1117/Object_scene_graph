@@ -205,13 +205,40 @@ def test_nearer_the_last_known_pose_outranks_further_from_it():
     assert near > far
 
 
-def test_a_category_missing_from_a_known_ranking_ranks_below_all_of_it():
-    """Measured: at a middling fallback weight a bed and a sofa tied with a sink
-    as places to look for a bowl, and the agent went to both. Absent from a
-    ranking we have is weaker than present at the bottom of it."""
+def test_absence_from_a_six_entry_list_is_not_evidence_against():
+    """An unlisted category used to score 0.25 -- BELOW the lowest listed entry,
+    i.e. positive evidence against -- justified by one anecdote about a bed and
+    a sofa tying with a sink as places to look for a bowl.
+
+    The benchmark's own relocations say the opposite. Of 53 whose destination
+    surface is mapped, 37 land on a category CONTAINER_AFFINITY does not list
+    for that class, and a bed is the single most common destination of all (26).
+    Ranking the true surface over 114 relocations, affinity alone scores top-1
+    0/114 and median rank 27, against 25 for shuffling the candidates. A
+    six-entry hand-written list is not exhaustive and absence from it carries no
+    information, so an unlisted category sits level with the lowest listed one
+    rather than beneath it.
+
+    Ties here are harmless: proximity is unclipped and decides the product.
+    """
     listed_worst = container_prior("bowl", "sink", 0.75, 0.6, np.zeros(2))
     unlisted = container_prior("bowl", "bed", 0.75, 0.6, np.zeros(2))
-    assert unlisted < listed_worst
+    assert unlisted == pytest.approx(listed_worst)
+
+    listed_best = container_prior("bowl", "table", 0.75, 0.6, np.zeros(2))
+    assert listed_best > unlisted, "the ranking among listed categories survives"
+
+
+def test_affinity_is_softened_to_a_tie_breaker_not_a_veto():
+    """Proximity ranks the true surface at median 2; affinity alone at 27
+    against 25 for arbitrary order. Affinity should separate near-equals, not
+    overrule a metre of distance -- so its spread is compressed, and a nearer
+    surface of a worse category still outranks a far one of a better."""
+    near_bad = container_prior("bowl", "bed", 0.75, 0.6, np.array([0.5, 0.0]),
+                               last_known_xy=np.zeros(2), proximity_len_m=1.0)
+    far_good = container_prior("bowl", "table", 0.75, 0.6, np.array([4.0, 0.0]),
+                               last_known_xy=np.zeros(2), proximity_len_m=1.0)
+    assert near_bad > far_good
 
 
 def test_with_no_ranking_at_all_every_surface_stays_equally_plausible():

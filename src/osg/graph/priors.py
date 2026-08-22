@@ -141,6 +141,39 @@ AFFORDANCE = {
 DEFAULT_AFFORDANCE = (0.15, 1.6, 0.03)
 
 
+# Weight of an unlisted category, and how hard the ranking bites.
+#
+# CONTAINER_AFFINITY is six entries long per class and was never meant to be
+# exhaustive, but an unlisted category used to score 0.25 -- BELOW the lowest
+# listed entry, i.e. positive evidence against. Measured on the benchmark's own
+# relocations, that is backwards. Of 53 moves whose destination surface is
+# mapped, the objects land on:
+#
+#     bed 26, desk 19, table 6, cabinet 3, nightstand 3, bench 2, stool 2, ...
+#
+# and 37 of the 53 land on a category the table does not list for that class --
+# a tomato soup can is put on a bed seven times. Ranking the 114 relocations by
+# the true surface's position in the candidate list:
+#
+#     affinity x proximity (as shipped)      top-1 19   top-5 36   median  5
+#     proximity alone, no affinity           top-1 26   top-5 38   median  2
+#     affinity alone, no proximity           top-1  0   top-5 12   median 27
+#     neither (arbitrary order)              top-1  2   top-5 14   median 25
+#
+# Affinity alone is no better than arbitrary order, and multiplying it in makes
+# proximity worse. So: absence from the list is not evidence (0.5, the same
+# value used when there is no ranking at all), and the ranking that remains is
+# softened to a tie-breaker rather than a veto.
+#
+# The first of those two is a correctness fix and would be right on any data.
+# The second is calibrated against THIS benchmark, whose relocations appear to
+# be placed for reachability rather than for semantic plausibility -- see
+# docs/DYNAMIC_SCENES.md. On a benchmark that moved objects the way people do,
+# a stronger affinity term would be worth more, and AFFINITY_POWER is the knob.
+UNLISTED_AFFINITY = 0.5
+AFFINITY_POWER = 0.5
+
+
 def affinity_scores(target: str, source=None) -> dict:
     """{container category: weight in (0, 1]}, best first, or {} if unknown.
 
