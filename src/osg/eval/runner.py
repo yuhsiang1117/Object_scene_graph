@@ -6,6 +6,7 @@ from __future__ import annotations
 
 import hashlib
 import json
+import math
 import re
 import time
 from pathlib import Path
@@ -205,36 +206,109 @@ class _GroundTruthVisibility:
         self.in_view = 0
         self.min_range_m = float("inf")
         self.close_frames = 0  # in view within 3 m, where detection is plausible
+        self.kf_in_view = 0
+        self.kf_detected = 0
+        self.best_offaxis = float("inf")
+        self.best_det_score = 0.0
+        self.by_framing = {k: [0, 0] for k in
+                           ("close_centred", "close_peripheral",
+                            "far_centred", "far_peripheral")}
 
     def observe(self, frame) -> None:
         if self.target is None:
             return
         self.frames += 1
-        p_c = frame.T_cw[:3, :3] @ self.target + frame.T_cw[:3, 3]
-        z = float(p_c[2])
-        if z <= 1e-3:
-            return  # behind the camera
-        k = frame.intrinsics
-        u = k.fx * p_c[0] / z + k.cx
-        v = k.fy * p_c[1] / z + k.cy
-        if not (0 <= u < k.width and 0 <= v < k.height):
+        seen = self._project(frame)
+        if seen is None:
             return
-        d = float(frame.depth[int(v), int(u)])
-        if d > 1e-3 and d < z - self.OCCLUSION_TOL_M:
-            return  # something solid between the camera and the object
+        z = seen[2]
         self.in_view += 1
         self.min_range_m = min(self.min_range_m, z)
         if z <= 3.0:
             self.close_frames += 1
 
+    # -------------------------------------------------------- keyframe half
+    #
+    # The step-by-step counters above answer "did the agent look at it". They
+    # cannot answer "and did the detector see it", because detection only runs
+    # on keyframes -- so a keyframe is the correct denominator for recall, and
+    # the only place an in-situ miss can be attributed.
+    #
+    # Condition H tested the hypothesis that the 30 looked-and-missed episodes
+    # were detections sitting just under the admission gate, by lowering the
+    # gate for the four classes a 900-pose census called cheap. The population
+    # moved by one episode. The census had measured recall at AUTHORED
+    # viewpoints -- rings around the object, pointed at it -- while the agent
+    # arrives at a median 1.07 m on whatever heading the follower left it with.
+    # What is missing is the framing: an object clipped to the edge of a
+    # wide-FOV frame is indistinguishable, in the counters above, from one
+    # centred at the same range.
+
+    def observe_keyframe(self, frame, dets, target_label: str) -> None:
+        """Was the object in frame, and did the detector call it by name?"""
+        if self.target is None:
+            return
+        seen = self._project(frame)
+        if seen is None:
+            return
+        u, v, z = seen
+        k = frame.intrinsics
+        # 0 at the optical axis, 1 at the nearer image edge, more into a corner.
+        offaxis = math.hypot((u - k.cx) / (0.5 * k.width), (v - k.cy) / (0.5 * k.height))
+        self.kf_in_view += 1
+        self.best_offaxis = min(self.best_offaxis, offaxis)
+        want = str(target_label).lower().replace("_", " ").strip()
+        best = 0.0
+        for det in dets or []:
+            if str(det.label).lower().replace("_", " ").strip() != want:
+                continue
+            x1, y1, x2, y2 = [float(c) for c in det.bbox_xyxy]
+            if x1 - 8.0 <= u <= x2 + 8.0 and y1 - 8.0 <= v <= y2 + 8.0:
+                best = max(best, float(det.score))
+        if best > 0.0:
+            self.kf_detected += 1
+            self.best_det_score = max(self.best_det_score, best)
+        # Recall conditioned on framing, which is the thing H could not see.
+        centred = offaxis <= 0.6
+        if z <= 3.0:
+            key = "close_centred" if centred else "close_peripheral"
+        else:
+            key = "far_centred" if centred else "far_peripheral"
+        self.by_framing[key][0] += 1
+        self.by_framing[key][1] += int(best > 0.0)
+
+    def _project(self, frame):
+        p_c = frame.T_cw[:3, :3] @ self.target + frame.T_cw[:3, 3]
+        z = float(p_c[2])
+        if z <= 1e-3:
+            return None
+        k = frame.intrinsics
+        u = k.fx * p_c[0] / z + k.cx
+        v = k.fy * p_c[1] / z + k.cy
+        if not (0 <= u < k.width and 0 <= v < k.height):
+            return None
+        d = float(frame.depth[int(v), int(u)])
+        if d > 1e-3 and d < z - self.OCCLUSION_TOL_M:
+            return None
+        return u, v, z
+
     def fields(self) -> Dict[str, Any]:
-        return {
+        out = {
             "gt_frames": self.frames,
             "gt_in_view_frames": self.in_view,
             "gt_in_view_close_frames": self.close_frames,
             "gt_min_range_m": (round(self.min_range_m, 3)
                                if self.min_range_m < float("inf") else None),
+            "gt_kf_in_view": self.kf_in_view,
+            "gt_kf_detected": self.kf_detected,
+            "gt_best_offaxis": (round(self.best_offaxis, 3)
+                                if self.best_offaxis < float("inf") else None),
+            "gt_best_det_score": round(self.best_det_score, 3),
         }
+        for key, (n, hit) in self.by_framing.items():
+            out[f"gt_kf_{key}"] = n
+            out[f"gt_kf_{key}_detected"] = hit
+        return out
 
 
 def _attempt_succeeded(env, frame, cfg) -> bool:
@@ -553,6 +627,9 @@ def run_eval(cfg) -> dict:
         attempts_used, attempt_log = 1, []
         gt_view = _GroundTruthVisibility(
             _authored_episode_metadata(episode).get("target_position"))
+        # Read-only: the agent hands over what it saw, and is given nothing.
+        agent.on_keyframe_detections = (
+            lambda f, dets: gt_view.observe_keyframe(f, dets, target))
         while not env.episode_over:
             gt_view.observe(frame)
             action = agent.act(frame)  # updates agent.costmap from `frame`

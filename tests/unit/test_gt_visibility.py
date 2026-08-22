@@ -87,3 +87,65 @@ def test_no_authored_target_is_a_no_op_rather_than_a_crash():
     v.observe(_frame(depth_value=2.0))
     assert v.fields()["gt_in_view_frames"] == 0
     assert v.fields()["gt_min_range_m"] is None
+
+
+# ------------------------------------------------------------- keyframe half
+
+class _Det:
+    def __init__(self, label, score, bbox):
+        self.label = label
+        self.score = score
+        self.bbox_xyxy = np.asarray(bbox, dtype=float)
+
+
+def test_a_detection_covering_the_object_counts_as_seen_by_name():
+    v = _GroundTruthVisibility([0.0, 0.0, 2.0])  # projects to the image centre
+    v.observe_keyframe(_frame(2.0), [_Det("bowl", 0.7, [300, 220, 340, 260])], "bowl")
+    assert v.kf_in_view == 1
+    assert v.kf_detected == 1
+    assert v.best_det_score == 0.7
+
+
+def test_a_detection_of_a_different_class_does_not():
+    v = _GroundTruthVisibility([0.0, 0.0, 2.0])
+    v.observe_keyframe(_frame(2.0), [_Det("chair", 0.9, [300, 220, 340, 260])], "bowl")
+    assert v.kf_in_view == 1
+    assert v.kf_detected == 0
+
+
+def test_a_detection_of_the_right_class_somewhere_else_does_not():
+    """Otherwise a false positive across the room would be scored as having
+    found the object, which is the exact confusion this instrument exists to
+    avoid."""
+    v = _GroundTruthVisibility([0.0, 0.0, 2.0])
+    v.observe_keyframe(_frame(2.0), [_Det("bowl", 0.9, [10, 10, 60, 60])], "bowl")
+    assert v.kf_detected == 0
+
+
+def test_labels_are_normalised_on_both_sides():
+    v = _GroundTruthVisibility([0.0, 0.0, 2.0])
+    v.observe_keyframe(_frame(2.0), [_Det("Tomato_Soup_Can", 0.5, [300, 220, 340, 260])],
+                       "tomato soup can")
+    assert v.kf_detected == 1
+
+
+def test_framing_is_bucketed_so_a_peripheral_sighting_is_distinguishable():
+    """H could not tell an object clipped to the edge of a wide-FOV frame from
+    one centred at the same range, and that is where its explanation ran out."""
+    centred = _GroundTruthVisibility([0.0, 0.0, 2.0])
+    centred.observe_keyframe(_frame(2.0), [], "bowl")
+    assert centred.by_framing["close_centred"][0] == 1
+    assert centred.by_framing["close_peripheral"][0] == 0
+
+    # 1.7 m to the side at 2 m: inside the image, far off the optical axis.
+    edge = _GroundTruthVisibility([1.7, 0.0, 2.0])
+    edge.observe_keyframe(_frame(2.0), [], "bowl")
+    assert edge.by_framing["close_peripheral"][0] == 1
+    assert edge.best_offaxis > 0.6
+
+
+def test_the_keyframe_half_shares_the_occlusion_test():
+    v = _GroundTruthVisibility([0.0, 0.0, 3.0])
+    v.observe_keyframe(_frame(1.0), [_Det("bowl", 0.9, [0, 0, 640, 480])], "bowl")
+    assert v.kf_in_view == 0, "a wall in front must hide it here too"
+    assert v.kf_detected == 0
