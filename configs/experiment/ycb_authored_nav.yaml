@@ -95,7 +95,19 @@ detector:
   # which a track is expected and unmatched, and a correct track can be
   # disbelieved before the agent reaches it. Settling this needs the full
   # 96-episode run, not a wider census.
-  class_conf: {}
+  #
+  # Now ON. The ground-truth visibility instrument identified the population the
+  # pilot could not: 35 of 96 episodes have the agent standing within three
+  # metres of the object -- a median of 12 frames at 1.16 m -- and getting
+  # nothing usable, and 15 of those produce no track near it at all. The tomato
+  # soup can is localized in ZERO of twelve episodes while being looked at
+  # within three metres in nine of them. These four are exactly the classes the
+  # census says are cheap, and they are where the misses are.
+  class_conf:
+    blue plastic pitcher: 0.20
+    tomato soup can: 0.20
+    banana: 0.20
+    plate: 0.20
   # The vocabulary is DEFAULT_VOCABULARY plus the episode target, so a mapping
   # run for one target has no class for the others and cannot map them. A
   # multi-target benchmark needs every target present from the start. The names
