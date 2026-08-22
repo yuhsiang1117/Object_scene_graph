@@ -2218,6 +2218,78 @@ affords — goes the wrong way:
 | `min_obs=1 min_score=0.3` | 76/114 | 102 | 33/114 |
 
 Coverage was never the constraint. The gates stay.
+
+#### F, and the campaign's final ledger
+
+| | C0 | D | E | F |
+|---|---|---|---|---|
+| SR | **0.458** | 0.385 | 0.427 | 0.438 |
+| SPL | 0.220 | 0.196 | 0.221 | 0.216 |
+| in_anchor | 0.542 | 0.479 | 0.500 | 0.479 |
+| cross_anchor | 0.375 | 0.292 | 0.354 | **0.396** |
+| search ran at all | 53/96 | 37/96 | 38/96 | 45/96 |
+| **arrived at the true surface** | **0/96** | 5/96 | 6/96 | **8/96** |
+| frontier selections/episode | 2.15 | 20.76 | 5.30 | 4.12 |
+| surface inspections/episode | 3.34 | 0.88 | 1.24 | 1.91 |
+
+Read the mechanism column and the search works: arrivals 0 → 5 → 6 → 8, engagement recovering
+toward C0's, cross-anchor at its best of any condition. Read the SR column and three
+conditions of work has not beaten a number from before it started, and the spread across
+C0/E/F (0.458 / 0.427 / 0.438) is inside the ±0.05 binomial noise at n=96. Both readings are
+honest and they are about different things.
+
+Per target, F against C0: banana 0.333 → **0.833**, bleach bottle 0.500 → 0.556, pitcher
+0.333 → 0.389, cracker box and bowl unchanged — against plate 0.500 → **0.278** and tomato
+soup can 0.333 → **0.083**. Per scene, 00848 0.400 → 0.567 against 00829 0.611 → 0.444. This
+is redistribution, not a lift.
+
+### Success is decided by one number, and it is not the search
+
+Of F's 8 arrivals at the surface the object had actually been moved to, **1 converted**. The
+geometry is not the problem — a container's centre sits a median 0.51 m from an object resting
+on it — and neither is the detector: those episodes carry target-label detections of 3096 to
+33995 px at scores up to 0.79, far above the 1200 px node gate. What they carry is a **track
+in the wrong place**. The three 00829 plate arrivals detected the plate and built a track
+1.05–1.55 m from where it was.
+
+Binning every F episode by how far the *nearest* target-label track ends up from the truth:
+
+| localization error of the best track | n | SR |
+|---|---|---|
+| ≤ 0.25 m | 37 | **0.892** |
+| 0.25 – 0.5 m | 11 | 0.364 |
+| 0.5 – 1.0 m | 7 | 0.429 |
+| 1.0 – 2.0 m | 6 | 0.167 |
+| > 2.0 m | 35 | **0.029** |
+
+That is a cliff, not a gradient. Get a track within a quarter of a metre and the episode is
+won nine times in ten; miss by two metres and it is lost 97 times in 100. Everything the
+campaign moved — ranking, engagement, frontier retirement, facing — operates on whether the
+agent *gets there*, and gets there is worth almost nothing unless the map puts the object
+where it is.
+
+Per target the split is stark, and it explains the redistribution above:
+
+| target | median localization error | within 0.25 m | SR |
+|---|---|---|---|
+| banana | 0.03 m | 6/6 | 0.833 |
+| bleach bottle | 0.03 m | 12/18 | 0.556 |
+| cracker box | 0.06 m | 9/12 | 0.667 |
+| blue plastic pitcher | 0.66 m | 7/18 | 0.389 |
+| plate | **1.55 m** | 6/18 | 0.278 |
+| bowl | **2.85 m** | 6/12 | 0.500 |
+| tomato soup can | **2.94 m** | 2/12 | 0.083 |
+
+The three worst are a flat plate, a shallow bowl and a small can — objects whose mask-moment
+ellipsoid is fitted from a thin or nearly-planar depth return, viewed obliquely, often resting
+on a bed. The three best are boxy and upright. This is the next thing to fix, and it is a
+different subsystem from everything this campaign touched: `objects/optimization.py` and the
+ellipsoid fit, not the search.
+
+It also reframes the earlier funnel. "Never mapped it at the new pose" was measured with a
+0.5 m threshold and read as a perception-coverage failure. Some of it is: 35 of 96 episodes
+have nothing within 2 m. But the band between 0.25 m and 2 m — 24 episodes, SR 0.33 — is the
+object being seen and mis-placed, which no amount of better searching will recover.
 ---
 
 ## Phase 4 — C4 change log
