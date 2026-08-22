@@ -160,12 +160,18 @@ def test_rebase_collector_paths_and_canonical_labels(tmp_path):
     # resolution and against eight synonyms, and "blue plastic pitcher" at 0.71
     # (scripts/probe_ycb_detection.py, mode=labels).
     assert YCB_TARGET_LABELS["019_pitcher_base"] == "blue plastic pitcher"
+    # Two more of these, found the same way but by a different instrument. The
+    # ground-truth visibility counters showed the agent holding the soup can at
+    # least half visible for 431 keyframes across 96 episodes while the detector
+    # named it twelve times -- in-situ recall 0.03, against 0.90 for the bowl.
+    # Re-probing candidate names at the dynamic poses: "cylindrical can" 0.75
+    # against "tomato soup can" 0.23, and "red dish" 0.79 against "plate" 0.47.
     for handle, label in (
         ("003_cracker_box", "cracker box"),
-        ("005_tomato_soup_can", "tomato soup can"),
+        ("005_tomato_soup_can", "cylindrical can"),
         ("021_bleach_cleanser", "bleach bottle"),
         ("024_bowl", "bowl"),
-        ("029_plate", "plate"),
+        ("029_plate", "red dish"),
         ("037_scissors", "scissors"),
     ):
         assert YCB_TARGET_LABELS[handle] == label
@@ -345,7 +351,7 @@ def test_a_target_mask_covering_the_frame_is_a_semantic_id_collision():
     from osg.sim.ycb_layouts import AuthoredObject, YCBLayoutError
 
     authored = AuthoredObject(
-        semantic_id=35, handle="029_plate", label="plate",
+        semantic_id=35, handle="029_plate", label="red dish",
         translation=(0.0, 0.9, 0.0), rotation=(0.0, 0.0, 0.0, 1.0),
         anchor_object_id="table_1", anchor_category="table",
     )

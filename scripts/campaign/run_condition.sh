@@ -35,7 +35,7 @@ run_scene () {
   echo "### $TAG / $scene rc=$?  $(date +%H:%M:%S)"
 }
 
-run_scene 00829-QaLdnwvtxbs "bowl,tomato soup can,cracker box,plate,blue plastic pitcher,bleach bottle"
-run_scene 00848-ziup5kvtCCR "bleach bottle,plate,cracker box,banana,blue plastic pitcher"
-run_scene 00880-Nfvxx8J5NCo "bowl,bleach bottle,plate,blue plastic pitcher,tomato soup can"
+run_scene 00829-QaLdnwvtxbs "bowl,cylindrical can,cracker box,red dish,blue plastic pitcher,bleach bottle"
+run_scene 00848-ziup5kvtCCR "bleach bottle,red dish,cracker box,banana,blue plastic pitcher"
+run_scene 00880-Nfvxx8J5NCo "bowl,bleach bottle,red dish,blue plastic pitcher,cylindrical can"
 echo "########## $TAG DONE $(date +%H:%M:%S)"

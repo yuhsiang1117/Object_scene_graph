@@ -55,14 +55,21 @@ SEMANTIC_ID_OFFSET = 50000
 PROBE_LABELS: Dict[str, List[str]] = {
     "003_cracker_box": ["cracker box", "cereal box", "cracker carton", "food box",
                         "red cracker box"],
+    # In-situ recall for "tomato soup can" is 0.03 -- twelve detections over 431
+    # keyframes in which the agent had the object a median 99% visible. That is
+    # a recognition failure for the asset, not a gate or a framing one, and the
+    # pitcher's history says to try the name before giving up on the object.
     "005_tomato_soup_can": ["tomato soup can", "soup can", "tin can", "canned food",
-                            "red and white can"],
+                            "red and white can", "can", "food can", "soup tin",
+                            "campbells soup can", "red can", "tomato can",
+                            "canned soup", "cylindrical can", "red cylinder"],
     "019_pitcher_base": ["pitcher", "blue plastic pitcher", "blue pitcher", "jug",
                          "water jug", "water pitcher", "plastic jug", "vase",
                          "kettle", "watering can", "bucket", "carafe"],
     "024_bowl": ["bowl", "red bowl", "dish"],
     "025_mug": ["mug", "coffee mug", "cup"],
-    "029_plate": ["plate", "red plate", "dish", "saucer"],
+    "029_plate": ["plate", "red plate", "dish", "saucer", "red dish", "round plate",
+                  "dinner plate", "tray", "lid", "red disc"],
     "037_scissors": ["scissors", "pair of scissors", "shears", "orange scissors",
                      "yellow handled scissors", "kitchen shears", "cutting tool",
                      "craft scissors"],

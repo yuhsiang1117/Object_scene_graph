@@ -105,9 +105,9 @@ detector:
   # census says are cheap, and they are where the misses are.
   class_conf:
     blue plastic pitcher: 0.20
-    tomato soup can: 0.20
+    cylindrical can: 0.20
     banana: 0.20
-    plate: 0.20
+    red dish: 0.20
   # The vocabulary is DEFAULT_VOCABULARY plus the episode target, so a mapping
   # run for one target has no class for the others and cannot map them. A
   # multi-target benchmark needs every target present from the start. The names
@@ -132,7 +132,25 @@ detector:
   # box" 0.00 at every one of twenty viewpoints. Losing the two generic classes
   # costs nothing measurable and also shrinks the container-surface candidate
   # set the search posterior has to walk.
-  vocabulary: ["chair", "sofa", "armchair", "plant", "bed", "toilet", "tv_monitor", "table", "desk", "cabinet", "shelf", "dresser", "wardrobe", "nightstand", "lamp", "pillow", "cushion", "picture", "mirror", "window", "door", "sink", "bathtub", "shower", "towel", "counter", "stool", "bench", "refrigerator", "oven", "microwave", "washing machine", "stove", "fireplace", "stairs", "rug", "curtain", "clothes", "basket", "banana", "bowl", "cracker box", "mug", "blue plastic pitcher", "plate", "bleach bottle", "tomato soup can"]
+  # "tomato soup can" -> "cylindrical can" and "plate" -> "red dish". Both were
+  # naming failures, the same shape as the pitcher's, and the ground-truth
+  # instrument is what exposed them: over 96 episodes the agent had the soup can
+  # at least half visible in 431 keyframes and the detector named it TWELVE
+  # times -- an in-situ recall of 0.03 against 0.90 for the bowl. Re-probed at
+  # the dynamic poses, swapping one candidate into the vocabulary at a time
+  # (adding rather than swapping measures class-competitive NMS, not the name):
+  #
+  #   005_tomato_soup_can          029_plate
+  #     cylindrical can  0.75        red dish     0.79
+  #     red can          0.56        red plate    0.76
+  #     tin can          0.55        red disc     0.70
+  #     tomato soup can  0.23        plate        0.47
+  #     soup can         0.12        dish         0.00
+  #
+  # These are descriptions rather than names, which is a fair thing to hold
+  # against an "open-vocabulary" claim; "tin can" and "red plate" are the more
+  # natural queries and cost 0.20 and 0.03 of recall respectively.
+  vocabulary: ["chair", "sofa", "armchair", "plant", "bed", "toilet", "tv_monitor", "table", "desk", "cabinet", "shelf", "dresser", "wardrobe", "nightstand", "lamp", "pillow", "cushion", "picture", "mirror", "window", "door", "sink", "bathtub", "shower", "towel", "counter", "stool", "bench", "refrigerator", "oven", "microwave", "washing machine", "stove", "fireplace", "stairs", "rug", "curtain", "clothes", "basket", "banana", "bowl", "cracker box", "mug", "blue plastic pitcher", "red dish", "bleach bottle", "cylindrical can"]
 
 scene_graph:
   min_det_bbox_px: 300

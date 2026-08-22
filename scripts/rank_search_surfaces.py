@@ -41,10 +41,10 @@ from typing import Dict, List, Optional, Sequence, Tuple
 import numpy as np
 
 TARGET_LABELS = {
-    "003_cracker_box": "cracker box", "005_tomato_soup_can": "tomato soup can",
+    "003_cracker_box": "cracker box", "005_tomato_soup_can": "cylindrical can",
     "011_banana": "banana", "019_pitcher_base": "blue plastic pitcher",
     "021_bleach_cleanser": "bleach bottle", "024_bowl": "bowl",
-    "025_mug": "mug", "029_plate": "plate",
+    "025_mug": "mug", "029_plate": "red dish",
 }
 PLANE = (0, 2)
 
