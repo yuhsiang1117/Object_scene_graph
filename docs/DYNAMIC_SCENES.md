@@ -2306,7 +2306,19 @@ And the error does not converge with evidence:
 | 6–15 | 25 | 0.13 m |
 | 16+ | 24 | 0.57 m |
 
-No trend. "Observe it more" is not the fix; the estimator is biased, not noisy.
+No trend — and the radial error is *symmetric*, not a constant offset: over the committed
+candidates its median is +0.001 m with 51% of tracks placed beyond the object rather than
+short of it. So there is no constant to subtract, and yet averaging over sixteen observations
+does not shrink it either. That combination points at per-view errors that are correlated
+rather than independent — an agent approaching from one direction sees a plate at much the
+same oblique angle every time — or at a fit that re-estimates from the best view instead of
+pooling. Which of those it is has not been measured.
+
+Two caveats on this cut. It covers the committed candidates with error under 1.5 m; the
+badly-placed plate, bowl and soup-can tracks are a separate population it says nothing about.
+And "observe it more" being useless is a statement about the current estimator, not about
+observation in principle — observations from *new angles* were never separated from repeat
+views of the same one.
 
 #### Why a better search did not buy a better score
 
