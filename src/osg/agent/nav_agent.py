@@ -411,6 +411,7 @@ class NavAgent:
         # mostly stops being -- the distinction an ignore list cannot make.
         self._search_log = InspectionLog()
         self._search_container: Optional[int] = None
+        self._surface_face_turns = 0
         self._search_started_step = 0
         self._approach_at_viewpoint = False
         self._scan_turns_left = 0
@@ -525,6 +526,12 @@ class NavAgent:
             if self._portal_pursuit_ok(frame) and self._goal_xy is not None:
                 self.state = State.GOTO_FRONTIER  # resume the climb
             else:
+                # Look at the surface before the selection round scores it
+                # searched -- _select_new_frontier retires it on arrival, and
+                # the belief update should rest on a frame that shows it.
+                facing = self._face_searched_surface(frame)
+                if facing is not None:
+                    return facing
                 self._select_new_frontier(frame)
             if self.state == State.EXPLORE:  # nothing selectable
                 return TURN_ACTION  # keep looking around; map will grow
@@ -905,6 +912,9 @@ class NavAgent:
             self._goal_xy = surface.goal_xy
             self._search_container = int(surface.ref_id)
             self._search_started_step = self.step_count
+            self._surface_face_turns = int(
+                getattr(self.cfg.exploration, "search_face_turns", 8)
+            )
             # Actually GO there. Only GOTO_FRONTIER follows _goal_xy; setting the
             # goal while the state stayed EXPLORE meant the agent never moved,
             # re-selected the same surface five steps later, and scored it
@@ -1127,6 +1137,48 @@ class NavAgent:
         if best is None:
             return None
         return self.object_layer.center_of(best)[list(PLANE)]
+
+    def _face_searched_surface(self, frame: FrameData) -> Optional[str]:
+        """Turn to look at a surface before deciding the target is not on it.
+
+        `_mark_surface_searched` multiplies a surface's belief by (1 - 0.8) on
+        arrival -- a near-decisive update -- and the frame that update rests on
+        is whatever heading the navmesh follower happened to stop at. That is
+        the same mistake the candidate path made and fixed: "concluding absence
+        from the arrival frame abandoned a bowl that was exactly where the map
+        said". Measured in condition D, the search reached the true surface five
+        times and converted one of them.
+
+        A few turns are cheap against the ~50 steps an inspection already costs,
+        and they are what make the detector's silence about a surface mean
+        something.
+        """
+        if self._search_container is None or self._goal_xy is None:
+            return None
+        if self._surface_face_turns <= 0:
+            return None
+        node = getattr(self.scene_graph, "containers", {}).get(self._search_container)
+        if node is None:
+            return None
+        agent_xy = frame.camera_position[list(PLANE)]
+        if float(np.linalg.norm(agent_xy - self._goal_xy)) > float(
+            getattr(self.cfg.exploration, "search_arrival_m", 1.2)
+        ):
+            return None  # not there yet; nothing to look at from here
+
+        from ..planning.controller import TURN_LEFT, TURN_RIGHT, _wrap, agent_heading
+
+        to_surface = np.asarray(node.center, dtype=float)[list(PLANE)] - agent_xy
+        if float(np.linalg.norm(to_surface)) < 1e-3:
+            return None
+        err = _wrap(float(np.arctan2(to_surface[1], to_surface[0]))
+                    - agent_heading(frame.T_wc))
+        if abs(err) <= np.radians(15.0):
+            self._surface_face_turns = 0  # facing it; this frame is the evidence
+            return None
+        self._surface_face_turns -= 1
+        self.stats["surface_face_turns"] = self.stats.get("surface_face_turns", 0) + 1
+        return TURN_RIGHT if err > 0 else TURN_LEFT
 
     def _mark_surface_searched(self, arrived: bool = True) -> None:
         """Arriving at a surface without the target is a look that did not find

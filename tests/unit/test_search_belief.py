@@ -345,3 +345,19 @@ def test_an_inspected_surface_still_falls_away_after_normalisation():
     assert after[1] < before[1]
     assert after[2] == pytest.approx(before[2])
     assert max(after.values()) < 0.5
+
+
+def test_surface_mass_scales_every_candidate_without_reordering():
+    """The mass is the search-versus-explore knob; it must not touch the order."""
+    graph = _Graph([_Node(1, "counter", [0.0, 0.8, 0.0]),
+                    _Node(2, "table", [3.0, 0.8, 0.0]),
+                    _Node(3, "desk", [9.0, 0.8, 0.0])])
+    low = build_container_candidates(graph, "bowl", InspectionLog(),
+                                     last_known_xy=np.zeros(2), surface_mass=0.5)
+    high = build_container_candidates(graph, "bowl", InspectionLog(),
+                                      last_known_xy=np.zeros(2), surface_mass=1.0)
+    lo = {c.ref_id: c.prior for c in low}
+    hi = {c.ref_id: c.prior for c in high}
+    assert sorted(lo, key=lo.get) == sorted(hi, key=hi.get)
+    for k in lo:
+        assert hi[k] == pytest.approx(2.0 * lo[k])

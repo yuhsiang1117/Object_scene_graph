@@ -337,7 +337,16 @@ class ExplorationConfig:
     # 0.5 because that is where the previously tuned model sat -- median top
     # prior 0.479 over 19 (scene, target) pairs -- so sharpening proximity does
     # not silently re-tune the search-versus-explore trade at the same time.
-    search_surface_mass: float = 0.5
+    #
+    # Raised from 0.5 to 1.0 after condition E. Matching the previously tuned
+    # model's TOP prior (median 0.479) turned out to under-fund the search,
+    # because the old model's tail was held up by its 0.2 floor and the new
+    # one's is not: measured over 96 episodes, E ran the search in 38 episodes
+    # for 1.24 inspections each against C0's 53 and 3.34. The ranking is the
+    # part that improved -- E arrived at the surface the object was moved to
+    # six times against C0's zero -- so the search deserves to outbid
+    # unexplored space more often, not less.
+    search_surface_mass: float = 1.0
     # Scales a frontier's utility against a surface's, i.e. the price of
     # preferring unmapped space over a plausible surface. Must be non-zero or
     # the agent stops exploring once its surfaces are exhausted.
@@ -355,6 +364,12 @@ class ExplorationConfig:
     # Finishing the room you are in beats crossing the house and coming back.
     search_same_room_bonus: float = 4.0
     search_arrival_m: float = 1.2
+    # Turns spent looking AT a surface on arrival, before its belief is scored.
+    # `_mark_surface_searched` multiplies belief by (1 - search_detect_prob) on
+    # a single frame taken at whatever heading the follower stopped on. In
+    # condition D the search reached the true surface five times and converted
+    # one. A few turns are cheap against the ~50 steps an inspection costs.
+    search_face_turns: int = 8
     search_max_steps: int = 60
     # Credit for a surface the agent set off towards but never reached: it has
     # barely been ruled out, and spending full belief on it would retire the
