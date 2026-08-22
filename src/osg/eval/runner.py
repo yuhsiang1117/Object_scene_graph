@@ -9,7 +9,7 @@ import json
 import re
 import time
 from pathlib import Path
-from typing import Optional
+from typing import Any, Dict, Optional, Sequence
 
 import numpy as np
 
@@ -172,6 +172,69 @@ def _target_track_fields(agent) -> dict:
         "cand_best_score": float(track.best_score) if track is not None else None,
         "cand_n_obs": int(track.n_obs) if track is not None else None,
     }
+
+
+class _GroundTruthVisibility:
+    """Did the agent ever LOOK at where the object actually is?
+
+    The dominant failure of the dynamic benchmark is that 57 of 96 episodes
+    never perceive the object at its new pose, and 48 of them still hold it at
+    the old one. That has two entirely different causes with two entirely
+    different fixes -- the agent never pointed a camera at the new location, or
+    it did and the detection fell under the gate -- and nothing in episodes.jsonl
+    separates them. Everything downstream of that split has been guessed at
+    twice now.
+
+    So: project the authored target position into every frame, reject it if it
+    is outside the image or behind the camera, and reject it again if the depth
+    buffer says something solid is in front of it. What survives is "the object
+    was in view, unoccluded, at this range".
+
+    This is GROUND TRUTH and lives in the runner. The agent is never given it,
+    never sees these fields, and nothing here writes to the agent.
+    """
+
+    # The projected point is the object's CENTRE; depth returns its front face,
+    # which for a cracker box is ~7 cm nearer. Anything closer than this is a
+    # different surface in the way.
+    OCCLUSION_TOL_M = 0.25
+
+    def __init__(self, target_xyz: Optional[Sequence[float]]) -> None:
+        self.target = None if target_xyz is None else np.asarray(target_xyz, dtype=float)
+        self.frames = 0
+        self.in_view = 0
+        self.min_range_m = float("inf")
+        self.close_frames = 0  # in view within 3 m, where detection is plausible
+
+    def observe(self, frame) -> None:
+        if self.target is None:
+            return
+        self.frames += 1
+        p_c = frame.T_cw[:3, :3] @ self.target + frame.T_cw[:3, 3]
+        z = float(p_c[2])
+        if z <= 1e-3:
+            return  # behind the camera
+        k = frame.intrinsics
+        u = k.fx * p_c[0] / z + k.cx
+        v = k.fy * p_c[1] / z + k.cy
+        if not (0 <= u < k.width and 0 <= v < k.height):
+            return
+        d = float(frame.depth[int(v), int(u)])
+        if d > 1e-3 and d < z - self.OCCLUSION_TOL_M:
+            return  # something solid between the camera and the object
+        self.in_view += 1
+        self.min_range_m = min(self.min_range_m, z)
+        if z <= 3.0:
+            self.close_frames += 1
+
+    def fields(self) -> Dict[str, Any]:
+        return {
+            "gt_frames": self.frames,
+            "gt_in_view_frames": self.in_view,
+            "gt_in_view_close_frames": self.close_frames,
+            "gt_min_range_m": (round(self.min_range_m, 3)
+                               if self.min_range_m < float("inf") else None),
+        }
 
 
 def _attempt_succeeded(env, frame, cfg) -> bool:
@@ -488,7 +551,10 @@ def run_eval(cfg) -> dict:
         # surfaces, new objects) and the agent is re-armed for another go.
         attempts_allowed = max(1, int(getattr(cfg.eval, "attempts", 1)))
         attempts_used, attempt_log = 1, []
+        gt_view = _GroundTruthVisibility(
+            _authored_episode_metadata(episode).get("target_position"))
         while not env.episode_over:
+            gt_view.observe(frame)
             action = agent.act(frame)  # updates agent.costmap from `frame`
             if action == "stop" and attempts_used < attempts_allowed:
                 scored = _attempt_succeeded(env, frame, cfg)
@@ -595,6 +661,11 @@ def run_eval(cfg) -> dict:
             # episodes.jsonl.
             **episode_floor_fields(episode, trajectory_y),
             **_stair_track_fields(agent),
+            # Ground-truth visibility (this runner only; the agent never sees
+            # it). Splits "never perceived the object at its new pose" into
+            # never-looked and looked-but-missed, which the rest of the record
+            # cannot do and which two iterations have had to guess at.
+            **gt_view.fields(),
             # Online floor estimate (osg/mapping/floors.py). Compare
             # n_floors_seen against the per-scene navmesh ground truth from
             # scripts/scene_floors.py to validate the estimator before any
