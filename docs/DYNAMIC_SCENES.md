@@ -2440,6 +2440,66 @@ That retires a caveat repeated throughout this document. Differences of two or t
 between conditions are *not* automatically noise, and the cross-target regressions above are
 real: banana −0.333 and cracker box −0.333 in both runs, to three decimal places.
 
+### K: the specific name, and a vocabulary at a local optimum
+
+J took the highest-scoring names. K takes the *specific* ones — "tin can" (probe 0.55, against
+"cylindrical can" 0.75) and "red plate" (0.76, against "red dish" 0.79) — on the theory that
+the losses were class-competitive NMS and a name describing a shape half the vocabulary shares
+will keep costing its neighbours.
+
+| | I (original) | J (top-scoring) | K (specific) |
+|---|---|---|---|
+| SR | 0.438 | 0.438 | **0.448** |
+| SPL | 0.218 | 0.201 | 0.218 |
+| in-situ recall | 0.357 | **0.516** | 0.471 |
+| localized episodes | 38 | **45** | 42 |
+| never looked | 22 | 18 | **17** |
+| target-label tracks per episode | 2.54 | 3.09 | 2.90 |
+
+Per target, across the three naming schemes:
+
+| target | recall I → J → K | SR I → J → K |
+|---|---|---|
+| **the can** | 0.03 → 0.21 → 0.19 | 0.083 → 0.500 → **0.583** |
+| **the plate** | 0.25 → 0.42 → **0.57** | 0.278 → 0.389 → 0.389 |
+| cracker box | 0.32 → 0.58 → 0.20 | 0.667 → 0.333 → 0.500 |
+| blue plastic pitcher | 0.53 → 0.45 → 0.44 | 0.389 → 0.278 → 0.333 |
+| bowl | 0.90 → 0.93 → 0.89 | 0.500 → 0.667 → 0.500 |
+| bleach bottle | 0.41 → 0.58 → 0.53 | 0.556 → 0.500 → 0.444 |
+| banana | 0.46 → 0.26 → 0.26 | 0.833 → 0.500 → 0.500 |
+
+The theory half-held. The cracker box and the pitcher recover most of what J cost them; the
+banana and the bleach bottle do not. The can ends at **0.583 against 0.083**, seven episodes
+on a target of twelve — the largest per-target gain of the whole campaign.
+
+And SR moves one episode.
+
+#### The map rebuild is not the confound it looks like
+
+J and K start from rebuilt prior maps, because a track carries the query string it was detected
+under, so the comparison against I bundles a fresh pass 1. Measured directly — localization
+error of each target in `maps_hires` against `maps_v5` — **16 of 18 unchanged, 1 better
+(00880's plate, 9.39 m → 0.07 m, itself a product of the rename), 0 worse.** The prior maps are
+equivalent, and the naming comparison stands on its own.
+
+#### What three naming schemes actually establish
+
+In-situ recall rose 32% from I to K, localized episodes 38 → 42, false-positive-only episodes
+20 → 6, never-looked 22 → 17, timeouts 43 → 37. **Success rate moved by one episode.**
+
+That is not a null result about naming — the can's six episodes are real and replicate — it is
+a result about the vocabulary as a system. Every name is scored by an open-vocabulary head
+that runs NMS across all of them, so recall for one class is bought from its neighbours, and
+the seven targets sit near a local optimum where the trade is roughly even. Three schemes
+sampled that surface at 0.438, 0.438 and 0.448.
+
+The consequence for the system is that **detection has stopped being the binding constraint**.
+Of K's 54 episodes without a localized track, 29 looked and missed and 17 never looked, and the
+levers for those two are search coverage and recognition-at-angle, not the query string. The
+consequence for the paper is sharper: a benchmark where per-class recall is this sensitive to
+prompt wording cannot support a claim about open-vocabulary object goals without reporting the
+sensitivity, and this table is that report.
+
 #### The affinity fix did not transfer, and that was predictable
 
 G against F: SR 0.427 against 0.438, arrivals at the true surface identical at 8/96. Offline
