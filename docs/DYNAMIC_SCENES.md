@@ -2350,6 +2350,96 @@ the next thing to tune.
 `class_conf` stays on: correctly scoped, no measurable harm, a small gain in efficiency, and it
 is the right mechanism for the cases where a detection genuinely is marginal.
 
+### I and J: what the detector actually does, and what a name is worth
+
+Condition I added the ground-truth visibility instrument in its stricter form — seven samples
+through the object, at least half in-image and unoccluded — and measured **in-situ recall**:
+of the keyframes where the agent genuinely had the object in front of it, how many produced a
+detection carrying the target's label over it.
+
+**0.357**, over 1725 keyframes, against the 0.584 the authored-viewpoint probe reports at the
+same resolution. And the framing hypothesis the instrument was built to test is dead:
+
+| | recall |
+|---|---|
+| close (≤3 m) and centred | 241/561 = 0.43 |
+| close and peripheral | 201/461 = 0.44 |
+| far and centred | 135/495 = 0.27 |
+| far and peripheral | 38/208 = 0.18 |
+
+Off-axis position makes no difference at all; range halves it. So an object clipped to the edge
+of the frame is not the problem, and the earlier guess that it was is refuted by its own
+measurement.
+
+What the split *did* show is that recall is a property of the object, not of the frame:
+
+| target | keyframes in view | detected | in-situ recall | SR |
+|---|---|---|---|---|
+| bowl | 246 | 222 | **0.90** | 0.500 |
+| blue plastic pitcher | 157 | 83 | 0.53 | 0.389 |
+| bleach bottle | 298 | 123 | 0.41 | 0.556 |
+| cracker box | 172 | 55 | 0.32 | 0.667 |
+| plate | 358 | 91 | 0.25 | 0.278 |
+| **tomato soup can** | **431** | **12** | **0.03** | 0.083 |
+
+Eleven episodes never detected the object once despite three or more in-view keyframes. At an
+independent 0.36 per frame that has probability 0.005, so it is not luck — some objects are
+simply not recognised, and 431 keyframes at a median 99% visibility yielding twelve detections
+is not a threshold problem.
+
+#### It was the name, twice
+
+Re-probing candidate names at the dynamic poses, swapping one into the vocabulary at a time:
+
+| tomato soup can | | plate | |
+|---|---|---|---|
+| **cylindrical can** | **0.75** | **red dish** | **0.79** |
+| red can / tin can | 0.56 / 0.55 | red plate / red disc | 0.76 / 0.70 |
+| *tomato soup can* | *0.23* | *plate* | *0.47* |
+
+The same shape as the pitcher, which went 0.00 → 0.71 on "blue plastic pitcher". Condition J
+swaps both, with the prior maps rebuilt because a track carries the query string it was
+detected under.
+
+**It worked, on its targets, and cost the others exactly what a generic name costs.**
+
+| target | in-situ recall I → J | SR I → J |
+|---|---|---|
+| cylindrical can (was soup can) | 0.03 → **0.21** | 0.083 → **0.500** |
+| red dish (was plate) | 0.25 → **0.42** | 0.278 → 0.389 |
+| bleach bottle | 0.41 → 0.58 | 0.556 → 0.500 |
+| cracker box | 0.32 → **0.58** | 0.667 → **0.333** |
+| blue plastic pitcher | 0.53 → 0.45–0.60 | 0.389 → 0.25 |
+| banana | 0.46 → **0.26** | 0.833 → 0.500 |
+
+Overall in-situ recall **0.357 → 0.516/0.550**, localized episodes 38 → 45, episodes holding
+only false positives 20 → 6, episodes never looking 22 → 18, median steps 335 → 280, timeouts
+43 → 32. Every perception number improved, several of them by a lot.
+
+**And SR did not move: 0.438 → 0.438 / 0.427.** The renamed targets gained seven episodes and
+the rest gave back eight.
+
+The mechanism is the one this codebase already documented when it dropped "box" and "book"
+from the vocabulary: an open-vocabulary head runs class-competitive NMS over its own classes,
+so a generic name takes detections from the specific ones around it. "cylindrical can"
+describes a shape that the pitcher and the bleach bottle also have. The cracker box is the
+clearest case and the strangest-looking: its recall nearly doubled, 0.32 → 0.58, while its
+success rate halved — more detections of the class, spread over more false positives, with
+target-label tracks per episode rising 2.54 → 3.09 overall.
+
+#### A free replicate, and what it says about every number above
+
+The two J runs were launched ten seconds apart by a chain script and a manual command, and
+both completed 96 episodes. That accident is the first replicate this benchmark has had, and
+it is worth more than the condition: **SR 0.438 vs 0.427, in-situ recall 0.516 vs 0.550, and
+per-target success identical for six of seven targets.** Run-to-run noise on SR is about one
+episode, not the five the binomial bound suggests, because the pipeline is far more
+deterministic than the VLM in it implies.
+
+That retires a caveat repeated throughout this document. Differences of two or three episodes
+between conditions are *not* automatically noise, and the cross-target regressions above are
+real: banana −0.333 and cracker box −0.333 in both runs, to three decimal places.
+
 #### The affinity fix did not transfer, and that was predictable
 
 G against F: SR 0.427 against 0.438, arrivals at the true surface identical at 8/96. Offline
