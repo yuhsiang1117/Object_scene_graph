@@ -196,20 +196,20 @@ DualMap 的重試迴圈做不到，因為它無法決定「不如去探索」。
 搜尋後驗開啟、`search_frontier_weight=0.3`。**每一階只改一件事**，
 底線標示的就是與上一階的差異。
 
-| 代號 | 與上一階的差異 | 關鍵設定 | 先驗地圖 | SR |
-|---|---|---|---|---|
-| **A** | 基線 | imgsz 768、`min_bbox_px=200`、VLM 僅作 absence sensor（`absence_only=true`）、**無 identity channel** | maps_v2 | 0.365 |
-| **B0** | **+ identity channel** | 同 A，加 `max_identity_rejections=2` | maps_v3 *(內容與 v2 相同，僅多存 `best_crop_png` 欄位)* | 0.385 |
-| **B** | **+ VLM 當候選閘門** | 拿掉 `absence_only=true`，讓 VLM 也去否決候選 | maps_v3 | **0.260** |
-| **C0** | **+ 高解析度**（從 B0 分支，不含 VLM 閘門） | imgsz 1280、RGB 1280×960、`min_det_bbox_px=1200`、`min_bbox_px=800`（像素門檻 ×4 以保持等效） | maps_hires | **0.458** |
-| **D** | **+ 搜尋先驗修正** | 鄰近度先驗解除截斷（`L=4→1.0`、`floor=0.2→0`）、absence 後不再丟棄「上次已知位置」、候選先驗正規化、`_frontier_reach_m` 改為由規劃器停止半徑推導 | maps_hires | 0.385 |
-| **E** | **+ frontier 無條件退休** | `_retire_pursued_frontier`：追蹤結束就擋掉該 frontier，抵達與否只決定擋多久 | maps_hires | 0.427 |
-| **F** | **+ 表面搜尋兩項** | `search_surface_mass` 0.5→1.0；抵達表面後先轉頭看它再判定「已搜尋」 | maps_hires | 0.438 |
-| **G** | **+ affinity 修正 + 可見性儀器** | 未列類別的權重 0.25→0.5、affinity 軟化為 tie-breaker；加入 ground-truth 可見性量測（不改行為） | maps_hires | 0.427 |
-| **H** | **+ 逐類別 admission gate** | `class_conf`：pitcher / 湯罐 / banana / 盤子 四類降到 0.20，其餘維持 0.30 | maps_hires | **0.448** |
-| **I** | **+ in-situ recall 儀器**（不改行為） | 接上 `on_keyframe_detections`；可見性改為七點取樣、要求半數可見 | maps_hires | 0.438 |
-| **J** | **+ 換成最高分的名字** | `tomato soup can → cylindrical can`、`plate → red dish`；**地圖必須重建**，因為 track 帶著它被偵測時的查詢字串 | maps_v4 | 0.438 / 0.427 |
-| **K** | **+ 換成具體的名字** | `→ tin can`、`→ red plate` | maps_v5 | **0.448** |
+| 代號 | 與上一階的差異 | 關鍵設定 | 先驗地圖 | in / cross | 整體 SR |
+|---|---|---|---|---|---|
+| **A** | 基線 | imgsz 768、`min_bbox_px=200`、VLM 僅作 absence sensor（`absence_only=true`）、**無 identity channel** | maps_v2 | 0.438 / 0.292 | 0.365 |
+| **B0** | **+ identity channel** | 同 A，加 `max_identity_rejections=2` | maps_v3 *(內容與 v2 相同，僅多存 `best_crop_png` 欄位)* | 0.458 / 0.312 | 0.385 |
+| **B** | **+ VLM 當候選閘門** | 拿掉 `absence_only=true`，讓 VLM 也去否決候選 | maps_v3 | 0.333 / 0.188 | **0.260** |
+| **C0** | **+ 高解析度**（從 B0 分支，不含 VLM 閘門） | imgsz 1280、RGB 1280×960、`min_det_bbox_px=1200`、`min_bbox_px=800`（像素門檻 ×4 以保持等效） | maps_hires | 0.542 / 0.375 | **0.458** |
+| **D** | **+ 搜尋先驗修正** | 鄰近度先驗解除截斷（`L=4→1.0`、`floor=0.2→0`）、absence 後不再丟棄「上次已知位置」、候選先驗正規化、`_frontier_reach_m` 改為由規劃器停止半徑推導 | maps_hires | 0.479 / 0.292 | 0.385 |
+| **E** | **+ frontier 無條件退休** | `_retire_pursued_frontier`：追蹤結束就擋掉該 frontier，抵達與否只決定擋多久 | maps_hires | 0.500 / 0.354 | 0.427 |
+| **F** | **+ 表面搜尋兩項** | `search_surface_mass` 0.5→1.0；抵達表面後先轉頭看它再判定「已搜尋」 | maps_hires | 0.479 / 0.396 | 0.438 |
+| **G** | **+ affinity 修正 + 可見性儀器** | 未列類別的權重 0.25→0.5、affinity 軟化為 tie-breaker；加入 ground-truth 可見性量測（不改行為） | maps_hires | 0.479 / 0.375 | 0.427 |
+| **H** | **+ 逐類別 admission gate** | `class_conf`：pitcher / 湯罐 / banana / 盤子 四類降到 0.20，其餘維持 0.30 | maps_hires | 0.521 / 0.375 | **0.448** |
+| **I** | **+ in-situ recall 儀器**（不改行為） | 接上 `on_keyframe_detections`；可見性改為七點取樣、要求半數可見 | maps_hires | 0.500 / 0.375 | 0.438 |
+| **J** | **+ 換成最高分的名字** | `tomato soup can → cylindrical can`、`plate → red dish`；**地圖必須重建**，因為 track 帶著它被偵測時的查詢字串 | maps_v4 | 0.521 / 0.354 | 0.438 |
+| **K** | **+ 換成具體的名字** | `→ tin can`、`→ red plate` | maps_v5 | **0.625** / 0.271 | **0.448** |
 
 幾點說明：
 
@@ -218,6 +218,11 @@ DualMap 的重試迴圈做不到，因為它無法決定「不如去探索」。
   兩次都跑完 96 個 episode。這個意外給了我們這個基準的第一組**重複實驗**，見第四節。
 * **H → I 也是一組重複實驗**（0.448 / 0.438），因為 I 只加了不改變行為的儀器。
   兩組獨立的重複實驗都給出約**一個 episode** 的雜訊。
+* **整體 SR 會蓋掉一升一降**。K 的 `in_anchor` 是所有條件裡最高的 **0.625**，
+  `cross_anchor` 卻掉到 0.271；從 J 到 K 只改了兩個查詢字串，卻是
+  in_anchor **+0.104**、cross_anchor **−0.083**。沒有任何一個條件同時在兩邊最好
+  （`in_anchor` 最高是 K，`cross_anchor` 最高是 F 的 0.396，最平衡的是 C0）。
+  **這代表我們現在調的東西一直在兩種難度之間做取捨，而不是把整體往上推。**
 * **地圖重建（J、K）不是混淆因子**：逐目標比對 `maps_hires` 與 `maps_v5` 的定位誤差，
   18 項中 16 項不變、1 項變好（00880 的盤子 9.39 m → 0.07 m，這本身就是換名字的功勞）、0 項變差。
 
