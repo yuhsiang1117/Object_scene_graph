@@ -36,7 +36,7 @@ map_scene () {
   done
 }
 
-map_scene 00829-QaLdnwvtxbs bowl "cylindrical can" "cracker box" "red dish" "blue plastic pitcher" "bleach bottle"
-map_scene 00848-ziup5kvtCCR "bleach bottle" "red dish" "cracker box" banana "blue plastic pitcher"
-map_scene 00880-Nfvxx8J5NCo bowl "bleach bottle" "red dish" "blue plastic pitcher" "cylindrical can"
+map_scene 00829-QaLdnwvtxbs bowl "tin can" "cracker box" "red plate" "blue plastic pitcher" "bleach bottle"
+map_scene 00848-ziup5kvtCCR "bleach bottle" "red plate" "cracker box" banana "blue plastic pitcher"
+map_scene 00880-Nfvxx8J5NCo bowl "bleach bottle" "red plate" "blue plastic pitcher" "tin can"
 echo "########## MAPS DONE $(date +%H:%M:%S)"
