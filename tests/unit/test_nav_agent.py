@@ -110,15 +110,15 @@ def test_bbox_fallback_stop_when_no_valid_depth():
     agent = make_agent()
     agent.state = State.APPROACH
     agent._goal_xy = np.array([5.0, 0.0])
-    agent._approach_steps_left = 5
+    agent.approach.steps_left = 5
     agent.detector.push([_det("chair", (300, 300))])  # area 90000 > 40000 threshold
 
-    action = agent._do_approach(_frame([0.0, 0.0]))
+    action = agent.approach.step(_frame([0.0, 0.0]))
 
     assert action == STOP_ACTION
     assert agent.state == State.DONE
-    assert agent.approach_stop_reason == "bbox"
-    assert agent.approach_bbox_log == [(0, 90000.0, None)]  # (step, bbox_px, depth)
+    assert agent.approach.stop_reason == "bbox"
+    assert agent.approach.bbox_log == [(0, 90000.0, None)]  # (step, bbox_px, depth)
 
 
 def test_stops_when_within_depth_range():
@@ -126,18 +126,18 @@ def test_stops_when_within_depth_range():
     agent = make_agent()
     agent.state = State.APPROACH
     agent._goal_xy = np.array([5.0, 0.0])
-    agent._approach_steps_left = 5
+    agent.approach.steps_left = 5
     det = _det("chair", (50, 50))  # small bbox -- would NOT trip the bbox threshold
     det.mask[100:200, 100:200] = True  # populate mask so depth is sampled
     agent.detector.push([det])
     frame = make_frame(_INTRINSICS, make_camera([0.0, 0.88, 0.0], [1.0, 0.88, 0.0]),
                        depth_value=0.8)  # target 0.8 m away <= 1.0 m
 
-    action = agent._do_approach(frame)
+    action = agent.approach.step(frame)
 
     assert action == STOP_ACTION
     assert agent.state == State.DONE
-    assert agent.approach_stop_reason == "depth"
+    assert agent.approach.stop_reason == "depth"
 
 
 def test_advances_when_visible_but_too_far_by_depth():
@@ -145,14 +145,14 @@ def test_advances_when_visible_but_too_far_by_depth():
     agent = make_agent()
     agent.state = State.APPROACH
     agent._goal_xy = np.array([5.0, 0.0])
-    agent._approach_steps_left = 5
+    agent.approach.steps_left = 5
     det = _det("chair", (300, 300))  # large bbox
     det.mask[100:200, 100:200] = True
     agent.detector.push([det])
     frame = make_frame(_INTRINSICS, make_camera([0.0, 0.88, 0.0], [1.0, 0.88, 0.0]),
                        depth_value=3.0)  # 3 m > 1.0 m stop range
 
-    action = agent._do_approach(frame)
+    action = agent.approach.step(frame)
 
     assert action != STOP_ACTION
     assert agent.state == State.APPROACH
@@ -162,92 +162,92 @@ def test_advances_when_visible_but_small():
     agent = make_agent()
     agent.state = State.APPROACH
     agent._goal_xy = np.array([5.0, 0.0])
-    agent._approach_steps_left = 5
+    agent.approach.steps_left = 5
     agent.detector.push([_det("chair", (50, 50))])  # area 2500 < threshold
 
-    action = agent._do_approach(_frame([0.0, 0.0]))
+    action = agent.approach.step(_frame([0.0, 0.0]))
 
     assert action != STOP_ACTION
     assert agent.state == State.APPROACH
-    assert agent._approach_steps_left == 4
-    assert agent._approach_last_good_xy is not None
-    assert np.allclose(agent._approach_last_good_xy, [0.0, 0.0])
+    assert agent.approach.steps_left == 4
+    assert agent.approach.last_good_xy is not None
+    assert np.allclose(agent.approach.last_good_xy, [0.0, 0.0])
 
 
 def test_ignores_detections_of_other_labels():
     agent = make_agent(target="chair")
     agent.state = State.APPROACH
     agent._goal_xy = np.array([5.0, 0.0])
-    agent._approach_steps_left = 5
+    agent.approach.steps_left = 5
     agent.detector.push([_det("sofa", (500, 500))])  # huge, but wrong label
 
-    action = agent._do_approach(_frame([0.0, 0.0]))
+    action = agent.approach.step(_frame([0.0, 0.0]))
 
     assert action != STOP_ACTION
     assert agent.state == State.APPROACH  # not fooled into stopping
-    assert agent._approach_last_good_xy is None  # never confirmed visible
+    assert agent.approach.last_good_xy is None  # never confirmed visible
 
 
 def test_retreats_when_visibility_lost():
     agent = make_agent()
     agent.state = State.APPROACH
     agent._goal_xy = np.array([5.0, 0.0])
-    agent._approach_steps_left = 5
-    agent._approach_last_good_xy = np.array([0.0, 0.0])  # a previously-visible pose
+    agent.approach.steps_left = 5
+    agent.approach.last_good_xy = np.array([0.0, 0.0])  # a previously-visible pose
     agent.detector.push([])  # nothing visible from the current pose
 
-    steps_before = agent._approach_steps_left
-    action = agent._do_approach(_frame([1.0, 0.0]))  # 1 m away from the good pose
+    steps_before = agent.approach.steps_left
+    action = agent.approach.step(_frame([1.0, 0.0]))  # 1 m away from the good pose
 
     assert action != STOP_ACTION  # heads back toward the good pose
     assert agent.state == State.APPROACH
-    assert agent._approach_steps_left == steps_before  # retreat doesn't spend the advance budget
-    assert agent.approach_stop_reason is None  # hasn't stopped yet
+    assert agent.approach.steps_left == steps_before  # retreat doesn't spend the advance budget
+    assert agent.approach.stop_reason is None  # hasn't stopped yet
 
 
 def test_falls_through_to_advance_when_never_visible():
     agent = make_agent()
     agent.state = State.APPROACH
     agent._goal_xy = np.array([5.0, 0.0])
-    agent._approach_steps_left = 5
-    agent._approach_last_good_xy = None  # never seen it
+    agent.approach.steps_left = 5
+    agent.approach.last_good_xy = None  # never seen it
     agent.detector.push([])
 
-    action = agent._do_approach(_frame([0.0, 0.0]))
+    action = agent.approach.step(_frame([0.0, 0.0]))
 
     assert action != STOP_ACTION
     assert agent.state == State.APPROACH
-    assert agent._approach_steps_left == 4  # advance budget spent (no retreat target)
-    assert agent._approach_last_good_xy is None
+    assert agent.approach.steps_left == 4  # advance budget spent (no retreat target)
+    assert agent.approach.last_good_xy is None
 
 
 def test_stops_at_step_budget():
     agent = make_agent()
     agent.state = State.APPROACH
     agent._goal_xy = np.array([5.0, 0.0])
-    agent._approach_steps_left = 0  # budget exhausted
+    agent.approach.steps_left = 0  # budget exhausted
     agent.detector.push([_det("chair", (50, 50))])  # visible but small: would normally advance
 
-    action = agent._do_approach(_frame([0.0, 0.0]))
+    action = agent.approach.step(_frame([0.0, 0.0]))
 
     assert action == STOP_ACTION
     assert agent.state == State.DONE
-    assert agent.approach_stop_reason == "deadline"
+    assert agent.approach.stop_reason == "deadline"
 
 
 def test_stops_at_deadline():
     agent = make_agent()
     agent.state = State.APPROACH
     agent._goal_xy = np.array([5.0, 0.0])
-    agent._approach_steps_left = 5
+    agent.approach.steps_left = 5
     agent._goto_deadline = agent.step_count - 1  # already past
     agent.detector.push([_det("chair", (50, 50))])
 
-    action = agent._do_approach(_frame([0.0, 0.0]))
+    action = agent.approach.step(_frame([0.0, 0.0]))
 
     assert action == STOP_ACTION
     assert agent.state == State.DONE
-    assert agent.approach_stop_reason == "deadline"
+    assert agent.approach.stop_reason == "deadline"
 
 
 def test_navigates_toward_vicinity_when_goal_cell_blocked():
@@ -262,10 +262,10 @@ def test_navigates_toward_vicinity_when_goal_cell_blocked():
     agent.costmap.grid[rc[0] - 5 : rc[0] + 6, rc[1] - 5 : rc[1] + 6] = OCCUPIED
     agent.state = State.APPROACH
     agent._goal_xy = goal
-    agent._approach_steps_left = 5
+    agent.approach.steps_left = 5
     agent.detector.push([])
 
-    action = agent._do_approach(_frame([0.0, 0.0]))
+    action = agent.approach.step(_frame([0.0, 0.0]))
     assert action in ("move_forward", "turn_left", "turn_right")  # navigating, not crashed
 
 
@@ -355,7 +355,7 @@ def test_follow_to_threads_configured_tolerances_to_planner_and_controller():
     agent.planner.plan = spy_plan
     agent.controller.act = spy_act
 
-    agent._follow_to(_frame([0.0, 0.0]), np.array([1.0, 0.0]))
+    agent.approach.follow_to(_frame([0.0, 0.0]), np.array([1.0, 0.0]))
 
     assert plan_calls == [0.12]
     assert act_calls == [0.1]
@@ -446,7 +446,7 @@ def test_a_frontier_the_agent_reached_is_not_called_unreachable():
     which also suppresses the all-frontiers-blocked fallback near that point --
     as the consequence of having got there.
     """
-    from osg.agent.nav_agent import FRONTIER_ARRIVAL_TOL_M
+    from osg.exploration.strategy import FRONTIER_ARRIVAL_TOL_M
 
     cfg = make_cfg()
     agent = make_agent(cfg)

@@ -316,8 +316,6 @@ def _rearm_agent(agent, cfg, steps: int) -> None:
     """
     import math
 
-    from ..agent.nav_agent import State
-
     track = (
         agent.object_layer.get(agent._candidate_id)
         if agent._candidate_id is not None else None
@@ -347,17 +345,7 @@ def _rearm_agent(agent, cfg, steps: int) -> None:
         # object that is really there, so the next keyframe re-detects it and
         # restores the belief the clamp just lowered.
         track.identity_rejections += 1
-    agent._candidate_id = None
-    agent._target_obj_xy = None
-    agent._goal_xy = None
-    agent._current_path = None
-    agent._approach_at_viewpoint = False
-    agent._scan_turns_left = 0
-    agent._scan_expected = 0
-    agent.state = State.EXPLORE
-    agent.approach_stop_reason = None
-    agent._goto_deadline = agent.step_count + int(cfg.agent.max_steps)
-    agent.stats["attempts"] = agent.stats.get("attempts", 1) + 1
+    agent.rearm(cfg.agent.max_steps)
 
 
 def authored_scene(episode) -> str:

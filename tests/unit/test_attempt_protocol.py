@@ -38,12 +38,12 @@ def _agent(log_odds, *, with_filter=True):
     )
     track.presence.log_odds = log_odds
     layer._tracks[1] = track
-    agent = SimpleNamespace(
-        object_layer=layer, _candidate_id=1, _target_obj_xy=np.zeros(2), _goal_xy=None,
-        _current_path=None, _approach_at_viewpoint=True, _scan_turns_left=3,
-        _scan_expected=1, state=None, approach_stop_reason="depth", step_count=71,
-        _goto_deadline=0, stats={},
-    )
+    # What a failed attempt is WORTH is the protocol's question and is what
+    # these tests are about; putting the agent back into EXPLORE is the agent's
+    # own `rearm`, covered in test_nav_agent.py. Recorded here so the protocol
+    # is still shown to hand off.
+    agent = SimpleNamespace(object_layer=layer, _candidate_id=1, stats={}, rearmed=[])
+    agent.rearm = agent.rearmed.append
     return agent, track
 
 
