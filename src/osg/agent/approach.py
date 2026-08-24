@@ -117,7 +117,8 @@ class ApproachPolicy:
                 if depth is not None:
                     if depth <= self.nav.cfg.agent.approach_stop_depth_m:
                         stop_reason = "depth"
-                elif bbox_px >= self.nav.cfg.agent.approach_stop_bbox_px:  # fallback: no valid depth
+                # fallback for when the mask carries no valid depth
+                elif bbox_px >= self.nav.cfg.agent.approach_stop_bbox_px:
                     stop_reason = "bbox"
             if stop_reason is not None:
                 # Terminal-view verification: the agent is close and the target
@@ -126,10 +127,14 @@ class ApproachPolicy:
                 # detector locked onto a false positive, so blacklist it and
                 # resume exploring rather than stopping on empty/wrong space.
                 if self.nav._terminal_verify:
-                    self.nav.stats["terminal_verify"] = self.nav.stats.get("terminal_verify", 0) + 1
+                    self.nav.stats["terminal_verify"] = (
+                    self.nav.stats.get("terminal_verify", 0) + 1
+                )
                     # Full live frame with the target boxed (scene context).
                     if not self.nav.verifier.verify_bbox(frame.rgb, det.bbox_xyxy, self.nav.target):
-                        self.nav.stats["terminal_reject"] = self.nav.stats.get("terminal_reject", 0) + 1
+                        self.nav.stats["terminal_reject"] = (
+                            self.nav.stats.get("terminal_reject", 0) + 1
+                        )
                         if self.nav._candidate_id is not None:
                             self.nav.object_layer.blacklist(self.nav._candidate_id)
                         self.nav._candidate_id = None
@@ -273,7 +278,9 @@ class ApproachPolicy:
             # is angular -- at worst half the sampling step, about 0.10 m.
             view_xy = self.nav.viewpoint_planner.approach_viewpoint(obj_xy, self.nav.costmap)
             if view_xy is not None:
-                self.nav.stats["approach_viewpoint"] = self.nav.stats.get("approach_viewpoint", 0) + 1
+                self.nav.stats["approach_viewpoint"] = (
+                    self.nav.stats.get("approach_viewpoint", 0) + 1
+                )
             else:
                 # Not observable from mapped FREE space yet. The fallback used to
                 # be the object's own centre, and that is unwinnable by
@@ -329,7 +336,9 @@ class ApproachPolicy:
             # pre-positioning), so the short-leg cap (approach_max_steps ~= 3 m)
             # cuts the approach off while the target is still in view. Let it
             # navigate to the object, bounded only by a generous deadline.
-            self.nav._goto_deadline = self.nav.step_count + self.nav.cfg.agent.navmesh_approach_steps
+            self.nav._goto_deadline = (
+                self.nav.step_count + self.nav.cfg.agent.navmesh_approach_steps
+            )
             self.steps_left = 10 ** 9
         else:
             self.nav._goto_deadline = self.nav.step_count + 100
@@ -376,7 +385,10 @@ class ApproachPolicy:
             or np.linalg.norm(self.path_goal - goal_xy) > 0.05
         )
         if need_replan:
-            self.nav._plan_to(frame, goal_xy, goal_tolerance_m=self.nav.cfg.agent.approach_goal_tolerance_m)
+            self.nav._plan_to(
+                frame, goal_xy,
+                goal_tolerance_m=self.nav.cfg.agent.approach_goal_tolerance_m,
+            )
             self.path_goal = goal_xy.copy() if self.nav._current_path is not None else None
             if self.nav._current_path is None:
                 # planner could not reach goal_xy (costmap disconnected /
@@ -385,7 +397,8 @@ class ApproachPolicy:
                 self.last_follow_none_reason = "planner_no_path"
                 return None
         action = self.nav.controller.act(
-            frame.T_wc, self.nav._current_path, arrival_tol_m=self.nav.cfg.agent.approach_arrival_tol_m
+            frame.T_wc, self.nav._current_path,
+            arrival_tol_m=self.nav.cfg.agent.approach_arrival_tol_m,
         )
         if action is None:
             self.nav._current_path = None

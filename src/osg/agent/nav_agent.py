@@ -321,7 +321,9 @@ class NavAgent:
                 max_range=self.cfg.mapping.max_range_m,
                 stride=self.cfg.mapping.depth_stride,
             )
-        self.controller.observe_progress(frame.T_wc, self._last_action, self.costmap, self.step_count)
+        self.controller.observe_progress(
+            frame.T_wc, self._last_action, self.costmap, self.step_count
+        )
         if self.controller.stuck:
             self.controller.stuck = False
             self._current_path = None  # force replan
@@ -342,7 +344,10 @@ class NavAgent:
             self.state = State.EXPLORE
 
         if self.state == State.EXPLORE:
-            if self.floors.pursuit_ok(frame, self.step_count, self._goto_deadline) and self._goal_xy is not None:
+            pursuing = self.floors.pursuit_ok(
+                frame, self.step_count, self._goto_deadline
+            )
+            if pursuing and self._goal_xy is not None:
                 self.state = State.GOTO_FRONTIER  # resume the climb
             else:
                 # Look at the surface before the selection round scores it
@@ -491,7 +496,9 @@ class NavAgent:
         is the defect that invalidated every C3 result before it was found.
         """
         world = self._world(frame)
-        choice = self.exploration.select(world, floor_switch=lambda cost: self._try_floor_switch(frame, cost))
+        choice = self.exploration.select(
+            world, floor_switch=lambda cost: self._try_floor_switch(frame, cost)
+        )
         if choice is None:
             return
         self._goal_xy = choice.goal_xy
@@ -601,7 +608,9 @@ class NavAgent:
     ) -> None:
         agent_xy = frame.camera_position[list(PLANE)]
         with self.profiler.timeit("planner"):
-            result: PlanResult = self.planner.plan(self.costmap, agent_xy, goal_xy, goal_tolerance_m)
+            result: PlanResult = self.planner.plan(
+                self.costmap, agent_xy, goal_xy, goal_tolerance_m
+            )
         self._current_path = result.path if result.success else None
         self.stats["plan_ok" if result.success else "plan_fail"] += 1
 

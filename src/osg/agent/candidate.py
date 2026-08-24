@@ -147,7 +147,10 @@ class CandidatePolicy:
         )
 
     def verify(self, frame: FrameData) -> str:
-        track = self.nav.object_layer.get(self.nav._candidate_id) if self.nav._candidate_id is not None else None
+        track = (
+            self.nav.object_layer.get(self.nav._candidate_id)
+            if self.nav._candidate_id is not None else None
+        )
         if track is None:
             self.nav.state = State.EXPLORE
             return TURN_ACTION
@@ -174,7 +177,9 @@ class CandidatePolicy:
                 with self.nav.profiler.timeit("verification"):
                     accepted = (
                         True if self.nav._terminal_verify
-                        else self.nav.verifier.verify_bbox(frame.rgb, det.bbox_xyxy, self.nav.target)
+                        else self.nav.verifier.verify_bbox(
+                            frame.rgb, det.bbox_xyxy, self.nav.target
+                        )
                     )
                 if accepted:
                     obj_xy = self.nav.object_layer.center_of(track)[list(PLANE)]

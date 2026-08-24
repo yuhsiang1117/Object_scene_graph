@@ -25,7 +25,9 @@ class DebugVideo:
         self._traj: list = []
         path = out_dir / "viz" / "debug" / f"{tag}.mp4"
         path.parent.mkdir(parents=True, exist_ok=True)
-        self._vw = cv2.VideoWriter(str(path), cv2.VideoWriter_fourcc(*"mp4v"), 8, (self._w, self._h))
+        self._vw = cv2.VideoWriter(
+            str(path), cv2.VideoWriter_fourcc(*"mp4v"), 8, (self._w, self._h)
+        )
 
     def write(self, frame, agent, target: str, detector) -> None:
         cv2 = self._cv2
