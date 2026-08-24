@@ -37,14 +37,9 @@ from ..exploration.search_belief import (
     select_candidate,
 )
 from ..exploration.selector import frontier_goal_xy, select_frontier
-from ..graph.priors import floor_target_evidence
 from ..graph.scene_graph import SceneGraph
 from ..mapping.costmap import PLANE, Costmap2D
-from ..mapping.floor_stack import FloorStack
-from ..mapping.floors import FloorEstimator
 from ..mapping.frontier import Frontier, FrontierExtractor
-from ..mapping.portals import FloorSwitchPolicy, find_portals
-from ..mapping.stairs import apply_stair_mask, detect_stairs, stair_tracks
 from ..objects.object_layer import ObjectLayer
 from ..perception.detector import Detector
 from ..perception.keyframe import KeyframeSelector, KeyframeStore
@@ -52,6 +47,7 @@ from ..planning.controller import WaypointController
 from ..planning.planner import PlanResult
 from ..planning.voronoi_planner import HybridVoronoiPlanner
 from ..verification.viewpoint import ViewpointPlanner
+from .floor_policy import FloorPolicy
 
 STOP_ACTION = "stop"
 # WaypointController.act's default arrival tolerance. Named here because
@@ -202,61 +198,18 @@ class NavAgent:
         # (zero cost, never called).
         self.on_keyframe_detections = None
 
-        # One costmap per storey. With floor.per_floor_costmap off the stack
-        # holds exactly one layer forever and `self.costmap` is that single map,
-        # so the single-floor code path is byte-identical.
-        _f = cfg.floor
-        self._stairs_on = bool(_f.stairs)
+        # Counters the whole stack writes into; FloorPolicy shares the dict, so
+        # reset() clears it in place rather than rebinding it.
+        self.stats: dict = {}
+        # Which storey the agent is on, and one costmap per storey. Inert
+        # unless floor.enabled -- see agent/floor_policy.py.
+        self.floors = FloorPolicy(cfg, self.stats)
         # Drive frontier goals to the free-snapped centroid rather than an
         # UNKNOWN cell. Only meaningful on the navmesh, where unknown space
         # gets snapped unpredictably; the costmap planner treats unknown as
         # traversable and is unaffected either way.
-        self._frontier_goal_free = bool(
-            cfg.exploration.frontier_goal_free_cell
-        )
-        self._frontier_cost_free = bool(
-            cfg.exploration.frontier_cost_free_cell
-        )
-        self._cross_floor_on = bool(_f.cross_floor)
-        self._floor_stack = FloorStack(
-            resolution_m=cfg.mapping.resolution_m,
-            room_seg_kwargs=dict(
-                min_room_radius_m=cfg.scene_graph.room_min_radius_m,
-                door_width_m=cfg.scene_graph.room_door_width_m,
-            ),
-            # The height layer is 4x the grid, so only pay for it when the
-            # stair detector will actually read it.
-            track_height=self._stairs_on or self._cross_floor_on,
-        )
-        # Which storey the agent is on (docs/MULTI_FLOOR.md). Constructed
-        # unconditionally so the estimate is always logged; whether it FEEDS
-        # the costmap is gated by floor.enabled / floor.estimate_only.
-        fcfg = cfg.floor
-        self.floors = FloorEstimator(
-            camera_height=cfg.agent.camera_height,
-            level_tol_m=fcfg.level_tol_m,
-            merge_m=fcfg.merge_m,
-            new_level_m=fcfg.new_level_m,
-            min_dwell_steps=fcfg.min_dwell_steps,
-            min_horizontal_run_m=fcfg.min_horizontal_run_m,
-        )
-        # Cross-floor exploration needs the height layer to see portals, so it
-        # implies track_height even when stair detection is off.
-        self._switch_policy = (
-            FloorSwitchPolicy(
-                max_steps=cfg.agent.max_steps,
-                near_frontier_m=fcfg.near_frontier_m,
-                min_interval_steps=fcfg.switch_min_interval,
-                no_switch_before=fcfg.no_switch_before,
-                no_switch_after_frac=fcfg.no_switch_after_frac,
-                use_target_evidence=fcfg.use_target_evidence,
-                early_switch_step=fcfg.early_switch_step,
-                min_objects_to_judge=fcfg.min_objects_to_judge,
-                strong_evidence=fcfg.strong_evidence,
-                evidence_patience_steps=fcfg.evidence_patience_steps,
-            )
-            if fcfg.cross_floor else None
-        )
+        self._frontier_goal_free = bool(cfg.exploration.frontier_goal_free_cell)
+        self._frontier_cost_free = bool(cfg.exploration.frontier_cost_free_cell)
         self.frontier_extractor = FrontierExtractor(
             min_cells=cfg.exploration.frontier_min_cells,
             dedup_m=cfg.exploration.frontier_dedup_m,
@@ -313,19 +266,40 @@ class NavAgent:
         debug/top-down visualizers -- still receives a plain 2D `Costmap2D` and
         needs no knowledge that other floors exist.
         """
-        return self._floor_stack.costmap
+        return self.floors.costmap
 
     @property
     def floor_layer(self):
-        return self._floor_stack.current
+        return self.floors.layer
 
     @property
-    def _room_labels(self) -> Optional[np.ndarray]:
-        return self._floor_stack.current.room_labels
+    def _floor_stack(self):  # graph/map_store.py snapshots the stack
+        return self.floors.stack
+
+    @property
+    def _room_labels(self):
+        return self.floors.room_labels
 
     @_room_labels.setter
-    def _room_labels(self, labels: Optional[np.ndarray]) -> None:
-        self._floor_stack.current.room_labels = labels
+    def _room_labels(self, labels) -> None:
+        self.floors.room_labels = labels
+
+    # Per-episode floor telemetry, recorded by eval/runner.py.
+    @property
+    def floor_log(self) -> list:
+        return self.floors.floor_log
+
+    @property
+    def portal_log(self) -> list:
+        return self.floors.portal_log
+
+    @property
+    def floor_y_drift(self) -> float:
+        return self.floors.floor_y_drift
+
+    @property
+    def stair_regions(self) -> list:
+        return self.floors.stair_regions
 
     # ------------------------------------------------------------------ reset
 
@@ -336,18 +310,7 @@ class NavAgent:
         self._scan_steps_left = (
             int(round(360.0 / self.cfg.agent.turn_deg)) if self.cfg.agent.initial_scan else 0
         )
-        self._floor_y: Optional[float] = None
-        # (step, floor_id, floor_height) on every committed floor change, plus
-        # the first step. Surfaced per episode by eval/runner.py.
-        self.floor_log: list = []
-        self.floor_y_drift = 0.0
-        self.stair_regions: list = []
-        self.portal_log: list = []
-        self._portal_active = False
-        self._portal_start_y = 0.0
-        self._portal_step = 0
         self.floors.reset()
-        self._floor_stack.reset()
         self._kf_count = 0
         self._current_path: Optional[np.ndarray] = None
         self._current_frontier: Optional[Frontier] = None
@@ -399,7 +362,8 @@ class NavAgent:
         self._approach_last_good_xy: Optional[np.ndarray] = None
         self._approach_steps_left = 0
         self._goal_floor_y_cache: Optional[float] = None
-        self.stats = {"plan_ok": 0, "plan_fail": 0, "select_none": 0, "select_ok": 0}
+        self.stats.clear()
+        self.stats.update({"plan_ok": 0, "plan_fail": 0, "select_none": 0, "select_ok": 0})
         # Phase 2 instrumentation (docs/DYNAMIC_SCENES.md): when the map STOPPED
         # believing in something, and what it believed at the moment it
         # committed to a goal. Belief latency and stale-goal rate are computed
@@ -452,46 +416,7 @@ class NavAgent:
         return action
 
     def _act_inner(self, frame: FrameData) -> str:
-        if self._floor_y is None:
-            self._floor_y = float(frame.camera_position[1] - self.cfg.agent.camera_height)
-
-        # Track the storey every step. With floor.estimate_only (the default)
-        # this only LOGS -- the costmap keeps using the latched _floor_y, so
-        # the estimator can be validated against the per-scene navmesh ground
-        # truth (scripts/scene_floors.py) before behaviour depends on it.
-        prev_floor = self.floors.current
-        floor_id = self.floors.update(
-            float(frame.camera_position[1]), self.step_count,
-            xy=frame.camera_position[list(PLANE)],
-        )
-        if floor_id != prev_floor:
-            self._end_portal_pursuit("arrived")
-        if floor_id != prev_floor or not self.floor_log:
-            self.floor_log.append(
-                (self.step_count, int(floor_id),
-                 round(float(frame.camera_position[1]) - self.cfg.agent.camera_height, 3))
-            )
-        fcfg = self.cfg.floor
-        floor_y = self._floor_y
-        live_floor = fcfg.enabled and not fcfg.estimate_only
-        if live_floor:
-            floor_y = self.floors.height_of(floor_id)
-            if fcfg.per_floor_costmap:
-                # Point the stack at the agent's storey BEFORE mapping, so this
-                # frame lands in that floor's own grid. While on stairs the
-                # estimator freezes floor_id, so the treads keep going to the
-                # floor being left rather than opening a phantom layer.
-                self._floor_stack.set_current(
-                    floor_id, step=self.step_count,
-                    agent_xy=frame.camera_position[list(PLANE)],
-                )
-        # How far the estimated floor height ever strays from the value the old
-        # code latched on frame 1. On a single storey this should be ~0; larger
-        # means the obstacle band is silently shifting and perturbing
-        # trajectories that have nothing to do with multi-floor.
-        self.floor_y_drift = max(
-            self.floor_y_drift, abs(self.floors.height_of(floor_id) - self._floor_y)
-        )
+        floor_y = self.floors.observe(frame, self.step_count)
 
         with self.profiler.timeit("costmap"):
             self.costmap.update(
@@ -523,7 +448,7 @@ class NavAgent:
             self.state = State.EXPLORE
 
         if self.state == State.EXPLORE:
-            if self._portal_pursuit_ok(frame) and self._goal_xy is not None:
+            if self.floors.pursuit_ok(frame, self.step_count, self._goto_deadline) and self._goal_xy is not None:
                 self.state = State.GOTO_FRONTIER  # resume the climb
             else:
                 # Look at the surface before the selection round scores it
@@ -544,7 +469,7 @@ class NavAgent:
             if self.step_count - self._progress_ref_step >= 15:
                 # A portal pursuit is judged on vertical progress; a switchback
                 # staircase barely moves in (x, z) while climbing fine.
-                if self._portal_active and self._portal_pursuit_ok(frame):
+                if self.floors.pursuing and self.floors.pursuit_ok(frame, self.step_count, self._goto_deadline):
                     self._progress_ref_step = self.step_count
                     self._progress_ref_xy = agent_xy.copy()
                 elif np.linalg.norm(agent_xy - self._progress_ref_xy) < 0.2:
@@ -763,11 +688,9 @@ class NavAgent:
                     }
                 )
 
-        if self._stairs_on:
-            fc = self.cfg.floor
-            if self._kf_count % max(1, int(fc.stair_detect_every_kf)) == 1:
-                with self.profiler.timeit("stairs"):
-                    self._detect_stairs()
+        if self.floors.stairs_due(self._kf_count):
+            with self.profiler.timeit("stairs"):
+                self.floors.mark_stairs_traversable(self.object_layer)
 
         if self._kf_count % self.cfg.scene_graph.room_seg_every_kf == 1:
             with self.profiler.timeit("room_seg"):
@@ -778,38 +701,8 @@ class NavAgent:
             with self.profiler.timeit("scene_graph"):
                 self.scene_graph.rebuild(
                     self._room_labels, self.costmap, self.object_layer,
-                    floors=self.floors
-                    if self.cfg.floor.enabled else None,
+                    floors=self.floors.estimator if self.cfg.floor.enabled else None,
                 )
-
-    def _detect_stairs(self) -> None:
-        """Find steppable regions on the current storey and mark them
-        traversable, so the staircase stops reading as a wall."""
-        fc = self.cfg.floor
-        regions = detect_stairs(
-            self.costmap,
-            climb_limit_m=fc.climb_limit_m,
-            min_dh_m=fc.stair_min_dh_m,
-            cell_m=fc.stair_cell_m,
-            min_cells=fc.stair_min_cells,
-            min_rise_m=fc.stair_min_rise_m,
-            semantic_centers=stair_tracks(
-                self.object_layer,
-                min_obs=fc.stair_min_obs,
-                min_evidence=fc.stair_min_evidence,
-            ),
-            require_semantic=fc.stair_require_semantic,
-        )
-        if not regions:
-            return
-        n = apply_stair_mask(self.costmap, regions, max_area_frac=fc.stair_max_area_frac)
-        self.stair_regions = regions
-        self.stats["stair_cells"] = self.stats.get("stair_cells", 0) + n
-        self.stats["stair_regions"] = len(regions)
-        self.stats["stair_regions_semantic"] = sum(1 for r in regions if r.semantic)
-        self.stats["stair_max_rise_m"] = round(
-            max(self.stats.get("stair_max_rise_m", 0.0), max(r.rise_m for r in regions)), 2
-        )
 
     # ------------------------------------------------------------ exploration
 
@@ -845,6 +738,32 @@ class NavAgent:
         n = float(np.linalg.norm(v))
         return v / n if n > 1e-6 else np.array([1.0, 0.0])
 
+    def _try_floor_switch(self, frame: FrameData, best_path_cost) -> bool:
+        """Ask the floor policy whether to leave this storey, and go if so.
+
+        The policy decides; the FSM moves. Returns True when a portal is now
+        being driven to, which the caller reads as "this selection round is
+        settled". Checked BEFORE committing to a far frontier, because "the best
+        thing here is 12 m away" is exactly ASCENT's condition for reasoning
+        about storeys.
+        """
+        portal = self.floors.try_switch(
+            frame, self.step_count, best_path_cost,
+            self.scene_graph, self.target, self._reachable_fn,
+        )
+        if portal is None:
+            return False
+        agent_xy = frame.camera_position[list(PLANE)]
+        self._goal_xy = portal.goal_xy
+        self._goal_floor_y_cache = portal.target_y
+        self._current_frontier = None
+        self._current_path = None
+        self.state = State.GOTO_FRONTIER
+        self._goto_deadline = self.step_count + portal.deadline_steps
+        self._progress_ref_step = self.step_count
+        self._progress_ref_xy = agent_xy.copy()
+        return True
+
     def _select_new_frontier(self, frame: FrameData) -> None:
         # Extraction + top-N path planning is expensive; while waiting the
         # agent turns in place, which grows the map anyway.
@@ -869,7 +788,7 @@ class NavAgent:
         with self.profiler.timeit("frontier_extract"):
             frontiers = self.frontier_extractor.extract(
                 self.costmap, frame.camera_position[list(PLANE)],
-                floor=self._floor_stack.current_id,
+                floor=self.floors.current_id,
             )
         if not frontiers:
             # Nothing left on this floor is the strongest possible "no near
@@ -1205,131 +1124,7 @@ class NavAgent:
         )
         self._search_container = None
 
-    def _portal_pursuit_ok(self, frame: FrameData) -> bool:
-        """Should the agent keep driving to its portal instead of re-exploring?
-
-        Held while it is still climbing (or descending) and the deadline has not
-        passed. Vertical progress is the test, not horizontal: on a switchback
-        staircase the (x, z) displacement over 15 steps can be small while the
-        agent is making perfectly good progress, which is also why the ordinary
-        give-up net must not judge a portal pursuit.
-        """
-        if not self._portal_active:
-            return False
-        if self.step_count > self._goto_deadline:
-            self._end_portal_pursuit("deadline")
-            return False
-        climbed = abs(float(frame.camera_position[1]) - self._portal_start_y)
-        if climbed >= self.cfg.floor.portal_progress_m or self.floors.on_stairs:
-            return True
-        # Not moving vertically and not on stairs: the portal was unreachable or
-        # the agent is stuck at the foot of it -- fall back to exploring.
-        if self.step_count - self._portal_step > self.cfg.floor.portal_grace_steps:
-            self._end_portal_pursuit("no_vertical_progress")
-            return False
-        return True
-
-    def _end_portal_pursuit(self, reason: str) -> None:
-        self._portal_active = False
-        self.stats[f"portal_end_{reason}"] = self.stats.get(f"portal_end_{reason}", 0) + 1
-
-    def _try_floor_switch(self, frame: FrameData, best_path_cost) -> bool:
-        """Head for another storey when this one has nothing near left.
-
-        Returns True if a portal was selected and the agent is now driving to
-        it. The portal is only a heading -- the navmesh walks the actual stairs,
-        and the floor estimator commits the new storey once the agent settles
-        there, at which point FloorStack swaps in that floor's map.
-        """
-        if self._switch_policy is None:
-            return False
-        evidence, n_objects = floor_target_evidence(
-            self.scene_graph, self._floor_stack.current_id, self.target
-        )
-        if not self._switch_policy.may_switch(
-            self.step_count, best_path_cost, evidence=evidence, n_objects=n_objects,
-            steps_on_floor=self.step_count - self._floor_stack.current.first_step,
-        ):
-            return False
-
-        floor_y = self.floors.height_of(self._floor_stack.current_id)
-        portals = find_portals(
-            self.costmap, floor_y,
-            min_delta_m=self.cfg.floor.new_level_m,
-            max_delta_m=self.cfg.floor.portal_max_delta_m,
-            min_cells=self.cfg.floor.portal_min_cells,
-        )
-        self.stats["portals_seen"] = max(self.stats.get("portals_seen", 0), len(portals))
-        if not portals:
-            return False
-
-        agent_xy = frame.camera_position[list(PLANE)]
-        # Prefer a storey we have NOT searched, then the nearest. Nearest-only
-        # let the agent bounce back onto a floor it had already given up on --
-        # 4-5 transitions in some episodes, paying the travel cost each time.
-        levels = self.floors.levels
-
-        def unvisited(p):
-            return not any(
-                abs(h - p.target_y) <= self.cfg.floor.level_tol_m for h in levels.values()
-            )
-
-        portals.sort(key=lambda p: (not unvisited(p),
-                                    float(np.linalg.norm(p.centroid_xy - agent_xy))))
-        target = portals[0]
-        if self._reachable_fn is not None and not self._reachable_fn(
-            target.centroid_xy, target.target_y
-        ):
-            return False
-
-        self._goal_xy = target.centroid_xy.copy()
-        self._goal_floor_y_cache = target.target_y
-        self._current_frontier = None
-        self._current_path = None
-        self.state = State.GOTO_FRONTIER
-        # Hold this goal against same-floor frontier re-selection. While the
-        # agent is on the stairs its floor id is frozen, so the costmap it sees
-        # is still the floor BELOW -- and left alone, exploration picks a
-        # frontier down there and walks the agent back down. Measured: three
-        # episodes climbed ~1.6 m and turned around exactly this way.
-        self._portal_active = True
-        self._portal_start_y = float(frame.camera_position[1])
-        self._portal_step = self.step_count
-        self._goto_deadline = self.step_count + self.cfg.floor.portal_deadline_steps
-        self._progress_ref_step = self.step_count
-        self._progress_ref_xy = agent_xy.copy()
-        self._switch_policy.note_switch(self.step_count)
-        self.stats["floor_switch_attempts"] = self.stats.get("floor_switch_attempts", 0) + 1
-        self.portal_log.append((
-            self.step_count,
-            [round(float(x), 2) for x in target.centroid_xy],
-            round(float(target.delta_y), 2),
-            target.n_cells,
-        ))
-        return True
-
     # ------------------------------------------------------------- candidates
-
-    def _goal_floor_y(self, center: np.ndarray) -> Optional[float]:
-        """Height to snap a 3D goal at, or None to keep the legacy behaviour of
-        substituting the agent's own height.
-
-        Snap at the goal's FLOOR, not at its ellipsoid centre: an object's
-        centre sits 0.3-1.0 m above the ground, and near a mezzanine edge that
-        offset is enough to snap onto the wrong storey.
-
-        No clearance offset is added. The navmesh sits at floor height, so the
-        floor height IS the right query -- and on a single floor it equals the
-        agent's own standing height, which makes this a genuine no-op there.
-        An earlier +0.1 m "clearance" was enough on its own to change the snap
-        result and perturb single-floor trajectories.
-        """
-        fcfg = self.cfg.floor
-        if not self.cfg.agent.navmesh_3d_goals:
-            return None
-        if not fcfg.enabled or not self.floors.levels:
-            return None
-        return self.floors.height_of(self.floors.floor_of_height(float(center[1])))
 
     def _check_candidates(self) -> None:
         candidates = self.object_layer.candidates(
@@ -1358,7 +1153,7 @@ class NavAgent:
             # agent can never get there, so blacklist it and keep exploring for
             # a reachable goal instead of stopping and failing the episode.
             if self._reachable_fn is not None and not self._reachable_fn(
-                obj_xy, self._goal_floor_y(obj_center)
+                obj_xy, self.floors.goal_floor_y(obj_center)
             ):
                 self.object_layer.blacklist(track.id)
                 self._candidate_id = None
@@ -1392,7 +1187,7 @@ class NavAgent:
                     self.stats["verify_reject"] = self.stats.get("verify_reject", 0) + 1
                     return
             self._log_goal_commit(track)
-            self._start_approach(obj_xy, floor_y=self._goal_floor_y(obj_center))
+            self._start_approach(obj_xy, floor_y=self.floors.goal_floor_y(obj_center))
             return
 
         # Always pre-position at a viewpoint from which the object is visible
@@ -1873,7 +1668,7 @@ class NavAgent:
             # the floor BELOW it. The agent then walked to a point under the
             # mezzanine, arrived, never gained height, and the pursuit was
             # abandoned as "no vertical progress" (26 of 35 endings on full v1).
-            cross_floor_goal = self._portal_active or self.state != State.GOTO_FRONTIER
+            cross_floor_goal = self.floors.pursuing or self.state != State.GOTO_FRONTIER
             action = self._nav_fn(goal, self._goal_floor_y_cache if cross_floor_goal else None)
             if action is None and self.state == State.GOTO_FRONTIER:
                 self._retire_pursued_frontier(frame, goal)

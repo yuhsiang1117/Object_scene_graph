@@ -389,12 +389,12 @@ def test_portal_goal_keeps_its_target_floor_height():
     agent.state = State.GOTO_FRONTIER
     agent._goal_xy = np.array([2.0, 0.0])
     agent._goal_floor_y_cache = 2.8
-    agent._portal_active = False
+    agent.floors.pursuing = False
     agent._follow_path(_frame((0.0, 0.0)))
     assert calls[-1] is None, "a same-floor frontier goal must not carry a height"
 
     # The same state, but pursuing a portal one storey up.
-    agent._portal_active = True
+    agent.floors.pursuing = True
     agent._follow_path(_frame((0.0, 0.0)))
     assert calls[-1] == 2.8, "portal pursuit lost its target floor height"
 

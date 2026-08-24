@@ -7,6 +7,8 @@ Two defects these pin, both from sharing one Costmap2D across storeys:
 2. Room ids stabilize by 2D overlap, so a room directly above another inherits
    its id (and its cached LLM label).
 """
+import types
+
 import numpy as np
 import pytest
 
@@ -186,3 +188,74 @@ def _fake_frame(cam):
         T_wc=T,
         intrinsics=CameraIntrinsics.from_hfov(79.0, 4, 4),
     )
+
+
+# --------------------------------------------------------------- FloorPolicy
+#
+# The multi-floor path has no end-to-end coverage: the mounted data is
+# single-floor, so `floor.enabled=false` is the only branch a trajectory lock
+# can reach. These are the cheap insurance for the branch that cannot be run --
+# that the policy constructs, observes, and stays inert when it is switched off.
+
+
+def _policy(**floor_overrides):
+    from osg.agent.floor_policy import FloorPolicy
+    from osg.core.config import OSGConfig
+
+    cfg = OSGConfig()
+    for key, value in floor_overrides.items():
+        setattr(cfg.floor, key, value)
+    return FloorPolicy(cfg, {})
+
+
+def _frame_at(y: float, step_xy=(0.0, 0.0)):
+    from osg.core.types import CameraIntrinsics
+
+    import numpy as np
+
+    from tests.unit.conftest import make_frame
+
+    T = np.eye(4)
+    T[0, 3], T[1, 3], T[2, 3] = float(step_xy[0]), float(y), float(step_xy[1])
+    k = CameraIntrinsics(fx=320.0, fy=320.0, cx=320.0, cy=240.0, width=640, height=480)
+    return make_frame(k, T)
+
+
+def test_the_policy_is_inert_when_floors_are_off():
+    """Every default reproduces single-floor behaviour, so the whole file must
+    be a no-op path -- it logs the estimate and hands back the height latched on
+    frame 1, exactly as the agent did before there were storeys."""
+    policy = _policy()
+    first = policy.observe(_frame_at(1.5), step=1)
+    later = policy.observe(_frame_at(1.9), step=2)  # a step up, but off
+    assert first == later, "estimate_only must not move the obstacle band"
+    assert policy.pursuing is False
+    assert policy.switch_policy is None, "no cross-floor policy unless asked for"
+    assert len(policy.floor_log) == 1
+
+
+def test_a_live_floor_estimate_feeds_the_costmap_band():
+    policy = _policy(enabled=True, estimate_only=False, per_floor_costmap=True)
+    ground = policy.observe(_frame_at(1.5), step=1)
+    assert ground == pytest.approx(1.5 - 0.88, abs=1e-6)
+    # A storey up, held long enough to commit, opens its own grid.
+    for step in range(2, 40):
+        policy.observe(_frame_at(4.6), step=step)
+    assert len(policy.levels) >= 2
+    assert policy.floor_y_drift > 1.0, "the band moved, which is the point"
+
+
+def test_a_switch_is_a_decision_the_caller_applies():
+    """try_switch returns a PortalGoal or None and never touches FSM state --
+    the policy decides which storey, the agent decides to move."""
+    policy = _policy(enabled=True, estimate_only=False, per_floor_costmap=True,
+                     cross_floor=True)
+    assert policy.switch_policy is not None
+    policy.observe(_frame_at(1.5), step=1)
+    # Nothing mapped, no portals: the honest answer is "stay".
+    assert policy.try_switch(
+        _frame_at(1.5), step=300, best_path_cost=99.0,
+        scene_graph=types.SimpleNamespace(objects=[], rooms={}),
+        target="chair", reachable_fn=None,
+    ) is None
+    assert policy.pursuing is False
