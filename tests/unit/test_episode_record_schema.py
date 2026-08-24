@@ -18,7 +18,6 @@ from __future__ import annotations
 import ast
 import inspect
 import types
-from pathlib import Path
 
 # From a real 96-episode campaign run. Sorted, so a diff reads alphabetically.
 EXPECTED_KEYS = {
@@ -52,11 +51,18 @@ CONTRIBUTED_BY_HELPERS = {
 
 
 def _record_module():
-    """Wherever the record is assembled today. `runner.py` now; `record.py`
-    after the split -- found by the symbol, not by the filename."""
-    from osg.eval import runner
+    """Wherever the record is assembled -- found by the symbol, not by a
+    filename, so this survives the assembly moving again."""
+    import importlib
+    import pkgutil
 
-    return runner
+    import osg.eval
+
+    for info in pkgutil.iter_modules(osg.eval.__path__):
+        module = importlib.import_module(f"osg.eval.{info.name}")
+        if hasattr(module, "build_episode_record"):
+            return module
+    raise AssertionError("no module in osg.eval defines build_episode_record")
 
 
 def _literal_keys() -> set:
@@ -83,15 +89,16 @@ def _helper_keys() -> set:
     """The `**` blocks, actually called. Each takes stub inputs happily: the
     point is the key set, not the values."""
     from osg.eval.floors import episode_floor_fields
-    from osg.eval.runner import _GroundTruthVisibility, _stair_track_fields, _target_track_fields
+    from osg.eval.instruments import GroundTruthVisibility
+    from osg.eval.record import stair_track_fields, target_track_fields
     from osg.objects.object_layer import ObjectLayer
 
     agent = types.SimpleNamespace(object_layer=ObjectLayer())
     return (
-        set(_target_track_fields(agent))
+        set(target_track_fields(agent))
         | set(episode_floor_fields(types.SimpleNamespace(), [0.0]))
-        | set(_stair_track_fields(agent))
-        | set(_GroundTruthVisibility(None).fields())
+        | set(stair_track_fields(agent))
+        | set(GroundTruthVisibility(None).fields())
     )
 
 
@@ -123,14 +130,15 @@ def test_every_spliced_value_survives_json_dumps():
     import types
 
     from osg.eval.floors import episode_floor_fields
-    from osg.eval.runner import _GroundTruthVisibility, _stair_track_fields, _target_track_fields
+    from osg.eval.instruments import GroundTruthVisibility
+    from osg.eval.record import stair_track_fields, target_track_fields
     from osg.objects.object_layer import ObjectLayer
 
     agent = types.SimpleNamespace(object_layer=ObjectLayer())
     for block in (
-        _target_track_fields(agent),
+        target_track_fields(agent),
         episode_floor_fields(types.SimpleNamespace(), [0.0]),
-        _stair_track_fields(agent),
-        _GroundTruthVisibility(None).fields(),
+        stair_track_fields(agent),
+        GroundTruthVisibility(None).fields(),
     ):
         json.dumps(block)

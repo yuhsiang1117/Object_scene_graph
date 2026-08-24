@@ -1,6 +1,6 @@
 """Definitive localization-vs-navigation split for ObjectNav approach failures.
 
-Requires a run produced with track-center logging (runner._target_track_fields:
+Requires a run produced with track-center logging (record.target_track_fields:
 target_obj_xy, cand_best_cam_xy, cand_best_score). For every episode that
 committed to a target (reached APPROACH), computes against GT goal geometry:
 

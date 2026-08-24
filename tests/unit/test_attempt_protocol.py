@@ -11,7 +11,7 @@ from types import SimpleNamespace
 import numpy as np
 import pytest
 
-from osg.eval.runner import _rearm_agent
+from osg.eval.attempts import rearm_after_failed_attempt
 from osg.objects.association import ObjectTrack
 from osg.objects.ellipsoid import Ellipsoid
 from osg.objects.object_layer import ObjectLayer
@@ -53,7 +53,7 @@ def test_a_failed_attempt_puts_the_candidate_under_the_bar_but_leaves_it_in_the_
     the positive clamp. Both must end below `min_presence` or the next attempt
     simply repeats the candidate that just failed."""
     agent, track = _agent(log_odds)
-    _rearm_agent(agent, _cfg(), steps=71)
+    rearm_after_failed_attempt(agent, _cfg())
     assert track.blacklisted is False, "a failed attempt is not a permanent verdict"
     assert track.presence.p < MIN_PRESENCE
     assert agent.object_layer.get(1) is track
@@ -68,7 +68,7 @@ def test_one_later_detection_brings_the_candidate_back():
     429 steps unspent, unable to stop, because the only track that could have
     been the answer had been struck off."""
     agent, track = _agent(1.5)
-    _rearm_agent(agent, _cfg(), steps=71)
+    rearm_after_failed_attempt(agent, _cfg())
     assert track.presence.p < MIN_PRESENCE
 
     agent.object_layer.presence_filter.apply_reading(track, True, 0.6, 0.05)
@@ -79,7 +79,7 @@ def test_without_a_presence_filter_the_blacklist_is_still_the_fallback():
     """The C1-off ablation has no belief to lower, and something still has to
     stop the next attempt repeating this candidate."""
     agent, track = _agent(1.5, with_filter=False)
-    _rearm_agent(agent, _cfg(), steps=71)
+    rearm_after_failed_attempt(agent, _cfg())
     assert track.blacklisted is True
 
 
@@ -89,7 +89,7 @@ def test_a_failed_attempt_also_counts_as_identity_evidence():
     every look that disproves it as the target re-detects it as an object and
     restores the belief the clamp just lowered."""
     agent, track = _agent(3.0)
-    _rearm_agent(agent, _cfg(), steps=71)
+    rearm_after_failed_attempt(agent, _cfg())
     assert track.identity_rejections == 1
 
     # A detection undoes the belief step, exactly as it should ...

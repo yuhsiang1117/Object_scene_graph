@@ -1,22 +1,18 @@
-"""Episode loop: builds the agent stack from config, runs HM3D ObjectNav
-episodes, writes per-episode jsonl + aggregate summary + timing + trajectory
-visualizations.
+"""The run: build the stack once, drive every episode, summarise.
+
+This file is deliberately thin. Everything it calls is a module named after what
+it does -- what the run is MADE of is `pipeline/components.py`, what one episode
+DOES is `episode.py`, what gets written down is `record.py` -- so the shape of a
+run is legible here in one screen and no mechanism has to be understood to read
+it.
 """
 from __future__ import annotations
 
-import hashlib
 import json
-import math
-import re
-import time
 from pathlib import Path
-from typing import Any, Dict, Optional, Sequence
-
-import numpy as np
 
 from ..agent.nav_agent import NavAgent
 from ..core.profiler import Profiler
-from ..mapping.costmap import HEIGHT_AXIS, PLANE
 from ..pipeline.components import (
     build_detector,
     build_env,
@@ -24,454 +20,16 @@ from ..pipeline.components import (
     build_verifier,
     unload_ollama_models,
 )
-from .floors import episode_floor_fields
-from .metrics import aggregate, per_category, per_floor_class, dynamic_summary
-from .visualize import overlay_segmentation, render_costmap_bgr, save_topdown
-
-
-class _DebugVideo:
-    """Per-episode debug video: each frame is [live RGB + YOLOE segmentation
-    overlay | top-down costmap] at every step. The detector is re-run here for
-    visualization only (it does not feed the object layer), so pipeline
-    behaviour / SR is unchanged. Enabled by eval.debug_frames."""
-
-    def __init__(self, cfg, out_dir: Path, tag: str) -> None:
-        import cv2
-
-        from ..mapping.costmap import PLANE as _PLANE
-
-        self._cv2 = cv2
-        self._plane = list(_PLANE)
-        self._cm_w = 480
-        self._h = cfg.eval.rgb_height
-        self._w = cfg.eval.rgb_width + self._cm_w
-        self._traj: list = []
-        path = out_dir / "viz" / "debug" / f"{tag}.mp4"
-        path.parent.mkdir(parents=True, exist_ok=True)
-        self._vw = cv2.VideoWriter(str(path), cv2.VideoWriter_fourcc(*"mp4v"), 8, (self._w, self._h))
-
-    def write(self, frame, agent, target: str, detector) -> None:
-        cv2 = self._cv2
-        agent_xy = frame.camera_position[self._plane]
-        self._traj.append(agent_xy)
-        dets = detector.detect(frame.rgb)  # viz-only; does not update object layer
-        seg = overlay_segmentation(frame.rgb, dets, target)
-        seg = cv2.resize(seg, (self._w - self._cm_w, self._h))
-        cm = render_costmap_bgr(
-            agent.costmap, agent_xy, self._traj,
-            path_xy=getattr(agent, "_current_path", None),
-            chosen_frontier=getattr(agent, "_current_frontier", None),
-            out_h=self._h,
-        )
-        cm = cv2.resize(cm, (self._cm_w, self._h))
-        panel = cv2.hconcat([seg, cm])
-        cv2.putText(panel, f"{target}  step {len(self._traj)}", (8, 20),
-                    cv2.FONT_HERSHEY_SIMPLEX, 0.55, (255, 255, 255), 2, cv2.LINE_AA)
-        self._vw.write(panel)
-
-    def close(self) -> None:
-        self._vw.release()
-
-
-def _target_track_fields(agent) -> dict:
-    """Snapshot the committed target track for GT-localization analysis.
-
-    _target_obj_xy is set (in _start_approach) only once a candidate is
-    accepted into APPROACH, so it is None for episodes that never committed to
-    a target (pure exploration failures) -- recorded as None there."""
-    obj_xy = getattr(agent, "_target_obj_xy", None)
-    cand_id = getattr(agent, "_candidate_id", None)
-    track = agent.object_layer.get(cand_id) if cand_id is not None else None
-    best_cam = getattr(track, "best_cam_xy", None) if track is not None else None
-    return {
-        "target_obj_xy": [float(x) for x in obj_xy] if obj_xy is not None else None,
-        "cand_best_cam_xy": [float(x) for x in best_cam] if best_cam is not None else None,
-        "cand_best_score": float(track.best_score) if track is not None else None,
-        "cand_n_obs": int(track.n_obs) if track is not None else None,
-    }
-
-
-class _GroundTruthVisibility:
-    """Did the agent ever LOOK at where the object actually is?
-
-    The dominant failure of the dynamic benchmark is that 57 of 96 episodes
-    never perceive the object at its new pose, and 48 of them still hold it at
-    the old one. That has two entirely different causes with two entirely
-    different fixes -- the agent never pointed a camera at the new location, or
-    it did and the detection fell under the gate -- and nothing in episodes.jsonl
-    separates them. Everything downstream of that split has been guessed at
-    twice now.
-
-    So: project the authored target position into every frame, reject it if it
-    is outside the image or behind the camera, and reject it again if the depth
-    buffer says something solid is in front of it. What survives is "the object
-    was in view, unoccluded, at this range".
-
-    This is GROUND TRUTH and lives in the runner. The agent is never given it,
-    never sees these fields, and nothing here writes to the agent.
-    """
-
-    # The projected point is the object's CENTRE; depth returns its front face,
-    # which for a cracker box is ~7 cm nearer. Anything closer than this is a
-    # different surface in the way.
-    OCCLUSION_TOL_M = 0.25
-
-    def __init__(self, target_xyz: Optional[Sequence[float]]) -> None:
-        self.target = None if target_xyz is None else np.asarray(target_xyz, dtype=float)
-        self.frames = 0
-        self.in_view = 0
-        self.min_range_m = float("inf")
-        self.close_frames = 0  # in view within 3 m, where detection is plausible
-        self.kf_in_view = 0
-        self.kf_detected = 0
-        self.best_offaxis = float("inf")
-        self.best_det_score = 0.0
-        self.visible_fraction_sum = 0.0
-        self.by_framing = {k: [0, 0] for k in
-                           ("close_centred", "close_peripheral",
-                            "far_centred", "far_peripheral")}
-
-    def observe(self, frame) -> None:
-        if self.target is None:
-            return
-        self.frames += 1
-        seen = self._project(frame)
-        if seen is None:
-            return
-        z = seen[2]
-        self.in_view += 1
-        self.min_range_m = min(self.min_range_m, z)
-        if z <= 3.0:
-            self.close_frames += 1
-
-    # -------------------------------------------------------- keyframe half
-    #
-    # The step-by-step counters above answer "did the agent look at it". They
-    # cannot answer "and did the detector see it", because detection only runs
-    # on keyframes -- so a keyframe is the correct denominator for recall, and
-    # the only place an in-situ miss can be attributed.
-    #
-    # Condition H tested the hypothesis that the 30 looked-and-missed episodes
-    # were detections sitting just under the admission gate, by lowering the
-    # gate for the four classes a 900-pose census called cheap. The population
-    # moved by one episode. The census had measured recall at AUTHORED
-    # viewpoints -- rings around the object, pointed at it -- while the agent
-    # arrives at a median 1.07 m on whatever heading the follower left it with.
-    # What is missing is the framing: an object clipped to the edge of a
-    # wide-FOV frame is indistinguishable, in the counters above, from one
-    # centred at the same range.
-
-    def observe_keyframe(self, frame, dets, target_label: str) -> None:
-        """Was the object in frame, and did the detector call it by name?"""
-        if self.target is None:
-            return
-        seen = self._project(frame)
-        if seen is None:
-            return
-        u, v, z, fraction = seen
-        self.visible_fraction_sum += fraction
-        k = frame.intrinsics
-        # 0 at the optical axis, 1 at the nearer image edge, more into a corner.
-        offaxis = math.hypot((u - k.cx) / (0.5 * k.width), (v - k.cy) / (0.5 * k.height))
-        self.kf_in_view += 1
-        self.best_offaxis = min(self.best_offaxis, offaxis)
-        want = str(target_label).lower().replace("_", " ").strip()
-        best = 0.0
-        for det in dets or []:
-            if str(det.label).lower().replace("_", " ").strip() != want:
-                continue
-            x1, y1, x2, y2 = [float(c) for c in det.bbox_xyxy]
-            if x1 - 8.0 <= u <= x2 + 8.0 and y1 - 8.0 <= v <= y2 + 8.0:
-                best = max(best, float(det.score))
-        if best > 0.0:
-            self.kf_detected += 1
-            self.best_det_score = max(self.best_det_score, best)
-        # Recall conditioned on framing, which is the thing H could not see.
-        centred = offaxis <= 0.6
-        if z <= 3.0:
-            key = "close_centred" if centred else "close_peripheral"
-        else:
-            key = "far_centred" if centred else "far_peripheral"
-        self.by_framing[key][0] += 1
-        self.by_framing[key][1] += int(best > 0.0)
-
-    # Seven points, not one: the centre and +-6 cm on each axis, which is inside
-    # a YCB object rather than around it. Testing the centre pixel alone is far
-    # too permissive -- an object nine tenths hidden behind a chair back, with
-    # only its middle showing, passes -- and an instrument that counts those as
-    # "the agent looked at it" would understate in-situ recall by exactly the
-    # frames where the detector had no chance. The probe this is compared
-    # against requires a real pixel count and then keeps the ten best views, so
-    # the comparison is only honest if this end is not counting slivers.
-    PROBE_OFFSETS_M = 0.06
-    MIN_VISIBLE_FRACTION = 0.5
-
-    def _project(self, frame):
-        """(u, v, z, visible fraction) at the object's centre, or None."""
-        k = frame.intrinsics
-        r = self.PROBE_OFFSETS_M
-        samples = [self.target]
-        for axis in range(3):
-            for sign in (-1.0, 1.0):
-                q = self.target.copy()
-                q[axis] += sign * r
-                samples.append(q)
-        centre = None
-        visible = 0
-        for i, point in enumerate(samples):
-            p_c = frame.T_cw[:3, :3] @ point + frame.T_cw[:3, 3]
-            z = float(p_c[2])
-            if z <= 1e-3:
-                continue
-            u = k.fx * p_c[0] / z + k.cx
-            v = k.fy * p_c[1] / z + k.cy
-            if not (0 <= u < k.width and 0 <= v < k.height):
-                continue
-            d = float(frame.depth[int(v), int(u)])
-            if d > 1e-3 and d < z - self.OCCLUSION_TOL_M:
-                continue
-            visible += 1
-            if i == 0:
-                centre = (u, v, z)
-        if centre is None:
-            return None
-        fraction = visible / len(samples)
-        if fraction < self.MIN_VISIBLE_FRACTION:
-            return None
-        return centre[0], centre[1], centre[2], fraction
-
-    def fields(self) -> Dict[str, Any]:
-        out = {
-            "gt_frames": self.frames,
-            "gt_in_view_frames": self.in_view,
-            "gt_in_view_close_frames": self.close_frames,
-            "gt_min_range_m": (round(self.min_range_m, 3)
-                               if self.min_range_m < float("inf") else None),
-            "gt_kf_in_view": self.kf_in_view,
-            "gt_kf_detected": self.kf_detected,
-            "gt_best_offaxis": (round(self.best_offaxis, 3)
-                                if self.best_offaxis < float("inf") else None),
-            "gt_best_det_score": round(self.best_det_score, 3),
-            "gt_mean_visible_fraction": (round(self.visible_fraction_sum / self.kf_in_view, 3)
-                                         if self.kf_in_view else None),
-        }
-        for key, (n, hit) in self.by_framing.items():
-            out[f"gt_kf_{key}"] = n
-            out[f"gt_kf_{key}_detected"] = hit
-        return out
-
-
-def _attempt_succeeded(env, frame, cfg) -> bool:
-    """Would STOPping here score? Asked without ending the episode.
-
-    Habitat scores success only when STOP is passed to the task, and that also
-    terminates the episode -- so a multi-attempt protocol has to evaluate the
-    same criterion itself: geodesic distance from the agent to the nearest goal
-    view point, under the same success_distance.
-    """
-    try:
-        episode = env.current_episode
-        sim = env.env.sim
-        pos = sim.get_agent_state().position
-        best = float("inf")
-        for goal in getattr(episode, "goals", []) or []:
-            for vp in getattr(goal, "view_points", []) or []:
-                import habitat_sim
-
-                path = habitat_sim.ShortestPath()
-                path.requested_start = np.asarray(pos, dtype=np.float32)
-                path.requested_end = np.asarray(vp.agent_state.position, dtype=np.float32)
-                if sim.pathfinder.find_path(path):
-                    best = min(best, float(path.geodesic_distance))
-        return best <= float(cfg.agent.success_distance)
-    except Exception:  # never let scoring bookkeeping end a run
-        return False
-
-
-def _rearm_agent(agent, cfg, steps: int) -> None:
-    """Give the agent another attempt without giving it a new map.
-
-    Everything learned survives -- presence beliefs, searched surfaces, objects
-    mapped along the way -- because that carry-over is the whole point of
-    retrying. Only the navigation state is reset.
-
-    The candidate just rejected has its belief driven below `min_presence`
-    rather than being blacklisted. Blacklisting is permanent and C1's premise is
-    that no state is absorbing; this is the same mistake the absence path and
-    the map loader each had to have removed, and it bites hardest exactly when
-    the map is RIGHT. Measured over 42 episodes: five episodes committed once to
-    a track 0.00-0.39 m from the true object, failed the attempt, struck the
-    track off, and then had no way to stop -- three cracker box episodes finished
-    0.67-0.95 m from the goal with 429 steps unspent, and a soup can episode
-    ended 10.95 m away with 475 unspent.
-
-    One VLM-strength negative reading takes a belief reloaded at 0.82 to 0.36,
-    under the 0.45 bar. A track first detected in THIS episode sits at the +3.0
-    positive clamp, where the same reading lands at 0.75 and the next attempt
-    would simply repeat it, so the belief is additionally held just under the
-    bar -- that much is the attempt protocol's requirement rather than an
-    inference, and it is written as a clamp so it reads as one. What matters is
-    that it stays a belief: one later detection is worth +2.5 and puts the track
-    back above the bar, which is the whole difference from a blacklist.
-    """
-    import math
-
-    track = (
-        agent.object_layer.get(agent._candidate_id)
-        if agent._candidate_id is not None else None
-    )
-    presence = getattr(agent.object_layer, "presence_filter", None)
-    if track is not None and presence is not None:
-        vc = cfg.verification
-        presence.apply_reading(
-            track, False,
-            float(vc.vlm_recall),
-            float(vc.vlm_q),
-        )
-        bar = float(cfg.scene_graph.presence.min_presence)
-        bar = min(max(bar, 1e-3), 1.0 - 1e-3)
-        # One detector-strength step below the bar: far enough that this attempt
-        # is over, near enough that one sighting undoes it.
-        under_the_bar = math.log(bar / (1.0 - bar)) - 0.87
-        track.presence.log_odds = min(float(track.presence.log_odds), under_the_bar)
-    elif track is not None:
-        # No presence filter running (the C1-off ablation): without a belief to
-        # lower there is nothing else that stops the next attempt repeating this
-        # candidate, so the blacklist stays as the fallback.
-        agent.object_layer.blacklist(track.id)
-    if track is not None:
-        # An attempt that ended without scoring is also evidence about IDENTITY,
-        # and that is the half the belief cannot hold: a false positive is an
-        # object that is really there, so the next keyframe re-detects it and
-        # restores the belief the clamp just lowered.
-        track.identity_rejections += 1
-    agent.rearm(cfg.agent.max_steps)
-
-
-def authored_scene(episode) -> str:
-    return str(_authored_episode_metadata(episode).get("scene", "scene"))
-
-
-def _map_path(root: str, scene: str) -> Path:
-    return Path(str(root)) / f"{_safe_tag(scene)}.json"
-
-
-def _save_map(cfg, agent, episode) -> None:
-    """Pass 1: keep the map this episode built, keyed by scene."""
-    root = str(cfg.ycb.map_out or "")
-    if not root:
-        return
-    from ..graph.map_store import save_map
-
-    authored = _authored_episode_metadata(episode)
-    save_map(
-        _map_path(root, authored_scene(episode)),
-        agent,
-        scene=authored_scene(episode),
-        layout_id=str(authored.get("layout_id", "")),
-    )
-
-
-def _load_prior_map(cfg, agent, scene: str) -> Optional[dict]:
-    """Pass 2: start from the map pass 1 built, not from an empty one."""
-    root = str(cfg.ycb.map_in or "")
-    if not root:
-        return None
-    from ..graph.map_store import apply_map, load_map
-
-    path = _map_path(root, scene)
-    blob = load_map(path)
-    n = apply_map(
-        agent, blob,
-        max_log_odds=float(cfg.scene_graph.presence.reload_max_log_odds),
-    )
-    return {
-        "path": str(path),
-        "from_layout": str(blob.get("layout_id", "")),
-        "tracks": int(n),
-    }
-
-
-def _authored_episode_metadata(episode) -> dict:
-    info = getattr(episode, "info", None) or {}
-    if not isinstance(info, dict):
-        return {}
-    authored = info.get("ycb", {})
-    return dict(authored) if isinstance(authored, dict) else {}
-
-
-def _safe_tag(value: object) -> str:
-    return re.sub(r"[^A-Za-z0-9_.-]+", "-", str(value)).strip("-_")
-
-
-def episode_tag(episode) -> str:
-    """Filesystem-safe, UNIQUE per-episode tag: `<scene>_ep<id>`.
-
-    `episode_id` alone is not unique -- HM3D numbers episodes per scene, so a
-    run spanning scenes collides. Measured on a 100-episode v1 run: 50 episodes
-    yielded only 40 distinct ids, silently overwriting 10 debug videos, top-down
-    maps and keyframe directories (last scene wins). Every per-episode artifact
-    path must include the scene.
-    """
-    authored = _authored_episode_metadata(episode)
-    if authored:
-        scene = _safe_tag(authored.get("scene", "scene"))
-        layout = _safe_tag(authored.get("layout_id", "layout"))
-        return f"{scene}_{layout}_ep{_safe_tag(episode.episode_id)}"
-    scene = str(getattr(episode, "scene_id", "")).split("/")[-1].split(".")[0]
-    return f"{scene}_ep{episode.episode_id}" if scene else f"ep{episode.episode_id}"
-
-
-def _detector_identity(cfg) -> dict:
-    weights = Path(str(cfg.detector.weights))
-    digest = None
-    if weights.is_file():
-        sha256 = hashlib.sha256()
-        with weights.open("rb") as stream:
-            for chunk in iter(lambda: stream.read(1024 * 1024), b""):
-                sha256.update(chunk)
-        digest = sha256.hexdigest()
-    return {
-        "name": str(cfg.detector.name),
-        "weights": str(cfg.detector.weights),
-        "weights_sha256": digest,
-        "imgsz": int(cfg.detector.imgsz),
-        "conf": float(cfg.detector.conf),
-        "half": bool(cfg.detector.half),
-        "device": str(cfg.detector.device),
-    }
-
-
-STAIR_LABELS = ("stairs", "staircase", "stair")
-
-
-def _stair_track_fields(agent) -> dict:
-    """Snapshot the mapped `stairs` tracks.
-
-    `"stairs"` is already in DEFAULT_VOCABULARY (core/config.py), so YOLOE has
-    always been detecting staircases into the object layer -- but nothing has
-    ever consumed or measured them. Stage 4 of the multi-floor plan
-    (docs/MULTI_FLOOR.md) assumes these tracks exist and are usable; this logs
-    the evidence to confirm or falsify that BEFORE the stair-detection work is
-    built on top of it. Cheap: a filter over tracks the layer already holds.
-    """
-    tracks = [
-        t for t in agent.object_layer.tracks(include_blacklisted=True)
-        if str(t.label).lower().replace("_", " ") in STAIR_LABELS
-    ]
-    return {
-        "n_stair_tracks": len(tracks),
-        "stair_tracks": [
-            {
-                "center": [round(float(x), 3) for x in agent.object_layer.center_of(t)],
-                "n_obs": int(t.n_obs),
-                "evidence": round(float(t.evidence), 3),
-                "best_score": round(float(t.best_score), 3),
-                "best_bbox_px": round(float(t.best_bbox_px), 1),
-            }
-            for t in tracks[:20]
-        ],
-    }
+from .debug_video import DebugVideo
+from .episode import run_episode
+from .metrics import aggregate, dynamic_summary, per_category, per_floor_class
+from .prior_map import save_map_for_scene
+from .record import (
+    build_episode_record,
+    detector_identity,
+    episode_tag,
+)
+from .visualize import save_topdown
 
 
 def run_eval(cfg) -> dict:
@@ -479,12 +37,11 @@ def run_eval(cfg) -> dict:
     out_dir.mkdir(parents=True, exist_ok=True)
 
     unload_ollama_models(cfg)
-    eval_mode = str(cfg.eval.mode)
     env = build_env(cfg)
     detector = build_detector(cfg)
-    detector_identity = _detector_identity(cfg)
     scorer = build_scorer(cfg)
     verifier = build_verifier(cfg)
+    identity = detector_identity(cfg)
     if verifier is not None and cfg.eval.debug_frames:
         verifier.debug_dir = str(out_dir / "verify_debug")
 
@@ -492,7 +49,7 @@ def run_eval(cfg) -> dict:
     n_run = n_total if cfg.eval.num_episodes < 0 else min(cfg.eval.num_episodes, n_total)
     wanted = set(cfg.eval.episode_ids) if cfg.eval.episode_ids else None
 
-    results = []
+    results: list = []
     episodes_file = out_dir / "episodes.jsonl"
     profiler_all = Profiler()
 
@@ -506,208 +63,81 @@ def run_eval(cfg) -> dict:
         if verifier is not None:
             verifier.debug_tag = ep_tag
 
-        # scorer/verifier are built once and shared across every episode in
-        # this run, so their call/error counters are cumulative — snapshot
-        # before and report deltas below, or every episode after the first
-        # would show the whole run's running total instead of its own.
-        llm_calls_before, llm_errors_before = scorer.n_calls, scorer.n_errors
-        llm_last_error_before = scorer.last_error
-        verify_calls_before = verifier.n_calls if verifier is not None else 0
-        verify_errors_before = verifier.n_errors if verifier is not None else 0
-
-        # frontier.id/room.id both restart from 0/1 each episode (fresh
-        # FrontierExtractor/RoomSegmenter per NavAgent below), but the
-        # scorer's internal caches are keyed by those same small ints and
-        # persist across the whole run -- without this, a new episode can
-        # silently inherit a stale score/room-label from a previous,
-        # unrelated scene the moment an id collides.
+        # The scorer and verifier are built once and shared, so their counters
+        # are cumulative; the record reports deltas against these.
+        scorer_before = (scorer.n_calls, scorer.n_errors, scorer.last_error)
+        verifier_before = (
+            (verifier.n_calls, verifier.n_errors) if verifier is not None else (0, 0)
+        )
+        # frontier.id/room.id restart from 0/1 each episode (a fresh extractor
+        # and segmenter per NavAgent), but the scorer's caches are keyed by
+        # those same small ints and persist across the run -- without this, a
+        # new episode can inherit a stale score from an unrelated scene the
+        # moment an id collides.
         scorer.reset()
 
         profiler = Profiler()
         agent = NavAgent(
             cfg, detector, scorer, verifier, target,
-            keyframe_dir=str(out_dir / "keyframes" / ep_tag)
-            if cfg.eval.save_viz else None,
+            keyframe_dir=str(out_dir / "keyframes" / ep_tag) if cfg.eval.save_viz else None,
             profiler=profiler,
             nav_fn=env.action_to_goal if cfg.agent.use_habitat_navmesh else None,
             reachable_fn=env.is_reachable if cfg.agent.use_habitat_navmesh else None,
         )
-        map_note = _load_prior_map(cfg, agent, authored_scene(episode))
-        trajectory = [frame.camera_position[list(PLANE)]]
-        # Height is tracked alongside the 2D trajectory (rather than making
-        # `trajectory` 3D) so the analyze_*.py tools keep working unchanged,
-        # while episodes.jsonl finally records which floor the agent was on.
-        # Camera height is subtracted so these are FLOOR heights, directly
-        # comparable to episode.start_position and the goal view points.
-        cam_h = float(cfg.agent.camera_height)
-        trajectory_y = [float(frame.camera_position[HEIGHT_AXIS]) - cam_h]
-        dbg = _DebugVideo(cfg, out_dir, ep_tag) if cfg.eval.debug_frames else None
-        t0 = time.time()
-        steps = 0
-        # DualMap gives a query several navigation attempts: when one fails it
-        # updates the map and goes again. Scoring a single attempt is a STRICTER
-        # protocol than the system we are comparing against, so match theirs.
-        # An attempt ends when the agent decides to STOP; if that decision does
-        # not score, the map keeps everything it learned (beliefs, searched
-        # surfaces, new objects) and the agent is re-armed for another go.
-        attempts_allowed = max(1, int(cfg.eval.attempts))
-        attempts_used, attempt_log = 1, []
-        gt_view = _GroundTruthVisibility(
-            _authored_episode_metadata(episode).get("target_position"))
-        # Read-only: the agent hands over what it saw, and is given nothing.
-        agent.on_keyframe_detections = (
-            lambda f, dets: gt_view.observe_keyframe(f, dets, target))
-        while not env.episode_over:
-            gt_view.observe(frame)
-            action = agent.act(frame)  # updates agent.costmap from `frame`
-            if action == "stop" and attempts_used < attempts_allowed:
-                scored = _attempt_succeeded(env, frame, cfg)
-                attempt_log.append(
-                    {"attempt": attempts_used, "step": steps, "success": bool(scored)}
-                )
-                if not scored:
-                    # Not here after all. Keep the map, drop the thing it stopped
-                    # on, and let it choose again -- this is the loop DualMap runs
-                    # and the one our search posterior was built for.
-                    attempts_used += 1
-                    _rearm_agent(agent, cfg, steps)
-                    continue
-            if dbg is not None:
-                dbg.write(frame, agent, target, detector)
-            frame = env.step(action)
-            trajectory.append(frame.camera_position[list(PLANE)])
-            trajectory_y.append(float(frame.camera_position[HEIGHT_AXIS]) - cam_h)
-            steps += 1
-        if dbg is not None:
-            dbg.close()
+        debug = DebugVideo(cfg, out_dir, ep_tag) if cfg.eval.debug_frames else None
+        outcome = run_episode(cfg, env, agent, episode, target, frame, detector, debug)
+        if debug is not None:
+            debug.close()
 
-        _save_map(cfg, agent, episode)
-        m = env.metrics()
-        authored = _authored_episode_metadata(episode)
-        # The env knows things the episode record cannot: whether a relocation
-        # fired, when, and whether the agent was looking at the time.
-        if hasattr(env, "episode_metadata"):
-            live = env.episode_metadata()
-            if isinstance(live, dict):
-                authored = {**authored, **live}
-        reloc = authored.get("relocation")
-        if isinstance(reloc, dict) and reloc.get("step") is None and map_note is not None:
-            # Two-pass protocol: the objects moved between the mapping run and
-            # this one, so the map is stale from step 0. Recording it this way
-            # lets belief latency read "how long until the map noticed" with no
-            # special case -- the clock simply starts at the episode start.
-            reloc["step"] = 0
-            reloc["offline"] = True
-        rec = {
-            "episode_id": str(episode.episode_id),
-            "scene": authored.get("scene", str(episode.scene_id).split("/")[-1]),
-            "target": target,
-            "detector": detector_identity,
-            "authored_layout": authored or None,
-            "success": float(m.get("success", 0.0)),
-            "spl": float(m.get("spl", 0.0)),
-            "distance_to_goal": float(m.get("distance_to_goal", -1.0)),
-            "steps": steps,
-            "wall_time_s": round(time.time() - t0, 1),
-            "control_fps": round(profiler.fps("control_loop"), 2),
-            "llm_calls": scorer.n_calls - llm_calls_before,
-            "llm_errors": scorer.n_errors - llm_errors_before,
-            "llm_last_error": scorer.last_error if scorer.last_error != llm_last_error_before else None,
-            "agent_stats": agent.stats,
-            # Phase 2 dynamic-scene evidence: when beliefs flipped, what the
-            # agent believed when it committed to a goal, and what it still
-            # believed about the target at the end.
-            "prior_map": map_note,
-            "attempts_used": attempts_used,
-            "attempt_log": attempt_log,
-            "presence_events": agent.presence_events,
-            "search_log_events": agent.search_log_events,
-            "goal_commit_log": agent.goal_commit_log,
-            "target_tracks": [
-                {
-                    "track_id": int(t.id),
-                    "label": str(t.label),
-                    "center": [float(v) for v in agent.object_layer.center_of(t)],
-                    "p": round(float(t.presence.p), 4),
-                    # Why a track was or was not proposable: the candidate gates
-                    # read exactly these, and without them a track that sits in
-                    # the map at the right place but never becomes a goal is
-                    # undiagnosable from the record.
-                    "n_obs": int(t.n_obs),
-                    "best_score": round(float(t.best_score), 3),
-                    "best_bbox_px": round(float(t.best_bbox_px), 1),
-                    "evidence": round(float(t.evidence), 3),
-                }
-                for t in agent.object_layer.tracks()
-                if str(t.label).lower().replace("_", " ") == str(target).lower().replace("_", " ")
-            ],
-            "state_log": agent.state_log[:40],
-            "frontier_select_log": agent.frontier_select_log,
-            "giveup_log": agent.giveup_log[:50],
-            "approach_bbox_log": agent.approach_bbox_log,
-            "approach_stop_reason": agent.approach_stop_reason,
-            "approach_diag": agent.approach_diag,
-            "final_xy": [float(x) for x in trajectory[-1]],
-            "verify_calls": (verifier.n_calls - verify_calls_before) if verifier is not None else 0,
-            "verify_errors": (verifier.n_errors - verify_errors_before) if verifier is not None else 0,
-            # GT-localization instrumentation: the mapped 3D center (x-z) of the
-            # object track the agent committed to APPROACH, plus that track's
-            # best-detection camera pose and score. d(target_obj_xy, GT goal)
-            # is the scene-graph localization error; d(final_xy, target_obj_xy)
-            # is the residual navigation error -- together they split "stopped
-            # far from goal" into mislocalized-track vs failed-nav vs false-
-            # positive detection (scripts/analyze_localization.py).
-            **_target_track_fields(agent),
-            # Floor instrumentation: which floor the goal is on relative to the
-            # start pose, and whether the agent actually changed level. Without
-            # this the single-floor / multi-floor SR split (the dominant
-            # remaining loss, docs/MULTI_FLOOR.md) is not reproducible from
-            # episodes.jsonl.
-            **episode_floor_fields(episode, trajectory_y),
-            **_stair_track_fields(agent),
-            # Ground-truth visibility (this runner only; the agent never sees
-            # it). Splits "never perceived the object at its new pose" into
-            # never-looked and looked-but-missed, which the rest of the record
-            # cannot do and which two iterations have had to guess at.
-            **gt_view.fields(),
-            # Online floor estimate (osg/mapping/floors.py). Compare
-            # n_floors_seen against the per-scene navmesh ground truth from
-            # scripts/scene_floors.py to validate the estimator before any
-            # behaviour is allowed to depend on it.
-            "floor_log": agent.floor_log,
-            "n_floors_seen": len(agent.floors.levels),
-            "floor_y_drift": round(float(agent.floor_y_drift), 4),
-            "floor_transitions": len(agent.floors.transitions),
-            "portal_log": agent.portal_log,
-        }
+        save_map_for_scene(cfg, agent, episode)
+        rec = build_episode_record(
+            cfg=cfg, episode=episode, env=env, agent=agent, outcome=outcome,
+            target=target, detector_identity=identity, metrics=env.metrics(),
+            profiler=profiler, scorer=scorer, scorer_before=scorer_before,
+            verifier=verifier, verifier_before=verifier_before,
+        )
         results.append(rec)
         with open(episodes_file, "a") as f:
             f.write(json.dumps(rec) + "\n")
         for name, samples in profiler._samples.items():
-            for s in samples:
-                profiler_all.add(name, s)
+            for sample in samples:
+                profiler_all.add(name, sample)
 
         if cfg.eval.save_viz:
             save_topdown(
                 str(out_dir / "viz" / f"{ep_tag}.png"),
                 agent.costmap,
-                trajectory,
+                outcome.trajectory,
                 scene_graph=agent.scene_graph,
                 title=f"ep {episode.episode_id} target={target} "
-                f"success={rec['success']:.0f} spl={rec['spl']:.2f}",
+                      f"success={rec['success']:.0f} spl={rec['spl']:.2f}",
             )
         print(
             f"[{ep_i + 1}/{n_run}] ep={episode.episode_id} target={target} "
-            f"success={rec['success']:.0f} spl={rec['spl']:.3f} steps={steps} "
-            f"fps={rec['control_fps']}"
+            f"success={rec['success']:.0f} spl={rec['spl']:.3f} "
+            f"steps={outcome.steps} fps={rec['control_fps']}"
         )
 
+    summary = _summarise(cfg, env, results, identity, profiler_all)
+    with open(out_dir / "summary.json", "w") as f:
+        json.dump(summary, f, indent=2)
+    profiler_all.write_csv(str(out_dir / "timing.csv"))
+    scorer.shutdown()
+    env.close()
+    print(json.dumps(summary["metrics"], indent=2))
+    return summary
+
+
+def _summarise(cfg, env, results, identity, profiler_all) -> dict:
+    """`dynamic` is the block that answers the dynamic-scene questions: how long
+    the map took to stop believing a moved object, how often the agent committed
+    to a goal it had already disproved, and how often a ghost survived."""
     summary = {
         "config": {
-            "eval_mode": eval_mode,
+            "eval_mode": str(cfg.eval.mode),
             "scorer": cfg.exploration.scorer,
             "verification": cfg.verification.enabled,
-            "detector": detector_identity,
+            "detector": identity,
             "dataset_version": cfg.eval.dataset_version,
             "split": cfg.eval.split,
             "success_distance": cfg.agent.success_distance,
@@ -722,10 +152,4 @@ def run_eval(cfg) -> dict:
     benchmark_metadata = getattr(env, "benchmark_metadata", None)
     if callable(benchmark_metadata):
         summary["benchmark"] = benchmark_metadata()
-    with open(out_dir / "summary.json", "w") as f:
-        json.dump(summary, f, indent=2)
-    profiler_all.write_csv(str(out_dir / "timing.csv"))
-    scorer.shutdown()
-    env.close()
-    print(json.dumps(summary["metrics"], indent=2))
     return summary
