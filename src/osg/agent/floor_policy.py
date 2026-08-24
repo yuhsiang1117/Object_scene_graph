@@ -22,7 +22,7 @@ plain 2D `Costmap2D` and needs no knowledge that other floors exist.
 from __future__ import annotations
 
 from dataclasses import dataclass
-from typing import List, Optional
+from typing import Optional
 
 import numpy as np
 

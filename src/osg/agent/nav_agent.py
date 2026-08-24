@@ -24,22 +24,17 @@ P0->P1 history: three distance-based strategies all stalled at dtg
 from __future__ import annotations
 
 from enum import Enum
-from typing import Optional
+from typing import List, Optional
 
 import numpy as np
 
 from ..core.profiler import Profiler
 from ..core.types import Detection, FrameData
 from ..exploration.async_scorer import AsyncScorer
-from ..exploration.search_belief import (
-    InspectionLog,
-    build_container_candidates,
-    select_candidate,
-)
-from ..exploration.selector import frontier_goal_xy, select_frontier
+from ..exploration.selector import frontier_goal_xy
+from ..exploration.strategy import ExplorationStrategy, WorldView
 from ..graph.scene_graph import SceneGraph
-from ..mapping.costmap import PLANE, Costmap2D
-from ..mapping.frontier import Frontier, FrontierExtractor
+from ..mapping.costmap import PLANE, Costmap2D, cell_status, nearest_free_xy
 from ..objects.object_layer import ObjectLayer
 from ..perception.detector import Detector
 from ..perception.keyframe import KeyframeSelector, KeyframeStore
@@ -204,16 +199,6 @@ class NavAgent:
         # Which storey the agent is on, and one costmap per storey. Inert
         # unless floor.enabled -- see agent/floor_policy.py.
         self.floors = FloorPolicy(cfg, self.stats)
-        # Drive frontier goals to the free-snapped centroid rather than an
-        # UNKNOWN cell. Only meaningful on the navmesh, where unknown space
-        # gets snapped unpredictably; the costmap planner treats unknown as
-        # traversable and is unaffected either way.
-        self._frontier_goal_free = bool(cfg.exploration.frontier_goal_free_cell)
-        self._frontier_cost_free = bool(cfg.exploration.frontier_cost_free_cell)
-        self.frontier_extractor = FrontierExtractor(
-            min_cells=cfg.exploration.frontier_min_cells,
-            dedup_m=cfg.exploration.frontier_dedup_m,
-        )
         self.object_layer = ObjectLayer(
             assoc_score_thresh=cfg.scene_graph.assoc_score_thresh,
             assoc_depth_gate_m=cfg.scene_graph.assoc_depth_gate_m,
@@ -251,7 +236,13 @@ class NavAgent:
         )
         self.controller = WaypointController(forward_m=cfg.agent.forward_m)
         self.viewpoint_planner = ViewpointPlanner(list(cfg.verification.ring_radii_m))
-        self._affinity = _make_affinity(cfg)
+        # Where to go next -- frontiers and mapped surfaces under one index.
+        # It owns everything an exploration round remembers; see
+        # exploration/strategy.py.
+        self.exploration = ExplorationStrategy(
+            cfg, self.planner, scorer, self.viewpoint_planner,
+            _make_affinity(cfg), self.stats, self.profiler,
+        )
 
         self.reset(target_category)
 
@@ -301,6 +292,23 @@ class NavAgent:
     def stair_regions(self) -> list:
         return self.floors.stair_regions
 
+    # Per-episode exploration telemetry, recorded by eval/runner.py.
+    @property
+    def search_log_events(self) -> list:
+        return self.exploration.search_log_events
+
+    @property
+    def frontier_select_log(self) -> list:
+        return self.exploration.frontier_select_log
+
+    @property
+    def giveup_log(self) -> list:
+        return self.exploration.giveup_log
+
+    @property
+    def _current_frontier(self):  # eval/runner.py's debug video draws it
+        return self.exploration.current_frontier
+
     # ------------------------------------------------------------------ reset
 
     def reset(self, target_category: str) -> None:
@@ -313,44 +321,10 @@ class NavAgent:
         self.floors.reset()
         self._kf_count = 0
         self._current_path: Optional[np.ndarray] = None
-        self._current_frontier: Optional[Frontier] = None
-        # Location-keyed blacklist: frontier ids are reassigned on every
-        # extraction, so blocking must be spatial to persist. [(xy, until)]
-        self._blocked_frontier_pts: list = []
-        # Centroid of the frontier the agent most recently gave up on: excluded
-        # from the "all frontiers blocked" fallback so the agent doesn't
-        # immediately re-pursue the dead-end it just abandoned.
-        # (xy, floor) -- floor-scoped for the same reason as the blacklist.
-        self._last_giveup_pt: Optional[tuple] = None
-        # A frontier is only genuinely "reached" if we end up within this of its
-        # goal. The controller reports None (arrived) whenever the planned path
-        # terminates within its arrival tolerance of the agent -- which also
-        # happens for a degenerate stub path when the frontier is unreachable
-        # (goal snapped to a nearby node). This threshold separates the two.
-        # How far from a frontier goal still counts as NOT having reached it.
-        #
-        # This has to be derived from the planner, not chosen: HybridVoronoi
-        # returns a path ending at a graph node within `goal_near_m` (0.7 m) of
-        # the goal -- it navigates the medial axis and deliberately stops near,
-        # not on, the goal -- and WaypointController reports arrival within
-        # `arrival_tol_m` (0.2 m) of that endpoint. A correct arrival therefore
-        # leaves the agent up to 0.9 m from the frontier goal. Against a fixed
-        # 0.5 m this was read as a degenerate stub: the frontier was blocked for
-        # 100 rounds and `_last_giveup_pt` was set, which also suppresses the
-        # all-frontiers-blocked fallback anywhere near it -- for the ordinary
-        # case of having got there. Measured over 96 dynamic episodes,
-        # `frontier_stub_block` fired 2.87 times per failing episode against
-        # 0.39 per success.
-        self._frontier_reach_m = float(
-            self.cfg.exploration.voronoi_goal_near_m
-        ) + FRONTIER_ARRIVAL_TOL_M + 0.1
         self._candidate_id: Optional[int] = None
         self._goal_xy: Optional[np.ndarray] = None
         self._last_action: Optional[str] = None
-        self._last_select_step = -100
         self._goto_deadline = 10**9
-        self._progress_ref_step = 0
-        self._progress_ref_xy = np.zeros(2)
         self._target_obj_xy: Optional[np.ndarray] = None
         self._went_to_best_cam = False
         self._center_turns = 0  # centering turns spent on the current candidate
@@ -369,24 +343,12 @@ class NavAgent:
         # committed to a goal. Belief latency and stale-goal rate are computed
         # from these two logs plus the relocation step the env records.
         self.presence_events: List[dict] = []
-        # What has already been searched, and how well (C3). A visit multiplies
-        # a surface's belief by (1 - d) rather than zeroing it, so a place
-        # glanced at from four metres stays plausible and one inspected closely
-        # mostly stops being -- the distinction an ignore list cannot make.
-        self._search_log = InspectionLog()
-        self._search_container: Optional[int] = None
-        self._surface_face_turns = 0
-        self._search_started_step = 0
         self._approach_at_viewpoint = False
         self._scan_turns_left = 0
         self._scan_expected = 0
-        # Set once the agent has been to the last known place and found nothing.
-        self.search_log_events: List[dict] = []
         self.goal_commit_log: List[dict] = []
         self._disbelieved: set = set()
         self.state_log = []
-        self.frontier_select_log: list = []
-        self.giveup_log: list = []
         # Calibration data for approach_stop_bbox_px (P1c): every bbox_px
         # observed during APPROACH, plus why the episode's approach ended.
         self.approach_bbox_log: list = []
@@ -399,6 +361,7 @@ class NavAgent:
         self._last_follow_none_reason: Optional[str] = None
         self.kf_selector.reset()
         self.controller.reset()
+        self.exploration.reset()
         self.detector.set_vocabulary(
             target_vocabulary(self.target, self.cfg.detector.vocabulary)
         )
@@ -435,7 +398,7 @@ class NavAgent:
         if self.kf_selector.is_keyframe(frame.T_wc):
             self._on_keyframe(frame)
             if self.cfg.exploration.search_posterior:
-                self._glance_at_surfaces(frame)
+                self.exploration.glance(self._world(frame))
 
         # Candidate target check happens in every state except terminal ones
         if self.state in (State.INIT, State.EXPLORE, State.GOTO_FRONTIER):
@@ -452,50 +415,28 @@ class NavAgent:
                 self.state = State.GOTO_FRONTIER  # resume the climb
             else:
                 # Look at the surface before the selection round scores it
-                # searched -- _select_new_frontier retires it on arrival, and
+                # searched -- the selection round retires it on arrival, and
                 # the belief update should rest on a frame that shows it.
-                facing = self._face_searched_surface(frame)
+                facing = self.exploration.face_surface(self._world(frame))
                 if facing is not None:
                     return facing
-                self._select_new_frontier(frame)
+                self._explore(frame)
             if self.state == State.EXPLORE:  # nothing selectable
                 return TURN_ACTION  # keep looking around; map will grow
 
         if self.state == State.GOTO_FRONTIER:
-            # Give-up net: no displacement for a while means an obstacle the
-            # map cannot see (below the obstacle band, glass, sim collision).
-            # Abandon this frontier instead of pushing against it forever.
-            agent_xy = frame.camera_position[list(PLANE)]
-            if self.step_count - self._progress_ref_step >= 15:
-                # A portal pursuit is judged on vertical progress; a switchback
-                # staircase barely moves in (x, z) while climbing fine.
-                if self.floors.pursuing and self.floors.pursuit_ok(frame, self.step_count, self._goto_deadline):
-                    self._progress_ref_step = self.step_count
-                    self._progress_ref_xy = agent_xy.copy()
-                elif np.linalg.norm(agent_xy - self._progress_ref_xy) < 0.2:
-                    self.giveup_log.append((
-                        self.step_count,
-                        [round(float(x), 2) for x in self._current_frontier.centroid_xy]
-                        if self._current_frontier is not None else None,
-                        [round(float(x), 2) for x in agent_xy],
-                    ))
-                    self._block_frontier(self._current_frontier, 100)
-                    self.stats["frontier_give_up"] = self.stats.get("frontier_give_up", 0) + 1
-                    if self._current_frontier is not None:
-                        self._last_giveup_pt = (self._current_frontier.centroid_xy.copy(),
-                                        self._current_frontier.floor)
-                    self._current_frontier = None
-                    self._current_path = None
-                    self.state = State.EXPLORE
-                    self._progress_ref_step = self.step_count
-                    self._progress_ref_xy = agent_xy.copy()
-                    return self._act_inner_post_transition(frame)
-                self._progress_ref_step = self.step_count
-                self._progress_ref_xy = agent_xy.copy()
+            if self.exploration.maybe_give_up(
+                self._world(frame),
+                portal_ok=self.floors.pursuing
+                and self.floors.pursuit_ok(frame, self.step_count, self._goto_deadline),
+            ):
+                self._current_path = None
+                self.state = State.EXPLORE
+                return self._act_inner_post_transition(frame)
             action = self._follow_path(frame)
             if action is not None:
                 return action
-            self._current_frontier = None
+            self.exploration.current_frontier = None
             self.state = State.EXPLORE
             return self._act_inner_post_transition(frame)
 
@@ -640,7 +581,7 @@ class NavAgent:
     def _act_inner_post_transition(self, frame: FrameData) -> str:
         """Re-enter EXPLORE logic once after a state transition (no recursion
         beyond one level: EXPLORE either picks a path or turns in place)."""
-        self._select_new_frontier(frame)
+        self._explore(frame)
         if self.state == State.GOTO_FRONTIER:
             action = self._follow_path(frame)
             if action is not None:
@@ -704,39 +645,41 @@ class NavAgent:
                     floors=self.floors.estimator if self.cfg.floor.enabled else None,
                 )
 
-    # ------------------------------------------------------------ exploration
+    def _world(self, frame: FrameData) -> WorldView:
+        """What the exploration strategy is allowed to see this round.
 
-    def _block_frontier(self, f: Optional[Frontier], duration: int) -> None:
-        # Blocks carry their storey. Stored unconditionally: on a single floor
-        # every entry is floor 0, so the floor test below is a tautology and
-        # behaviour is unchanged -- no second code path to keep in sync.
-        if f is not None:
-            self._blocked_frontier_pts.append(
-                (f.centroid_xy.copy(), self.step_count + duration, f.floor)
-            )
+        Built per call rather than held: `costmap` is a different object once
+        the agent changes storey, and `goal_xy` belongs to the FSM.
+        """
+        return WorldView(
+            frame=frame,
+            step=self.step_count,
+            agent_xy=frame.camera_position[list(PLANE)],
+            costmap=self.costmap,
+            scene_graph=self.scene_graph,
+            object_layer=self.object_layer,
+            keyframes=self.keyframes,
+            target=self.target,
+            goal_xy=self._goal_xy,
+            floor_id=self.floors.current_id,
+        )
 
-    def _blocked_ids(self, frontiers) -> set:
-        self._blocked_frontier_pts = [
-            b for b in self._blocked_frontier_pts if b[1] > self.step_count
-        ]
-        active = [(xy, floor) for xy, _, floor in self._blocked_frontier_pts]
-        return {
-            f.id
-            for f in frontiers
-            if any(
-                floor == f.floor and np.linalg.norm(f.centroid_xy - xy) < 0.6
-                for xy, floor in active
-            )
-        }
+    def _explore(self, frame: FrameData) -> None:
+        """Run one selection round and act on what it chose.
 
-    @staticmethod
-    def _heading_xy(frame: FrameData) -> np.ndarray:
-        """Agent forward direction on the ground plane (unit). Camera looks along
-        +z (OpenCV), so world-forward = R @ [0,0,1], projected to (x, z)."""
-        fwd = frame.T_wc[:3, :3] @ np.array([0.0, 0.0, 1.0])
-        v = fwd[list(PLANE)]
-        n = float(np.linalg.norm(v))
-        return v / n if n > 1e-6 else np.array([1.0, 0.0])
+        The strategy decides where; this applies it. Both kinds of choice enter
+        GOTO_FRONTIER, because that is the only state that follows `_goal_xy` --
+        a surface chosen but left in EXPLORE is a surface never visited, which
+        is the defect that invalidated every C3 result before it was found.
+        """
+        world = self._world(frame)
+        choice = self.exploration.select(world, floor_switch=lambda cost: self._try_floor_switch(frame, cost))
+        if choice is None:
+            return
+        self._goal_xy = choice.goal_xy
+        self._current_path = choice.path
+        self.exploration.note_progress(world)
+        self.state = State.GOTO_FRONTIER
 
     def _try_floor_switch(self, frame: FrameData, best_path_cost) -> bool:
         """Ask the floor policy whether to leave this storey, and go if so.
@@ -753,376 +696,14 @@ class NavAgent:
         )
         if portal is None:
             return False
-        agent_xy = frame.camera_position[list(PLANE)]
         self._goal_xy = portal.goal_xy
         self._goal_floor_y_cache = portal.target_y
-        self._current_frontier = None
         self._current_path = None
+        self.exploration.current_frontier = None
+        self.exploration.note_progress(self._world(frame))
         self.state = State.GOTO_FRONTIER
         self._goto_deadline = self.step_count + portal.deadline_steps
-        self._progress_ref_step = self.step_count
-        self._progress_ref_xy = agent_xy.copy()
         return True
-
-    def _select_new_frontier(self, frame: FrameData) -> None:
-        # Extraction + top-N path planning is expensive; while waiting the
-        # agent turns in place, which grows the map anyway.
-        if self.step_count - self._last_select_step < 5:
-            return
-        self._last_select_step = self.step_count
-        # A surface is only searched once the agent has actually got there.
-        # Marking it on the next selection round instead -- which fires every 5
-        # steps -- spent belief on places the agent had merely set off towards,
-        # so it visited seven surfaces in 500 steps and inspected none of them.
-        if self._search_container is not None:
-            agent_xy = frame.camera_position[list(PLANE)]
-            arrived = (
-                self._goal_xy is not None
-                and float(np.linalg.norm(agent_xy - self._goal_xy))
-                <= float(self.cfg.exploration.search_arrival_m)
-            )
-            spent = self.step_count - self._search_started_step
-            if not arrived and spent < int(self.cfg.exploration.search_max_steps):
-                return  # still on the way: stay committed to this surface
-            self._mark_surface_searched(arrived=arrived)
-        with self.profiler.timeit("frontier_extract"):
-            frontiers = self.frontier_extractor.extract(
-                self.costmap, frame.camera_position[list(PLANE)],
-                floor=self.floors.current_id,
-            )
-        if not frontiers:
-            # Nothing left on this floor is the strongest possible "no near
-            # frontier", so the portal gate still gets its chance.
-            if self._try_floor_switch(frame, None):
-                return
-            return
-        # Async scoring request (never blocks); use whatever scores exist now
-        self.scorer.request(frontiers, self.scene_graph, self.target, self.keyframes)
-        blocked = self._blocked_ids(frontiers)
-        agent_xy = frame.camera_position[list(PLANE)]
-        heading_xy = self._heading_xy(frame)
-        failed: set = set()
-        with self.profiler.timeit("frontier_select"):
-            best = select_frontier(
-                frontiers,
-                self.scorer.latest(),
-                self.planner,
-                self.costmap,
-                agent_xy,
-                unscored_prior=self.cfg.exploration.unscored_prior,
-                min_path_cost_m=self.cfg.exploration.min_path_cost_m,
-                top_n=self.cfg.exploration.top_n_frontiers,
-                blocked=blocked,
-                failed_out=failed,
-                info_gain_weight=self.cfg.exploration.info_gain_weight,
-                info_gain_radius_m=self.cfg.exploration.info_gain_radius_m,
-                los_visibility_penalty=self.cfg.exploration.los_visibility_penalty,
-                heading_xy=heading_xy,
-                continuity_weight=self.cfg.exploration.continuity_weight,
-                goal_prefer_free=self._frontier_goal_free,
-                cost_prefer_free=self._frontier_cost_free,
-            )
-        by_id = {f.id: f for f in frontiers}
-        for fid in failed:  # block only the candidates that actually failed
-            self._block_frontier(by_id.get(fid), 50)
-
-        surface = self._select_surface(agent_xy, best)
-        if surface is not None:
-            self._goal_xy = surface.goal_xy
-            self._search_container = int(surface.ref_id)
-            self._search_started_step = self.step_count
-            self._surface_face_turns = int(
-                self.cfg.exploration.search_face_turns
-            )
-            # Actually GO there. Only GOTO_FRONTIER follows _goal_xy; setting the
-            # goal while the state stayed EXPLORE meant the agent never moved,
-            # re-selected the same surface five steps later, and scored it
-            # "never reached" each time. Every C3 result before this was
-            # measuring selections that were never acted on: eight inspections
-            # of one desk, an unchanged 2.3 m path cost, arrived=False
-            # throughout. The give-up net handles a null frontier already.
-            self._current_frontier = None
-            self._progress_ref_step = self.step_count
-            self._progress_ref_xy = agent_xy.copy()
-            self.state = State.GOTO_FRONTIER
-            self._current_path = None
-            self._goal_frontier = None
-            self.stats["search_surface"] = self.stats.get("search_surface", 0) + 1
-            self.search_log_events.append(
-                {
-                    "step": int(self.step_count),
-                    "container_id": int(surface.ref_id),
-                    "label": surface.label,
-                    "prior": round(float(surface.prior), 4),
-                    "path_cost": round(float(surface.path_cost or 0.0), 2),
-                    "utility": round(float(surface.utility or 0.0), 5),
-                }
-            )
-            return
-        if best is None or best.path_cost is None:
-            # Every frontier was blocked (a give-up/plan-fail cascade in
-            # cluttered scenes leaves nothing selectable) -- rather than turn in
-            # place burning the step budget until blocks expire, fall back to the
-            # best path-reachable frontier ignoring blocks, excluding only the
-            # one just given up on. A frontier blocked from an earlier pose is
-            # often reachable now; if it re-stalls, give-up catches it again.
-            relaxed_blocked = set()
-            if self._last_giveup_pt is not None:
-                relaxed_blocked = {
-                    f.id for f in frontiers
-                    if f.floor == self._last_giveup_pt[1]
-                    and np.linalg.norm(f.centroid_xy - self._last_giveup_pt[0]) < 0.6
-                }
-            if len(relaxed_blocked) < len(frontiers):
-                best = select_frontier(
-                    frontiers, self.scorer.latest(), self.planner, self.costmap,
-                    agent_xy, unscored_prior=self.cfg.exploration.unscored_prior,
-                    min_path_cost_m=self.cfg.exploration.min_path_cost_m,
-                    top_n=self.cfg.exploration.top_n_frontiers, blocked=relaxed_blocked,
-                    info_gain_weight=self.cfg.exploration.info_gain_weight,
-                    info_gain_radius_m=self.cfg.exploration.info_gain_radius_m,
-                    los_visibility_penalty=self.cfg.exploration.los_visibility_penalty,
-                    heading_xy=heading_xy,
-                    continuity_weight=self.cfg.exploration.continuity_weight,
-                    goal_prefer_free=self._frontier_goal_free,
-                    cost_prefer_free=self._frontier_cost_free,
-                )
-        # Nothing near left on this floor? Consider leaving it. Checked BEFORE
-        # committing to a far frontier, because "the best thing here is 12 m
-        # away" is exactly ASCENT's condition for reasoning about storeys.
-        if self._try_floor_switch(frame, None if best is None else best.path_cost):
-            return
-
-        if best is None or best.path_cost is None:
-            self.stats["select_none"] += 1
-            return
-        self.stats["select_ok"] += 1
-        # Per-selection trace (step, agent xy, chosen frontier xy, path cost,
-        # #frontiers) for exploration-efficiency debugging. See scripts.
-        self.frontier_select_log.append((
-            self.step_count,
-            [round(float(x), 2) for x in agent_xy],
-            [round(float(x), 2) for x in best.centroid_xy],
-            round(float(best.path_cost), 2) if best.path_cost is not None else None,
-            len(frontiers),
-        ))
-        self._current_frontier = best
-        self._plan_to(frame, frontier_goal_xy(best, self.costmap, self._frontier_goal_free))
-        if self._current_path is not None:
-            self.state = State.GOTO_FRONTIER
-            # A fresh pursuit starts its own 15-step progress window; without
-            # this the give-up timer carried over from whatever frontier was
-            # pursued (or given up on) before, and could fire on the very
-            # first step of the new pursuit based on stale position data.
-            self._progress_ref_step = self.step_count
-            self._progress_ref_xy = agent_xy.copy()
-        else:
-            self._block_frontier(best, 50)
-
-    def _glance_at_surfaces(self, frame: FrameData) -> None:
-        """A surface in plain view has been searched, without driving to it.
-
-        Measured: a full inspection costs the agent about fifty steps -- approach,
-        arrival, commitment budget -- so a 500-step episode manages seven to nine
-        of them. Simulating the search order over this scene's 112 surfaces says
-        the target is typically reached after 37-45 inspections but only 33-40 m
-        of travel, so the budget that binds is inspections, not distance. Most of
-        those surfaces are simply in view along the way; looking counts.
-
-        A glance is weaker evidence than standing at the surface, so it retires
-        belief at a lower rate -- the search log already expresses that as
-        (1 - d), and a passing look gets a smaller d.
-        """
-        pf = self.object_layer.presence_filter
-        containers = self.scene_graph.containers
-        if pf is None or not containers:
-            return
-        d = float(self.cfg.exploration.search_glance_detect_prob)
-        rng = float(self.cfg.exploration.search_glance_range_m)
-        K, T_cw = frame.intrinsics.K(), frame.T_cw
-        h, w = frame.depth.shape
-        for cid, node in containers.items():
-            p_cam = T_cw[:3, :3] @ node.center + T_cw[:3, 3]
-            z = float(p_cam[2])
-            if not (0.3 <= z <= rng):
-                continue
-            uv = K @ p_cam
-            u, v = float(uv[0] / z), float(uv[1] / z)
-            if not (0 <= u < w and 0 <= v < h):
-                continue
-            measured = float(frame.depth[int(v), int(u)])
-            if measured > 1e-3 and measured < z - 0.5:
-                continue  # something solid between us and the surface
-            self._search_log.searched(cid, d)
-
-    def _select_surface(self, agent_xy, best_frontier):
-        """The best mapped surface, if it beats the best frontier on b*d/c.
-
-        Both sides are the same index -- `select_frontier` already returns
-        score/path_cost -- so the comparison is like for like, with
-        search_frontier_weight naming the one judgement call: what unmapped
-        space is worth against a plausible surface.
-        """
-        cfg = self.cfg.exploration
-        if not cfg.search_posterior:
-            return None
-        if not self.scene_graph.containers:
-            return None
-        cands = build_container_candidates(
-            self.scene_graph,
-            self.target,
-            self._search_log,
-            detect_prob=float(cfg.search_detect_prob),
-            last_known_xy=self._last_known_target_xy(),
-            proximity_len_m=float(cfg.search_proximity_len_m),
-            proximity_floor=float(cfg.search_proximity_floor),
-            surface_mass=float(cfg.search_surface_mass),
-            plane=PLANE,
-            affinity_source=self._affinity,
-        )
-        if not cands:
-            return None
-        # Drive to a pose you can STAND in, not to the middle of the furniture.
-        # A container's centre is inside the desk; the follower ends wherever the
-        # navmesh allows, arrival is never registered, and the surface is scored
-        # as "never reached" -- a quarter credit -- so it stays top of the list
-        # and gets chosen again. Measured before this fix, one episode's entire
-        # search was: desk, desk, desk, desk, desk, desk, desk, desk, with its
-        # prior decaying 3.20, 2.56, 2.05, 1.64 ... and an unchanged 2.5 m path
-        # cost every time. Eight inspections, one surface.
-        reachable = []
-        for c in cands:
-            view = self.viewpoint_planner.approach_viewpoint(c.goal_xy, self.costmap)
-            c.goal_xy = np.asarray(
-                view if view is not None else self._nearest_free_xy(c.goal_xy), dtype=float
-            )
-            reachable.append(c)
-        cands = reachable
-        # Prefer surfaces in the room the agent is already in. Simulated over
-        # this scene: room-grouped order reaches the target in a median 37
-        # inspections and 33 m against 45 and 40 m for a plain global argmax,
-        # because crossing the house repeatedly is what the global index does
-        # once the nearby surfaces are retired.
-        room_bonus = float(cfg.search_same_room_bonus)
-        if room_bonus > 1.0 and self.scene_graph.rooms:
-            here = self.scene_graph.room_of_point(agent_xy)
-            if here is not None:
-                for c in cands:
-                    node = self.scene_graph.containers.get(c.ref_id)
-                    if node is not None and node.room_id == here.id:
-                        c.prior *= room_bonus
-        surface = select_candidate(
-            cands, self.planner, self.costmap, agent_xy,
-            top_n=int(cfg.top_n_frontiers),
-            min_path_cost_m=float(cfg.min_path_cost_m),
-        )
-        if surface is None or surface.utility is None:
-            return None
-        beta = float(cfg.search_frontier_weight)
-        if best_frontier is not None and best_frontier.path_cost:
-            frontier_util = beta * (best_frontier.score or 0.0) / best_frontier.path_cost
-            if frontier_util >= surface.utility:
-                return None
-        return surface
-
-    def _last_known_target_xy(self):
-        """Where the target was last believed to be.
-
-        Proximity encodes "objects are moved by someone doing a task, so short
-        displacements dominate". This used to return None once absence was
-        confirmed, on the reasoning that the premise had been refuted -- and
-        with the proximity model of the time it measured better that way.
-
-        It was the model that was wrong, not the premise. Confirming the object
-        is not at its old POSE does not refute short displacements; the
-        benchmark's in_anchor relocations move a median 0.72 m, so the object is
-        usually still within a metre or two of where it was, on a neighbouring
-        surface. What made keeping the term look bad was the 0.2 floor, which
-        tied every distant candidate together (see SearchConfig). With
-        exp(-d/1.0) and no floor, keeping the term takes the true destination
-        into the top 5 in 29 of 57 in_anchor cases against 5 of 57 when it is
-        dropped, and cross_anchor is unharmed at 7 of 57 either way.
-
-        Surfaces already looked at are retired by the InspectionLog, which is
-        the right instrument for "I have ruled this one out" -- a belief the
-        prior should not be trying to express a second time.
-        """
-        best = None
-        for track in self.object_layer.tracks(include_blacklisted=True):
-            if str(track.label).lower().replace("_", " ") != str(self.target).lower().replace("_", " "):
-                continue
-            if best is None or track.presence.n_expected > best.presence.n_expected:
-                best = track
-        if best is None:
-            return None
-        return self.object_layer.center_of(best)[list(PLANE)]
-
-    def _face_searched_surface(self, frame: FrameData) -> Optional[str]:
-        """Turn to look at a surface before deciding the target is not on it.
-
-        `_mark_surface_searched` multiplies a surface's belief by (1 - 0.8) on
-        arrival -- a near-decisive update -- and the frame that update rests on
-        is whatever heading the navmesh follower happened to stop at. That is
-        the same mistake the candidate path made and fixed: "concluding absence
-        from the arrival frame abandoned a bowl that was exactly where the map
-        said". Measured in condition D, the search reached the true surface five
-        times and converted one of them.
-
-        A few turns are cheap against the ~50 steps an inspection already costs,
-        and they are what make the detector's silence about a surface mean
-        something.
-        """
-        if self._search_container is None or self._goal_xy is None:
-            return None
-        if self._surface_face_turns <= 0:
-            return None
-        node = self.scene_graph.containers.get(self._search_container)
-        if node is None:
-            return None
-        agent_xy = frame.camera_position[list(PLANE)]
-        if float(np.linalg.norm(agent_xy - self._goal_xy)) > float(
-            self.cfg.exploration.search_arrival_m
-        ):
-            return None  # not there yet; nothing to look at from here
-
-        from ..planning.controller import TURN_LEFT, TURN_RIGHT, _wrap, agent_heading
-
-        to_surface = np.asarray(node.center, dtype=float)[list(PLANE)] - agent_xy
-        if float(np.linalg.norm(to_surface)) < 1e-3:
-            return None
-        err = _wrap(float(np.arctan2(to_surface[1], to_surface[0]))
-                    - agent_heading(frame.T_wc))
-        if abs(err) <= np.radians(15.0):
-            self._surface_face_turns = 0  # facing it; this frame is the evidence
-            return None
-        self._surface_face_turns -= 1
-        self.stats["surface_face_turns"] = self.stats.get("surface_face_turns", 0) + 1
-        return TURN_RIGHT if err > 0 else TURN_LEFT
-
-    def _mark_surface_searched(self, arrived: bool = True) -> None:
-        """Arriving at a surface without the target is a look that did not find
-        it -- worth (1 - d), not worth zero and not worth nothing.
-
-        Giving up on the way there is a much weaker look, and is scored as such:
-        a place the agent never reached has barely been ruled out, and spending
-        full belief on it would retire the very surfaces it failed to inspect.
-        """
-        if self._search_container is None:
-            return
-        d = float(self.cfg.exploration.search_detect_prob)
-        if not arrived:
-            d *= float(self.cfg.exploration.search_unreached_credit)
-        remaining = self._search_log.searched(self._search_container, d)
-        self.search_log_events.append(
-            {
-                "step": int(self.step_count),
-                "container_id": int(self._search_container),
-                "searched": True,
-                "arrived": bool(arrived),
-                "belief_factor": round(remaining, 4),
-            }
-        )
-        self._search_container = None
 
     # ------------------------------------------------------------- candidates
 
@@ -1521,7 +1102,7 @@ class NavAgent:
                 # Every ring pose is out of bounds. The nearest free cell is
                 # still a cell the agent can stand in, which the object's own
                 # centre is not.
-                self._goal_xy = self._nearest_free_xy(obj_xy)
+                self._goal_xy = nearest_free_xy(self.costmap, obj_xy)
                 self.stats["approach_goal_nearest_free"] = (
                     self.stats.get("approach_goal_nearest_free", 0) + 1
                 )
@@ -1532,7 +1113,7 @@ class NavAgent:
         elif self.cfg.agent.approach_navigable_goal and agent_xy is not None:
             self._goal_xy = self._approach_goal_xy(obj_xy, agent_xy)
         else:
-            self._goal_xy = self._nearest_free_xy(obj_xy)
+            self._goal_xy = nearest_free_xy(self.costmap, obj_xy)
         self._target_obj_xy = obj_xy.copy()
         self._scan_turns_left = int(self.cfg.agent.approach_scan_turns)
         self._scan_expected = 0
@@ -1558,7 +1139,7 @@ class NavAgent:
             "goal_xy": [float(x) for x in self._goal_xy],
             "obj_xy": [float(x) for x in obj_xy],
             "goal_to_obj_m": float(np.linalg.norm(self._goal_xy - obj_xy)),
-            "goal_cell": self._cell_status(self._goal_xy),
+            "goal_cell": cell_status(self.costmap, self._goal_xy),
             "start_step": self.step_count,
             "min_dist_to_goal_m": None,
             "plan_fail": 0,
@@ -1604,54 +1185,14 @@ class NavAgent:
         self._current_path = result.path if result.success else None
         self.stats["plan_ok" if result.success else "plan_fail"] += 1
 
-    def _retire_pursued_frontier(self, frame: FrameData, goal: np.ndarray) -> None:
-        """A pursuit that ended retires its frontier, whichever way it ended.
-
-        The navigator returns None for arrived-or-unreachable and the FSM then
-        drops GOTO_FRONTIER -> EXPLORE. Unless something blocks the frontier the
-        very next selection can choose it again, and the agent freezes
-        re-selecting it: give-up never fires, because it counts elapsed steps
-        *inside* GOTO_FRONTIER and the re-entry resets its timer.
-
-        This used to be guarded by the stub test -- blocking only when the agent
-        was still far from the goal. That conflated two jobs, and separating
-        them cost a full condition to find out: raising the reach threshold to
-        the planner's true stopping radius (correct in itself, see
-        `_frontier_reach_m`) removed the block for arrivals between 0.5 m and
-        0.9 m and the livelock came straight back. Measured over 96 dynamic
-        episodes, D against C0: frontier selections per episode 2.15 -> 20.76,
-        surface inspections 3.34 -> 0.88, episodes that ever mapped the object
-        at its new pose 52 -> 44, SR 0.458 -> 0.385.
-
-        So the block is unconditional. Retiring a frontier the agent actually
-        reached costs nothing -- it has been explored, which is what a frontier
-        is for. The reach threshold now decides only two things: how long the
-        block lasts, and whether this counts as a give-up point.
-        """
-        frontier = self._current_frontier
-        if frontier is None:
-            return
-        reached = bool(
-            np.linalg.norm(frame.camera_position[list(PLANE)] - goal)
-            <= self._frontier_reach_m
-        )
-        self._block_frontier(frontier, 50 if reached else 100)
-        if reached:
-            self.stats["frontier_reached"] = self.stats.get("frontier_reached", 0) + 1
-            return
-        # A frontier the agent could not get to. Mark it as the last give-up
-        # point so the "all frontiers blocked" relaxed fallback (which
-        # deliberately ignores the blacklist) does not immediately re-pursue the
-        # same unreachable stub. An ordinary arrival must NOT be marked this
-        # way: it would suppress the fallback everywhere near a place the agent
-        # had simply finished exploring.
-        self._last_giveup_pt = (frontier.centroid_xy.copy(), frontier.floor)
-        self.stats["frontier_stub_block"] = self.stats.get("frontier_stub_block", 0) + 1
-
     def _follow_path(self, frame: FrameData) -> Optional[str]:
         goal = (
-            frontier_goal_xy(self._current_frontier, self.costmap, self._frontier_goal_free)
-            if self.state == State.GOTO_FRONTIER and self._current_frontier is not None
+            frontier_goal_xy(
+                self.exploration.current_frontier, self.costmap,
+                self.exploration.goal_prefer_free,
+            )
+            if self.state == State.GOTO_FRONTIER
+            and self.exploration.current_frontier is not None
             else self._goal_xy
         )
         if goal is None:
@@ -1671,19 +1212,21 @@ class NavAgent:
             cross_floor_goal = self.floors.pursuing or self.state != State.GOTO_FRONTIER
             action = self._nav_fn(goal, self._goal_floor_y_cache if cross_floor_goal else None)
             if action is None and self.state == State.GOTO_FRONTIER:
-                self._retire_pursued_frontier(frame, goal)
+                self.exploration.retire_pursued(self._world(frame), goal)
             return action
         if self._current_path is None:
             self._plan_to(frame, goal)
             if self._current_path is None:
                 if self.state == State.GOTO_FRONTIER:
-                    self._block_frontier(self._current_frontier, 50)
+                    self.exploration.block(
+                        self.exploration.current_frontier, 50, self.step_count
+                    )
                 return None
         action = self.controller.act(frame.T_wc, self._current_path)
         if action is None:
             self._current_path = None
             if self.state == State.GOTO_FRONTIER:
-                self._retire_pursued_frontier(frame, goal)
+                self.exploration.retire_pursued(self._world(frame), goal)
         return action
 
     def _follow_to(self, frame: FrameData, goal_xy: np.ndarray) -> Optional[str]:
@@ -1742,37 +1285,9 @@ class NavAgent:
         to_agent = agent_xy - obj_xy
         dist = float(np.linalg.norm(to_agent))
         if dist < 1e-3:
-            return self._nearest_free_xy(obj_xy)
+            return nearest_free_xy(self.costmap, obj_xy)
         # If the agent is already closer than the standoff, keep the goal at the
         # standoff (do not push it behind the agent past the object).
         cand = obj_xy + (to_agent / dist) * min(standoff, dist)
-        return self._nearest_free_xy(cand)
+        return nearest_free_xy(self.costmap, cand)
 
-    def _cell_status(self, xy: np.ndarray) -> str:
-        """Costmap classification of a world point: free/occupied/unknown/oob."""
-        from ..mapping.costmap import FREE, OCCUPIED, UNKNOWN
-
-        rc = self.costmap.world_to_grid(xy)
-        h, w = self.costmap.grid.shape
-        if not (0 <= rc[0] < h and 0 <= rc[1] < w):
-            return "oob"
-        v = self.costmap.grid[rc[0], rc[1]]
-        return {FREE: "free", OCCUPIED: "occupied", UNKNOWN: "unknown"}.get(int(v), str(int(v)))
-
-    def _nearest_free_xy(self, xy: np.ndarray) -> np.ndarray:
-        """Nearest FREE cell to a (possibly occupied) object position — the
-        closest pose the agent can actually stand at."""
-        from ..mapping.costmap import FREE
-
-        rc = self.costmap.world_to_grid(xy)
-        h, w = self.costmap.grid.shape
-        best, best_d = xy, np.inf
-        rad = int(1.5 / self.costmap.resolution)
-        r0, r1 = max(0, rc[0] - rad), min(h, rc[0] + rad + 1)
-        c0, c1 = max(0, rc[1] - rad), min(w, rc[1] + rad + 1)
-        free = np.argwhere(self.costmap.grid[r0:r1, c0:c1] == FREE)
-        if free.shape[0] == 0:
-            return xy
-        free_world = self.costmap.grid_to_world(free + np.array([r0, c0]))
-        d = np.linalg.norm(free_world - xy, axis=1)
-        return free_world[int(np.argmin(d))]

@@ -316,17 +316,49 @@ def test_repeatedly_reselecting_one_surface_is_what_an_unreachable_goal_looks_li
 
 def test_choosing_a_surface_must_also_drive_to_it():
     """The defect that invalidated every earlier C3 result: only GOTO_FRONTIER
-    follows _goal_xy, and the surface selection set the goal while leaving the
+    follows the goal, and the surface selection set the goal while leaving the
     state EXPLORE. The agent never moved, re-selected the same surface five
     steps later, and scored it "never reached" each time -- eight inspections of
-    one desk at an unchanged 2.3 m path cost."""
-    import inspect
-    from osg.agent import nav_agent
+    one desk at an unchanged 2.3 m path cost.
 
-    src = inspect.getsource(nav_agent.NavAgent._select_new_frontier)
-    chose = src.index("self._search_container = int(surface.ref_id)")
-    after = src[chose:]
-    assert "State.GOTO_FRONTIER" in after, "a chosen surface must be driven to"
+    Asserted on behaviour rather than on the source text: applying a surface
+    choice has to leave the agent in a state that will actually walk there.
+    """
+    import numpy as np
+
+    from osg.agent.nav_agent import NavAgent, State
+    from osg.exploration.async_scorer import AsyncScorer
+    from osg.exploration.scorer import NullScorer
+    from osg.exploration.strategy import ExplorationChoice
+    from osg.mapping.costmap import FREE
+    from osg.perception.detector import StubDetector
+
+    from .test_nav_agent import make_cfg
+
+    cfg = make_cfg()
+    cfg.exploration.search_posterior = True
+    agent = NavAgent(cfg, StubDetector(), AsyncScorer(NullScorer()), None, "bowl")
+    agent.costmap.grid[:, :] = FREE
+
+    surface = ExplorationChoice(
+        kind="surface", goal_xy=np.array([2.0, 1.0]), container_id=3, face_turns=8,
+    )
+    agent.exploration.select = lambda world, floor_switch: surface
+    agent._explore(_nav_frame())
+
+    assert agent.state == State.GOTO_FRONTIER, "a chosen surface must be driven to"
+    assert np.allclose(agent._goal_xy, [2.0, 1.0])
+
+
+def _nav_frame():
+    import numpy as np
+
+    from osg.core.types import CameraIntrinsics
+
+    from .conftest import make_frame
+
+    k = CameraIntrinsics(fx=320.0, fy=320.0, cx=320.0, cy=240.0, width=640, height=480)
+    return make_frame(k, np.eye(4))
 
 
 def test_the_best_candidate_carries_a_fixed_mass_whatever_the_prior_looks_like():

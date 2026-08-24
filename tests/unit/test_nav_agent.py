@@ -8,8 +8,8 @@ Two areas covered so far:
    only depends on the detector, the costmap/planner, and a handful of
    `_approach_*` fields, so exercising it in isolation keeps this hermetic
    (no Hydra/habitat) and fast.
-2. The frontier give-up progress timer (P1b) — `_select_new_frontier` must
-   reset `_progress_ref_step`/`_progress_ref_xy` to the current step/pose
+2. The frontier give-up progress timer (P1b) — an exploration round must
+   reset the strategy's progress reference to the current step/pose
    whenever it starts pursuing a (new or re-selected) frontier; otherwise a
    stale reference from a prior pursuit can trigger a spurious give-up
    within the first step of the new one.
@@ -291,16 +291,16 @@ def test_progress_ref_resets_on_new_frontier_selection():
     _carve_free_square(agent)
     agent.state = State.EXPLORE
     agent.step_count = 50
-    agent._last_select_step = -100  # bypass the 5-step selection throttle
+    agent.exploration._last_select_step = -100  # bypass the 5-step selection throttle
     # Stale reference from a much earlier, unrelated pursuit.
-    agent._progress_ref_step = 10
-    agent._progress_ref_xy = np.array([-999.0, -999.0])
+    agent.exploration.progress_ref_step = 10
+    agent.exploration.progress_ref_xy = np.array([-999.0, -999.0])
 
-    agent._select_new_frontier(_frame([0.0, 0.0], frame_id=agent.step_count))
+    agent._explore(_frame([0.0, 0.0], frame_id=agent.step_count))
 
     assert agent.state == State.GOTO_FRONTIER
-    assert agent._progress_ref_step == agent.step_count
-    assert np.allclose(agent._progress_ref_xy, [0.0, 0.0])
+    assert agent.exploration.progress_ref_step == agent.step_count
+    assert np.allclose(agent.exploration.progress_ref_xy, [0.0, 0.0])
 
 
 def test_giveup_logged_with_frontier_and_agent_position():
@@ -309,12 +309,12 @@ def test_giveup_logged_with_frontier_and_agent_position():
     agent.state = State.GOTO_FRONTIER
     # A real Frontier, not a namespace: the blacklist is floor-scoped, so a
     # stub missing `.floor` diverges from anything production ever produces.
-    agent._current_frontier = Frontier(
+    agent.exploration.current_frontier = Frontier(
         id=0, centroid_xy=np.array([3.0, 4.0]), cells=np.zeros((0, 2), dtype=int), size=0
     )
     agent.step_count = 100
-    agent._progress_ref_step = 80  # 20 steps ago, past the 15-step check window
-    agent._progress_ref_xy = np.array([0.0, 0.0])  # same as current -> "no progress"
+    agent.exploration.progress_ref_step = 80  # 20 steps ago, past the 15-step check window
+    agent.exploration.progress_ref_xy = np.array([0.0, 0.0])  # same as current -> "no progress"
     agent._goal_xy = np.array([3.0, 4.0])
     agent._current_path = None
 
@@ -403,7 +403,7 @@ def test_absence_does_not_erase_where_the_object_used_to_be():
     """Confirming the object is not at its old POSE does not refute "objects are
     moved short distances" -- it refutes one surface.
 
-    `_last_known_target_xy` used to return None once absence was confirmed, which
+    `ExplorationStrategy._last_known_target_xy` used to return None once absence was confirmed, which
     flattened the search prior over every mapped surface in the house. With the
     proximity term unclipped the same evidence is better spent the other way:
     the object is usually a metre or two away, on a neighbouring surface, and
@@ -429,7 +429,7 @@ def test_absence_does_not_erase_where_the_object_used_to_be():
     track.presence.log_odds = -6.0
     track.identity_rejections = 2
 
-    where = agent._last_known_target_xy()
+    where = agent.exploration._last_known_target_xy(agent._world(_frame_at(np.zeros(2))))
     assert where is not None, "absence must lower a belief, not delete the memory"
     assert np.allclose(where, np.array([2.0, 3.0]))
 
@@ -451,9 +451,9 @@ def test_a_frontier_the_agent_reached_is_not_called_unreachable():
     cfg = make_cfg()
     agent = make_agent(cfg)
     worst_case_arrival = cfg.exploration.voronoi_goal_near_m + FRONTIER_ARRIVAL_TOL_M
-    assert agent._frontier_reach_m > worst_case_arrival, (
+    assert agent.exploration.frontier_reach_m > worst_case_arrival, (
         f"a correct arrival can leave the agent {worst_case_arrival} m from the "
-        f"goal, but anything past {agent._frontier_reach_m} m is called a stub"
+        f"goal, but anything past {agent.exploration.frontier_reach_m} m is called a stub"
     )
 
 
@@ -462,7 +462,7 @@ def test_the_reach_threshold_follows_the_planner_it_is_derived_from():
     cfg = make_cfg()
     cfg.exploration.voronoi_goal_near_m = 1.5
     agent = make_agent(cfg)
-    assert agent._frontier_reach_m > 1.5 + 0.2
+    assert agent.exploration.frontier_reach_m > 1.5 + 0.2
 
 
 def test_a_pursued_frontier_is_retired_however_the_pursuit_ended():
@@ -481,16 +481,16 @@ def test_a_pursued_frontier_is_retired_however_the_pursuit_ended():
     frame = _frame_at(np.zeros(2))
     f = Frontier(id=7, cells=np.zeros((0, 2), dtype=int),
                  centroid_xy=np.array([0.3, 0.0]), size=10)
-    agent._current_frontier = f
+    agent.exploration.current_frontier = f
     agent.state = State.GOTO_FRONTIER
 
     # An ordinary arrival: well inside the reach threshold.
-    agent._retire_pursued_frontier(frame, np.array([0.3, 0.0]))
-    assert agent._blocked_frontier_pts, "an arrived-at frontier must still be retired"
-    assert 7 in agent._blocked_ids([f]), "and must not be selectable again"
+    agent.exploration.retire_pursued(agent._world(frame), np.array([0.3, 0.0]))
+    assert agent.exploration._blocked_pts, "an arrived-at frontier must still be retired"
+    assert 7 in agent.exploration._blocked_ids([f], agent.step_count), "and must not be selectable again"
     assert agent.stats.get("frontier_reached") == 1
     assert agent.stats.get("frontier_stub_block", 0) == 0
-    assert agent._last_giveup_pt is None, (
+    assert agent.exploration._last_giveup_pt is None, (
         "an ordinary arrival is not a give-up point -- marking it suppresses the "
         "all-frontiers-blocked fallback near somewhere already explored"
     )
@@ -501,10 +501,10 @@ def test_an_unreachable_frontier_is_retired_for_longer_and_marks_a_giveup():
     frame = _frame_at(np.zeros(2))
     f = Frontier(id=9, cells=np.zeros((0, 2), dtype=int),
                  centroid_xy=np.array([6.0, 0.0]), size=10)
-    agent._current_frontier = f
+    agent.exploration.current_frontier = f
     agent.state = State.GOTO_FRONTIER
 
-    agent._retire_pursued_frontier(frame, np.array([6.0, 0.0]))
-    assert 9 in agent._blocked_ids([f])
+    agent.exploration.retire_pursued(agent._world(frame), np.array([6.0, 0.0]))
+    assert 9 in agent.exploration._blocked_ids([f], agent.step_count)
     assert agent.stats.get("frontier_stub_block") == 1
-    assert agent._last_giveup_pt is not None
+    assert agent.exploration._last_giveup_pt is not None

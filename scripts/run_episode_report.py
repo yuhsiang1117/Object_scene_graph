@@ -94,14 +94,14 @@ def run_one(env, agent_cfg, detector, scorer, ep, frame, target, max_steps, kf_s
     agent = NavAgent(agent_cfg, detector, scorer, None, target, profiler=None)
     kf_index = []
     sel = []
-    orig = agent._select_new_frontier
+    orig = agent._explore
     def wrapped(fr, _o=orig, _a=agent, _s=sel):
-        before = _a._current_frontier; nb = _a.stats.get("select_ok", 0)
+        before = _a.exploration.current_frontier; nb = _a.stats.get("select_ok", 0)
         _o(fr)
-        f = _a._current_frontier
+        f = _a.exploration.current_frontier
         if f is not None and f is not before and _a.stats.get("select_ok", 0) > nb:
             _s.append({"frontier_xy": [round(float(x), 3) for x in f.centroid_xy]})
-    agent._select_new_frontier = wrapped
+    agent._explore = wrapped
 
     def on_kf(fr, dets):
         if agent._kf_count % kf_stride == 0:  # thin keyframes for big sweeps
