@@ -9,6 +9,7 @@ from typing import List, Optional
 import numpy as np
 
 from ..mapping.costmap import FREE, OCCUPIED, PLANE, Costmap2D
+from ..core.labels import normalize_label
 
 # ---------------------------------------------------------------------------
 # Fast per-step debug rendering (cv2, no matplotlib): a segmentation overlay on
@@ -22,24 +23,20 @@ _PALETTE = [
 _TARGET_BGR = (0, 0, 255)  # target category drawn in red
 
 
-def _norm(s: str) -> str:
-    return s.lower().replace("_", " ").strip()
-
-
 def overlay_segmentation(rgb: np.ndarray, dets, target: str) -> np.ndarray:
     """BGR image of `rgb` with translucent YOLOE masks + boxes + label(score);
     the target category is highlighted in red."""
     import cv2
 
     img = np.ascontiguousarray(rgb[..., ::-1])  # RGB -> BGR
-    tgt = _norm(target)
+    tgt = normalize_label(target)
     layer = img.copy()
     for i, d in enumerate(dets):
-        col = _TARGET_BGR if _norm(d.label) == tgt else _PALETTE[i % len(_PALETTE)]
+        col = _TARGET_BGR if normalize_label(d.label) == tgt else _PALETTE[i % len(_PALETTE)]
         layer[d.mask.astype(bool)] = col
     img = cv2.addWeighted(layer, 0.45, img, 0.55, 0)
     for i, d in enumerate(dets):
-        is_t = _norm(d.label) == tgt
+        is_t = normalize_label(d.label) == tgt
         col = _TARGET_BGR if is_t else _PALETTE[i % len(_PALETTE)]
         x1, y1, x2, y2 = d.bbox_xyxy.astype(int)
         cv2.rectangle(img, (x1, y1), (x2, y2), col, 2 if is_t else 1)

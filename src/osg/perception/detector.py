@@ -12,6 +12,7 @@ from typing import Dict, List, Optional
 
 import numpy as np
 
+from ..core.labels import normalize_label
 from ..core.types import Detection
 
 
@@ -71,7 +72,7 @@ class YoloeDetector(Detector):
 
     @staticmethod
     def _normalize(label: str) -> str:
-        return label.lower().replace("_", " ").strip()
+        return normalize_label(label)
 
     def set_vocabulary(self, classes: List[str]) -> None:
         """Normalized + sorted so the per-episode call (target already in the

@@ -22,6 +22,7 @@ from typing import List, Optional
 
 import numpy as np
 
+from ..core.labels import normalize_label
 from ..llm.client import ChatClient
 from ..llm.prompts import (
     ABSENCE_CHOICE_SYSTEM,
@@ -34,10 +35,6 @@ from ..llm.prompts import (
     VERIFY_SYSTEM,
     VERIFY_USER,
 )
-
-
-def _norm(s: str) -> str:
-    return str(s).lower().replace("_", " ").strip()
 
 
 class VLMVerifier:
@@ -73,7 +70,7 @@ class VLMVerifier:
         import cv2
 
         os.makedirs(self.debug_dir, exist_ok=True)
-        stem = f"{self.debug_tag}_call{self.n_calls:03d}_{_norm(target).replace(' ', '')}_{'ACC' if accepted else 'REJ'}"
+        stem = f"{self.debug_tag}_call{self.n_calls:03d}_{normalize_label(target).replace(' ', '')}_{'ACC' if accepted else 'REJ'}"
         cv2.imwrite(os.path.join(self.debug_dir, stem + ".jpg"), img[..., ::-1])  # RGB->BGR
         with open(os.path.join(self.debug_dir, "index.jsonl"), "a") as f:
             f.write(json.dumps({
@@ -111,7 +108,7 @@ class VLMVerifier:
                 categories=", ".join(self._choice_list(target))
             )
         else:
-            system, user = VERIFY_SYSTEM, VERIFY_USER.format(target=_norm(target))
+            system, user = VERIFY_SYSTEM, VERIFY_USER.format(target=normalize_label(target))
         self.n_calls += 1
         try:
             out = self.client.chat(system, user, images=[img], json_response=True)
@@ -122,7 +119,7 @@ class VLMVerifier:
             return True
         conf = float(out.get("confidence", 0.0) or 0.0)
         if self.choice_mode:
-            accepted = _norm(out.get("category", "")) == _norm(target) and conf >= self.accept_confidence
+            accepted = normalize_label(out.get("category", "")) == normalize_label(target) and conf >= self.accept_confidence
         else:
             accepted = bool(out.get("is_target", False)) and conf >= self.accept_confidence
         self._save_debug(img, target, user, out, accepted)
@@ -131,8 +128,8 @@ class VLMVerifier:
     def _choice_list(self, target: str) -> List[str]:
         """Category list shown to the VLM, guaranteed to contain the target."""
         cats = list(self.categories)
-        if not any(_norm(c) == _norm(target) for c in cats):
-            cats.append(_norm(target))
+        if not any(normalize_label(c) == normalize_label(target) for c in cats):
+            cats.append(normalize_label(target))
         return cats
 
     def verify_bbox(self, rgb: Optional[np.ndarray], bbox_xyxy: Optional[np.ndarray],
@@ -190,8 +187,8 @@ class VLMVerifier:
         present = reply.get("present") or []
         if isinstance(present, str):
             present = [present]
-        seen = {_norm(str(c)) for c in present}
-        result = {c: _norm(c) in seen for c in asked}
+        seen = {normalize_label(str(c)) for c in present}
+        result = {c: normalize_label(c) in seen for c in asked}
         self._save_debug(img, ",".join(asked), ABSENCE_USER, reply,
                          accepted=any(result.values()))
         return result
@@ -241,7 +238,7 @@ class VLMVerifier:
         try:
             out = self.client.chat(
                 ABSENCE_CHOICE_SYSTEM,
-                ABSENCE_CHOICE_USER.format(target=_norm(target)),
+                ABSENCE_CHOICE_USER.format(target=normalize_label(target)),
                 images=[img],
                 json_response=True,
             )
@@ -249,9 +246,9 @@ class VLMVerifier:
             self.n_errors += 1
             self.last_error = repr(exc)[:200]
             return None
-        choice = _norm(str(out.get("choice", "")))
-        self._save_debug(img, target, "still_there", out, accepted=choice == _norm(target))
-        if _norm(target) in choice:
+        choice = normalize_label(str(out.get("choice", "")))
+        self._save_debug(img, target, "still_there", out, accepted=choice == normalize_label(target))
+        if normalize_label(target) in choice:
             return True
         if "bare" in choice:
             return False

@@ -29,6 +29,7 @@ from typing import List, Optional, Sequence, Tuple
 
 import numpy as np
 
+from ..core.labels import normalize_label
 from .costmap import FREE, PLANE, Costmap2D, block_min
 
 STAIR_LABELS = ("stairs", "staircase", "stair")
@@ -59,7 +60,7 @@ def stair_tracks(object_layer, min_obs: int = 2, min_evidence: float = 1.0) -> L
     """
     out = []
     for t in object_layer.tracks(include_blacklisted=True):
-        if str(t.label).lower().replace("_", " ") not in STAIR_LABELS:
+        if normalize_label(t.label) not in STAIR_LABELS:
             continue
         if t.n_obs >= min_obs and float(getattr(t, "evidence", 0.0)) >= min_evidence:
             out.append(np.asarray(object_layer.center_of(t), dtype=float))

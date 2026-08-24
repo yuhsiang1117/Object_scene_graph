@@ -21,7 +21,8 @@ already there.
 """
 from __future__ import annotations
 
-from typing import Iterable, Optional, Set
+from typing import Set
+from ..core.labels import normalize_label
 
 # Categories that reliably share a room with each ObjectNav goal. Drawn from the
 # detector vocabulary (core/config.py) so every entry is something we can
@@ -46,12 +47,8 @@ CATEGORY_ROOMS = {
 }
 
 
-def _norm(label: str) -> str:
-    return str(label).lower().replace("_", " ").strip()
-
-
 def context_categories(target: str) -> Set[str]:
-    return {_norm(c) for c in CATEGORY_CONTEXT.get(_norm(target).replace(" ", "_"), set())}
+    return {normalize_label(c) for c in CATEGORY_CONTEXT.get(normalize_label(target).replace(" ", "_"), set())}
 
 
 def floor_target_evidence(
@@ -64,7 +61,7 @@ def floor_target_evidence(
     there. `n_objects` is how much has been mapped at all -- the caller needs it
     to know whether zero evidence means "not here" or merely "not looked yet".
     """
-    tgt = _norm(target)
+    tgt = normalize_label(target)
     ctx = context_categories(target)
     if not ctx:
         # No usable prior for this category (see `plant`): report "unknown" by
@@ -79,7 +76,7 @@ def floor_target_evidence(
         if obj.floor_id != floor_id:
             continue
         n += 1
-        label = _norm(obj.label)
+        label = normalize_label(obj.label)
         if label == tgt:
             has_target = True
         if label in ctx:
@@ -90,7 +87,7 @@ def floor_target_evidence(
     rooms = CATEGORY_ROOMS.get(tgt.replace(" ", "_"), set())
     if rooms:
         for room in getattr(scene_graph, "rooms", {}).values():
-            if room.floor_id == floor_id and room.label and _norm(room.label) in rooms:
+            if room.floor_id == floor_id and room.label and normalize_label(room.label) in rooms:
                 seen.add("__room__")
                 break
 
@@ -181,14 +178,14 @@ def affinity_scores(target: str, source=None) -> dict:
     when the static table has no entry -- the table stays authoritative so a
     model cannot quietly rewrite a prior someone chose deliberately.
     """
-    key = _norm(target)
+    key = normalize_label(target)
     ranked = CONTAINER_AFFINITY.get(key)
     if ranked is None and source is not None:
         ranked = source(key)
     if not ranked:
         return {}
     n = len(ranked)
-    return {_norm(c): 1.0 - 0.5 * i / max(n - 1, 1) for i, c in enumerate(ranked)}
+    return {normalize_label(c): 1.0 - 0.5 * i / max(n - 1, 1) for i, c in enumerate(ranked)}
 
 
 def affords(target: str, top_h: float, area_m2: float) -> float:
@@ -197,5 +194,5 @@ def affords(target: str, top_h: float, area_m2: float) -> float:
     Binary on purpose: a shelf at 1.9 m is not a slightly worse place to look
     for a bowl, it is not a place to look for a bowl.
     """
-    h_min, h_max, a_min = AFFORDANCE.get(_norm(target), DEFAULT_AFFORDANCE)
+    h_min, h_max, a_min = AFFORDANCE.get(normalize_label(target), DEFAULT_AFFORDANCE)
     return 1.0 if (h_min <= top_h <= h_max and area_m2 >= a_min) else 0.0

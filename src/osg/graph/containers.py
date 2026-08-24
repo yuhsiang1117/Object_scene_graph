@@ -25,6 +25,7 @@ from typing import Optional, Sequence, Tuple
 
 import numpy as np
 
+from ..core.labels import normalize_label
 from ..mapping.costmap import HEIGHT_AXIS, PLANE
 
 # Every category here is already in core.config.DEFAULT_VOCABULARY, so the
@@ -63,11 +64,6 @@ def _height_unit() -> np.ndarray:
     e[HEIGHT_AXIS] = 1.0
     return e
 
-
-def normalize_label(label: str) -> str:
-    """Match the normalisation ObjectLayer.candidates() uses, then undo the
-    underscore so multi-word vocabulary entries ("washing machine") compare."""
-    return str(label).lower().replace("_", " ").strip()
 
 
 def is_container_label(label: str) -> bool:

@@ -19,6 +19,8 @@ import hashlib
 import re
 from pathlib import Path
 
+from ..core.labels import normalize_label
+
 
 def authored_episode_metadata(episode) -> dict:
     info = getattr(episode, "info", None) or {}
@@ -85,7 +87,7 @@ def stair_track_fields(agent) -> dict:
     """
     tracks = [
         t for t in agent.object_layer.tracks(include_blacklisted=True)
-        if str(t.label).lower().replace("_", " ") in STAIR_LABELS
+        if normalize_label(t.label) in STAIR_LABELS
     ]
     return {
         "n_stair_tracks": len(tracks),
@@ -149,7 +151,7 @@ def build_episode_record(
         reloc["step"] = 0
         reloc["offline"] = True
 
-    want = str(target).lower().replace("_", " ")
+    want = normalize_label(target)
     return {
         "episode_id": str(episode.episode_id),
         "scene": authored.get("scene", str(episode.scene_id).split("/")[-1]),
@@ -191,7 +193,7 @@ def build_episode_record(
                 "evidence": round(float(t.evidence), 3),
             }
             for t in agent.object_layer.tracks()
-            if str(t.label).lower().replace("_", " ") == want
+            if normalize_label(t.label) == want
         ],
         "state_log": agent.state_log[:40],
         "frontier_select_log": agent.frontier_select_log,

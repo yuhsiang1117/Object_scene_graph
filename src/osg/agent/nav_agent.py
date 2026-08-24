@@ -53,6 +53,7 @@ from ..verification.viewpoint import ViewpointPlanner
 from .approach import ApproachPolicy
 from .candidate import CandidatePolicy
 from .floor_policy import FloorPolicy
+from ..core.labels import normalize_label
 from .state import STOP_ACTION, TURN_ACTION, State
 
 class NavAgent:
@@ -569,12 +570,12 @@ class NavAgent:
     def _best_target_detection(self, frame: FrameData) -> Optional[Detection]:
         """Runs the detector on the current frame and returns its highest-
         confidence detection matching the target category, or None."""
-        target = self.target.lower().replace("_", " ").strip()
+        target = normalize_label(self.target)
         with self.profiler.timeit("detector"):
             dets = self.detector.detect(frame.rgb)
         matches = [
             d for d in dets
-            if d.label.lower().replace("_", " ").strip() == target and d.score > 0.25
+            if normalize_label(d.label) == target and d.score > 0.25
         ]
         return max(matches, key=lambda d: d.score) if matches else None
 

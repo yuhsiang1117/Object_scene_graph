@@ -27,7 +27,7 @@ from __future__ import annotations
 
 import json
 import math
-from dataclasses import dataclass, field
+from dataclasses import dataclass
 from typing import List, Optional, Sequence, Set
 
 import numpy as np
@@ -243,8 +243,15 @@ class PresenceFilter:
             return None
         extent = track.ellipsoid.world_extent(ray / norm)
         near = z_c - extent - self.depth_tol_m
-        far = z_c + extent + self.depth_tol_m
 
+        # Only the NEAR side is a gate, and that asymmetry is the mechanism.
+        # Depth beyond the band means the surface behind the object is visible
+        # -- the object was removed -- and that is precisely the frame whose
+        # negative evidence is worth the most, so it must NOT be gated out.
+        # Depth nearer than the band means something is in front, and a frame
+        # that cannot see the pose says nothing about it. One signed comparison
+        # separates the case that must update the belief from the case that
+        # must not.
         occluded = float(np.mean(depths < near))
         if occluded > self.occ_ratio_max:
             return None  # something is in front: this frame cannot see the pose

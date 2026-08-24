@@ -31,6 +31,7 @@ from typing import Dict, List, Optional, Sequence
 
 import numpy as np
 
+from ..core.labels import normalize_label
 from ..graph.priors import AFFINITY_POWER, UNLISTED_AFFINITY, affinity_scores, affords
 
 
@@ -92,7 +93,7 @@ def container_prior(
     if not affords(target, top_h, area_m2):
         return 0.0
     scores = affinity_scores(target, source=affinity_source)
-    key = str(label).lower().replace("_", " ").strip()
+    key = normalize_label(label)
     if not scores:
         # No prior at all for this class: every surface is equally plausible.
         affinity = 0.5

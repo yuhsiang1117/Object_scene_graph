@@ -23,7 +23,7 @@ is an index into a dict, never a change to the coordinate convention.
 """
 from __future__ import annotations
 
-from dataclasses import dataclass, field
+from dataclasses import dataclass
 from typing import Dict, Iterator, List, Optional, Tuple
 
 import numpy as np

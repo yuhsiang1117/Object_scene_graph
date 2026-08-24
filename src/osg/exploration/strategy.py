@@ -36,6 +36,7 @@ from ..mapping.costmap import PLANE, Costmap2D, nearest_free_xy
 from ..mapping.frontier import Frontier, FrontierExtractor
 from ..planning.controller import TURN_LEFT, TURN_RIGHT, _wrap, agent_heading
 from .search_belief import InspectionLog, build_container_candidates, select_candidate
+from ..core.labels import same_label
 from .selector import frontier_goal_xy, select_frontier
 
 # WaypointController.act's default arrival tolerance. Named here because
@@ -458,7 +459,7 @@ class ExplorationStrategy:
         """
         best = None
         for track in world.object_layer.tracks(include_blacklisted=True):
-            if str(track.label).lower().replace("_", " ") != str(world.target).lower().replace("_", " "):
+            if not same_label(track.label, world.target):
                 continue
             if best is None or track.presence.n_expected > best.presence.n_expected:
                 best = track

@@ -8,7 +8,6 @@ from typing import Dict, List
 
 import numpy as np
 
-from ..mapping.costmap import PLANE
 from .scene_graph import ObjectNodeView, SceneGraph
 
 NEAR_DIST_M = 1.5

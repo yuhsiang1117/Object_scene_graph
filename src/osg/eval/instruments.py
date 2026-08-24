@@ -24,6 +24,8 @@ from typing import Any, Dict, Optional, Sequence
 
 import numpy as np
 
+from ..core.labels import normalize_label
+
 
 class GroundTruthVisibility:
     """Did the agent ever LOOK at where the object actually is?
@@ -109,10 +111,10 @@ class GroundTruthVisibility:
         offaxis = math.hypot((u - k.cx) / (0.5 * k.width), (v - k.cy) / (0.5 * k.height))
         self.kf_in_view += 1
         self.best_offaxis = min(self.best_offaxis, offaxis)
-        want = str(target_label).lower().replace("_", " ").strip()
+        want = normalize_label(target_label)
         best = 0.0
         for det in dets or []:
-            if str(det.label).lower().replace("_", " ").strip() != want:
+            if normalize_label(det.label) != want:
                 continue
             x1, y1, x2, y2 = [float(c) for c in det.bbox_xyxy]
             if x1 - 8.0 <= u <= x2 + 8.0 and y1 - 8.0 <= v <= y2 + 8.0:

@@ -14,7 +14,6 @@ import numpy as np
 
 from ..mapping.costmap import HEIGHT_AXIS, PLANE, Costmap2D
 from ..objects.object_layer import ObjectLayer
-from ..perception.keyframe import KeyframeRef
 from . import containers as containers_mod
 
 
