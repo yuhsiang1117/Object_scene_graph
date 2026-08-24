@@ -37,6 +37,8 @@ from ..graph.scene_graph import SceneGraph
 from ..mapping.costmap import PLANE, Costmap2D, cell_status, nearest_free_xy
 from ..objects.object_layer import ObjectLayer
 from ..perception.detector import Detector
+from ..perception.vocabulary import target_vocabulary
+from ..pipeline.beliefs import build_affinity_prior, build_presence_filter
 from ..perception.keyframe import KeyframeSelector, KeyframeStore
 from ..planning.controller import WaypointController
 from ..planning.planner import PlanResult
@@ -50,96 +52,6 @@ STOP_ACTION = "stop"
 # arrival is classified as an unreachable stub.
 FRONTIER_ARRIVAL_TOL_M = 0.2
 TURN_ACTION = "turn_left"
-
-
-def target_vocabulary(target: str, vocabulary) -> List[str]:
-    """Target first, then the generic list with anything that COLLIDES removed.
-
-    Measured on the YCB benchmark: with the target "cracker box" the vocabulary
-    also offered the generic "box", and YOLOE labelled every sighting "box" --
-    263 mapped tracks, 3 of them the target, none of them proposable, because
-    candidates() matches on the target category. The specific class was in the
-    vocabulary and still never won.
-
-    So drop a generic entry that is a whole-word part of the target ("box" for
-    "cracker box"), and drop an exact duplicate of the target. Anything that is
-    not a sub-phrase of the target is left alone -- this narrows the vocabulary
-    only where it was actively competing with the goal.
-    """
-    target = str(target).replace("_", " ").strip()
-    words = target.lower().split()
-    out = [target]
-    for entry in vocabulary:
-        text = str(entry).replace("_", " ").strip()
-        low = text.lower()
-        if low == target.lower():
-            continue
-        parts = low.split()
-        n = len(parts)
-        if n < len(words) and any(words[i:i + n] == parts for i in range(len(words) - n + 1)):
-            continue
-        out.append(text)
-    return out
-
-
-def _make_affinity(cfg):
-    """Where does this class of object get put down? None unless asked for.
-
-    graph/priors.py has a hand-written table for the categories this project
-    has cared about; every YCB target is missing from it, and a prior of "no
-    idea" makes the search posterior fall back to a flat weight over every
-    surface in the house -- the undirected wandering C3 exists to replace.
-    """
-    ec = cfg.exploration
-    if ec is None or not ec.affinity_llm:
-        return None
-    from ..graph.containers import CONTAINER_CATEGORIES
-    from ..llm.affinity import AffinityProvider
-    from ..llm.client import ChatClient
-
-    client = None
-    if cfg.llm.api_key:
-        client = ChatClient(
-            cfg.llm.base_url, cfg.llm.text_model, cfg.llm.api_key,
-            cfg.llm.timeout_s, cfg.llm.max_image_px, cfg.llm.send_response_format,
-        )
-    return AffinityProvider(
-        client, sorted(CONTAINER_CATEGORIES),
-        cache_path=str(ec.affinity_cache or "") or None,
-    )
-
-
-def _make_presence_filter(cfg):
-    """None unless scene_graph.presence.enabled -- the filter must be an opt-in
-    A/B, not a silent default (docs/DYNAMIC_SCENES.md, Phase 1)."""
-    pc = cfg.scene_graph.presence
-    if pc is None or not pc.enabled:
-        return None
-    from ..objects.presence import PresenceFilter, RecallModel
-
-    recall = (
-        RecallModel.load(pc.recall_model_path, constant=pc.recall_constant)
-        if pc.recall_model_path
-        else RecallModel(constant=pc.recall_constant)
-    )
-    return PresenceFilter(
-        recall=recall,
-        q_false_alarm=pc.q_false_alarm,
-        l_clamp=pc.l_clamp,
-        l_clamp_pos=pc.l_clamp_pos,
-        occ_ratio_max=pc.occ_ratio_max,
-        depth_tol_m=pc.depth_tol_m,
-        # Expectation shares the ADMISSION threshold by construction: expecting
-        # detections at a size the layer would have discarded biases the filter.
-        min_area_px=cfg.scene_graph.min_det_bbox_px,
-        range_m=tuple(pc.range_m),
-        img_inside_frac=pc.img_inside_frac,
-        min_depth_samples=pc.min_depth_samples,
-        max_samples=pc.max_samples,
-        max_tracks=pc.max_tracks,
-        z_overlap_iou=pc.z_overlap_iou,
-        log_path=pc.log_path,
-    )
 
 
 class State(Enum):
@@ -212,7 +124,7 @@ class NavAgent:
             min_det_bbox_px=cfg.scene_graph.min_det_bbox_px,
             confirm_baseline_m=cfg.scene_graph.confirm_baseline_m,
             repeat_view_discount=cfg.scene_graph.repeat_view_discount,
-            presence_filter=_make_presence_filter(cfg),
+            presence_filter=build_presence_filter(cfg),
         )
         self.scene_graph = SceneGraph(
             container_top_h_m=tuple(cfg.scene_graph.container_top_h_m),
@@ -241,7 +153,7 @@ class NavAgent:
         # exploration/strategy.py.
         self.exploration = ExplorationStrategy(
             cfg, self.planner, scorer, self.viewpoint_planner,
-            _make_affinity(cfg), self.stats, self.profiler,
+            build_affinity_prior(cfg), self.stats, self.profiler,
         )
 
         self.reset(target_category)

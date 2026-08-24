@@ -259,7 +259,7 @@ def test_generic_vocabulary_entry_that_swallows_the_target_is_dropped():
     """Measured on the YCB benchmark: target "cracker box" plus a generic "box"
     in the vocabulary made YOLOE label every sighting "box", so the target was
     mapped 3 times and proposable zero times."""
-    from osg.agent.nav_agent import target_vocabulary
+    from osg.perception.vocabulary import target_vocabulary
 
     vocab = target_vocabulary("cracker box", ["chair", "box", "table"])
     assert vocab[0] == "cracker box"
@@ -268,14 +268,14 @@ def test_generic_vocabulary_entry_that_swallows_the_target_is_dropped():
 
 
 def test_the_target_is_not_listed_twice():
-    from osg.agent.nav_agent import target_vocabulary
+    from osg.perception.vocabulary import target_vocabulary
 
     vocab = target_vocabulary("chair", ["chair", "table"])
     assert vocab.count("chair") == 1
 
 
 def test_unrelated_entries_survive_and_underscores_normalise():
-    from osg.agent.nav_agent import target_vocabulary
+    from osg.perception.vocabulary import target_vocabulary
 
     vocab = target_vocabulary("tv_monitor", ["sofa", "washing machine"])
     assert vocab[0] == "tv monitor"
@@ -285,7 +285,7 @@ def test_unrelated_entries_survive_and_underscores_normalise():
 def test_a_word_that_merely_shares_a_substring_is_kept():
     """"boxer" is not a part of "cracker box" -- only whole-word sub-phrases
     compete for the same detection."""
-    from osg.agent.nav_agent import target_vocabulary
+    from osg.perception.vocabulary import target_vocabulary
 
     assert "boxer" in target_vocabulary("cracker box", ["boxer"])
 

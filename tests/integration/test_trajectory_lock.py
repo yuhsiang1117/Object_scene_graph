@@ -91,7 +91,7 @@ def run_episode(max_steps: int, real_detector: bool, extra=()):
     env = YCBAuthoredNavEnv(cfg)
     try:
         if real_detector:
-            from osg.eval.runner import build_detector
+            from osg.pipeline.components import build_detector
 
             detector = build_detector(cfg)
         else:

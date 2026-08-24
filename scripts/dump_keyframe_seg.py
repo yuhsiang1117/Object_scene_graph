@@ -24,7 +24,7 @@ register_configs()
 with initialize_config_dir(config_dir=str(Path("configs").resolve()), version_base="1.3"):
     cfg = compose(config_name="config", overrides=["eval=hm3d_val_single_floor", "llm=ollama"])
 
-from osg.eval.runner import build_detector, build_scorer  # noqa: E402
+from osg.pipeline.components import build_detector, build_scorer  # noqa: E402
 from osg.agent.nav_agent import NavAgent  # noqa: E402
 from osg.sim.habitat_env import HabitatObjectNavEnv  # noqa: E402
 

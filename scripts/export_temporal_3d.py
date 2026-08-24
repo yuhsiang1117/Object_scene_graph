@@ -29,7 +29,7 @@ with initialize_config_dir(config_dir=str(Path("configs").resolve()), version_ba
         "eval=hm3d_val_single_floor", "llm=ollama",  # local, self-contained
     ])
 
-from osg.eval.runner import build_detector, build_scorer  # noqa: E402
+from osg.pipeline.components import build_detector, build_scorer  # noqa: E402
 from osg.agent.nav_agent import NavAgent  # noqa: E402
 from osg.mapping.costmap import FREE, OCCUPIED, PLANE  # noqa: E402
 from osg.sim.habitat_env import HabitatObjectNavEnv  # noqa: E402
