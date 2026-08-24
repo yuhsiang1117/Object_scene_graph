@@ -1,0 +1,1094 @@
+<title>Stale Map Architecture</title>
+<link rel="preconnect" href="https://fonts.googleapis.com">
+<link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
+<link rel="stylesheet" href="https://fonts.googleapis.com/css2?family=IBM+Plex+Mono:wght@400;500;600&family=IBM+Plex+Sans:wght@400;500;600&family=IBM+Plex+Serif:wght@500;600&display=swap">
+
+<style>
+/* ------------------------------------------------------------------ tokens
+   Grounded in the thing the system is made of: an occupancy grid. Free,
+   occupied and unknown cells give the neutrals their cool green-grey bias;
+   the accent is instrument teal; the signal rust is reserved, everywhere on
+   the page, for a number that came out of an experiment. */
+:root {
+  --paper:      #F6F8F6;
+  --surface:    #FFFFFF;
+  --surface-2:  #EDF0EE;
+  --ink:        #12181C;
+  --ink-2:      #3D4850;
+  --muted:      #6B7780;
+  --rule:       #D9DFDA;
+  --rule-soft:  #E8ECE8;
+  --accent:     #16645F;
+  --accent-2:   #0F4B47;
+  --accent-wash:#E2EDEB;
+  --signal:     #A8481A;
+  --signal-wash:#F6E9E0;
+  --code-bg:    #101820;
+  --code-fg:    #D6DEE4;
+  --code-kw:    #77C7BE;
+  --code-str:   #D8A46A;
+  --code-com:   #6C7C86;
+  --code-num:   #E08A6A;
+  --code-def:   #A9CBE8;
+  --code-self:  #8FA3AE;
+  --shadow:     0 1px 2px rgba(18,24,28,.05), 0 8px 24px -16px rgba(18,24,28,.28);
+}
+@media (prefers-color-scheme: dark) {
+  :root:not([data-theme="light"]) {
+    --paper:      #0C1116;
+    --surface:    #131A20;
+    --surface-2:  #182028;
+    --ink:        #E6EDEA;
+    --ink-2:      #B4C0C4;
+    --muted:      #8695A0;
+    --rule:       #253038;
+    --rule-soft:  #1C252C;
+    --accent:     #4FB3A9;
+    --accent-2:   #7ACCC3;
+    --accent-wash:#12292B;
+    --signal:     #E39466;
+    --signal-wash:#2C1D14;
+    --code-bg:    #0A1015;
+    --shadow:     0 1px 2px rgba(0,0,0,.4), 0 10px 30px -18px rgba(0,0,0,.8);
+  }
+}
+:root[data-theme="dark"] {
+  --paper:      #0C1116;
+  --surface:    #131A20;
+  --surface-2:  #182028;
+  --ink:        #E6EDEA;
+  --ink-2:      #B4C0C4;
+  --muted:      #8695A0;
+  --rule:       #253038;
+  --rule-soft:  #1C252C;
+  --accent:     #4FB3A9;
+  --accent-2:   #7ACCC3;
+  --accent-wash:#12292B;
+  --signal:     #E39466;
+  --signal-wash:#2C1D14;
+  --code-bg:    #0A1015;
+  --shadow:     0 1px 2px rgba(0,0,0,.4), 0 10px 30px -18px rgba(0,0,0,.8);
+}
+
+* { box-sizing: border-box; }
+
+body {
+  margin: 0;
+  background: var(--paper);
+  color: var(--ink);
+  font-family: "IBM Plex Sans", ui-sans-serif, system-ui, -apple-system, sans-serif;
+  font-size: 16px;
+  line-height: 1.62;
+  -webkit-font-smoothing: antialiased;
+}
+
+/* ------------------------------------------------------------------ shell */
+.shell {
+  max-width: 1180px;
+  margin: 0 auto;
+  padding: 0 28px 96px;
+  display: grid;
+  grid-template-columns: 214px minmax(0, 1fr);
+  gap: 56px;
+  align-items: start;
+}
+@media (max-width: 900px) {
+  .shell { grid-template-columns: minmax(0, 1fr); gap: 0; padding: 0 20px 72px; }
+  .rail { display: none; }
+}
+
+/* ------------------------------------------------------------------- rail */
+.rail {
+  position: sticky;
+  top: 0;
+  padding: 40px 0;
+  max-height: 100vh;
+  overflow-y: auto;
+  border-right: 1px solid var(--rule-soft);
+  margin-right: -28px;
+  padding-right: 28px;
+}
+.rail-label {
+  font-size: 10.5px;
+  letter-spacing: .13em;
+  text-transform: uppercase;
+  color: var(--muted);
+  font-weight: 600;
+  margin: 0 0 12px;
+}
+.rail nav { display: flex; flex-direction: column; gap: 1px; }
+.rail a {
+  color: var(--ink-2);
+  text-decoration: none;
+  font-size: 13.5px;
+  padding: 4px 8px 4px 10px;
+  border-left: 2px solid transparent;
+  border-radius: 0 3px 3px 0;
+  transition: color .12s, border-color .12s, background .12s;
+}
+.rail a:hover, .rail a:focus-visible {
+  color: var(--accent);
+  border-left-color: var(--accent);
+  background: var(--accent-wash);
+  outline: none;
+}
+.rail .sub { padding-left: 22px; font-size: 12.5px; color: var(--muted); }
+
+/* ------------------------------------------------------------------- main */
+main { padding: 40px 0 0; min-width: 0; }
+.measure { max-width: 68ch; }
+
+h1, h2, h3 {
+  font-family: "IBM Plex Serif", ui-serif, Georgia, serif;
+  text-wrap: balance;
+  color: var(--ink);
+}
+h1 {
+  font-size: clamp(34px, 5vw, 46px);
+  line-height: 1.1;
+  font-weight: 600;
+  letter-spacing: -.018em;
+  margin: 0 0 18px;
+}
+h2 {
+  font-size: 25px;
+  font-weight: 600;
+  letter-spacing: -.012em;
+  line-height: 1.22;
+  margin: 0 0 6px;
+}
+h3 {
+  font-size: 17.5px;
+  font-weight: 600;
+  margin: 0 0 8px;
+  letter-spacing: -.006em;
+}
+p { margin: 0 0 16px; }
+a { color: var(--accent); }
+
+.eyebrow {
+  font-family: "IBM Plex Mono", ui-monospace, monospace;
+  font-size: 11px;
+  letter-spacing: .16em;
+  text-transform: uppercase;
+  color: var(--accent);
+  font-weight: 500;
+  margin: 0 0 10px;
+}
+.lede {
+  font-size: 19px;
+  line-height: 1.55;
+  color: var(--ink-2);
+  margin: 0 0 28px;
+  max-width: 62ch;
+}
+.note { color: var(--muted); font-size: 14.5px; }
+
+section { padding: 44px 0 0; scroll-margin-top: 24px; }
+section + section { border-top: 1px solid var(--rule-soft); margin-top: 44px; }
+.section-head { margin-bottom: 22px; }
+.section-head p { max-width: 68ch; }
+
+/* ------------------------------------------------------- header stat strip */
+.masthead { padding: 44px 0 0; }
+.stats {
+  display: grid;
+  grid-template-columns: repeat(auto-fit, minmax(132px, 1fr));
+  gap: 1px;
+  background: var(--rule);
+  border: 1px solid var(--rule);
+  border-radius: 4px;
+  overflow: hidden;
+  margin: 30px 0 0;
+}
+.stat { background: var(--surface); padding: 14px 16px 15px; }
+.stat dt {
+  font-size: 10.5px;
+  letter-spacing: .1em;
+  text-transform: uppercase;
+  color: var(--muted);
+  font-weight: 600;
+  margin: 0 0 5px;
+}
+.stat dd {
+  margin: 0;
+  font-family: "IBM Plex Mono", ui-monospace, monospace;
+  font-size: 21px;
+  font-weight: 500;
+  font-variant-numeric: tabular-nums;
+  color: var(--ink);
+  letter-spacing: -.01em;
+}
+.stat dd .unit { font-size: 12.5px; color: var(--muted); margin-left: 3px; }
+
+/* -------------------------------------------------------------------- code */
+.code-wrap { margin: 0 0 4px; }
+figure.snippet {
+  margin: 24px 0;
+  border: 1px solid var(--rule);
+  border-radius: 5px;
+  overflow: hidden;
+  background: var(--code-bg);
+  box-shadow: var(--shadow);
+}
+figure.snippet figcaption {
+  font-family: "IBM Plex Mono", ui-monospace, monospace;
+  font-size: 11.5px;
+  color: var(--code-self);
+  background: rgba(255,255,255,.035);
+  padding: 8px 16px;
+  border-bottom: 1px solid rgba(255,255,255,.07);
+  letter-spacing: .01em;
+  display: flex;
+  justify-content: space-between;
+  gap: 16px;
+}
+figure.snippet figcaption .tag {
+  color: var(--code-kw);
+  text-transform: uppercase;
+  letter-spacing: .12em;
+  font-size: 10px;
+  align-self: center;
+}
+pre {
+  margin: 0;
+  padding: 16px 18px 18px;
+  overflow-x: auto;
+  font-family: "IBM Plex Mono", ui-monospace, "SF Mono", Menlo, monospace;
+  font-size: 13px;
+  line-height: 1.62;
+  color: var(--code-fg);
+  tab-size: 4;
+}
+code { font-family: "IBM Plex Mono", ui-monospace, monospace; }
+p code, li code, td code, .evidence code {
+  font-size: .88em;
+  background: var(--surface-2);
+  border: 1px solid var(--rule-soft);
+  border-radius: 3px;
+  padding: .08em .34em;
+  color: var(--ink-2);
+}
+.tok-kw   { color: var(--code-kw); }
+.tok-str  { color: var(--code-str); }
+.tok-com  { color: var(--code-com); font-style: italic; }
+.tok-num  { color: var(--code-num); }
+.tok-def  { color: var(--code-def); }
+.tok-self { color: var(--code-self); }
+
+/* --------------------------------------------------------------- evidence
+   The structural device of the page: in this codebase a constant is only
+   allowed to exist alongside the measurement that chose it, so every code
+   block that carries a constant is followed by the number that justifies it. */
+.evidence {
+  display: grid;
+  grid-template-columns: auto 1fr;
+  gap: 0 14px;
+  align-items: baseline;
+  margin: -12px 0 26px;
+  padding: 13px 16px 14px;
+  background: var(--signal-wash);
+  border: 1px solid var(--rule);
+  border-top: none;
+  border-radius: 0 0 5px 5px;
+  font-size: 14.2px;
+  line-height: 1.5;
+  color: var(--ink-2);
+}
+.evidence .label {
+  font-family: "IBM Plex Mono", ui-monospace, monospace;
+  font-size: 10px;
+  letter-spacing: .13em;
+  text-transform: uppercase;
+  color: var(--signal);
+  font-weight: 600;
+  padding-top: 3px;
+  white-space: nowrap;
+}
+.evidence p { margin: 0; }
+.evidence p + p { margin-top: 7px; }
+.num {
+  font-family: "IBM Plex Mono", ui-monospace, monospace;
+  font-variant-numeric: tabular-nums;
+  color: var(--signal);
+  font-weight: 500;
+  font-size: .95em;
+}
+
+/* ------------------------------------------------------------------ tables */
+.table-scroll { overflow-x: auto; margin: 22px 0 26px; }
+table {
+  border-collapse: collapse;
+  width: 100%;
+  font-size: 14px;
+  min-width: 480px;
+}
+th, td {
+  text-align: left;
+  padding: 8px 14px 8px 0;
+  border-bottom: 1px solid var(--rule-soft);
+  vertical-align: top;
+}
+thead th {
+  font-size: 10.5px;
+  letter-spacing: .11em;
+  text-transform: uppercase;
+  color: var(--muted);
+  font-weight: 600;
+  border-bottom: 1px solid var(--rule);
+  padding-bottom: 7px;
+}
+td.n, th.n {
+  font-family: "IBM Plex Mono", ui-monospace, monospace;
+  font-variant-numeric: tabular-nums;
+  text-align: right;
+  padding-right: 18px;
+}
+tbody tr.peak td { background: var(--accent-wash); }
+tbody tr.peak td:first-child { font-weight: 600; }
+td .best { color: var(--signal); font-weight: 600; }
+td.mod code { background: none; border: none; padding: 0; color: var(--accent); font-size: 13px; }
+
+/* ------------------------------------------------------------------- misc */
+.callout {
+  border-left: 2px solid var(--accent);
+  padding: 2px 0 2px 18px;
+  margin: 24px 0;
+  color: var(--ink-2);
+  max-width: 66ch;
+}
+.callout strong { color: var(--ink); }
+ul.plain { margin: 0 0 18px; padding-left: 20px; max-width: 66ch; }
+ul.plain li { margin-bottom: 9px; }
+.pill {
+  display: inline-block;
+  font-family: "IBM Plex Mono", ui-monospace, monospace;
+  font-size: 11px;
+  letter-spacing: .06em;
+  padding: 2px 8px;
+  border-radius: 999px;
+  border: 1px solid var(--rule);
+  color: var(--muted);
+  background: var(--surface);
+}
+footer {
+  margin-top: 56px;
+  padding-top: 22px;
+  border-top: 1px solid var(--rule);
+  color: var(--muted);
+  font-size: 13.5px;
+}
+@media (prefers-reduced-motion: reduce) {
+  * { transition: none !important; animation: none !important; }
+}
+</style>
+
+<div class="shell">
+<aside class="rail">
+  <p class="rail-label">Contents</p>
+  <nav>
+    <a href="#premise">The premise</a>
+    <a href="#loop">One step</a>
+    <a href="#modules">Module map</a>
+    <a href="#mechanisms">Four mechanisms</a>
+    <a class="sub" href="#presence">1 · Presence</a>
+    <a class="sub" href="#identity">2 · Identity</a>
+    <a class="sub" href="#search">3 · Search posterior</a>
+    <a class="sub" href="#absence">4 · Absence</a>
+    <a href="#benchmark">Benchmark &amp; results</a>
+    <a href="#instrument">The instrument</a>
+    <a href="#vocabulary">Vocabulary</a>
+    <a href="#limits">Limitations</a>
+    <a href="#locks">Behaviour locks</a>
+  </nav>
+</aside>
+
+<main>
+<header class="masthead">
+  <p class="eyebrow">osg · dynamic-scene objectnav</p>
+  <h1>A map that is confidently wrong</h1>
+  <p class="lede">
+    Most object-goal navigation assumes an <em>incomplete</em> map. This system is
+    built for a map that is actively <em>wrong</em>: it says the bowl is on the
+    desk, and the bowl has been moved to the bed. Every mechanism below exists to
+    let a map be wrong, notice, and recover.
+  </p>
+  <dl class="stats">
+    <div class="stat"><dt>Scenes × episodes</dt><dd>3 <span class="unit">× 96</span></dd></div>
+    <div class="stat"><dt>Best in-anchor SR</dt><dd>0.625</dd></div>
+    <div class="stat"><dt>Best cross-anchor SR</dt><dd>0.396</dd></div>
+    <div class="stat"><dt>Run-to-run noise</dt><dd>≈1 <span class="unit">ep</span></dd></div>
+    <div class="stat"><dt>Pinned defaults</dt><dd>211</dd></div>
+  </dl>
+</header>
+
+<section id="premise">
+  <div class="section-head">
+    <p class="eyebrow">Protocol</p>
+    <h2>The staleness is the experiment</h2>
+  </div>
+  <div class="measure">
+    <p>
+      The benchmark runs in two passes. Pass&nbsp;1 explores a static layout and
+      writes one map snapshot per scene. The objects are then moved. Pass&nbsp;2
+      starts from that snapshot, so the agent begins each episode already
+      believing something false.
+    </p>
+    <p>
+      This is deliberate and it is the whole point. An agent that rebuilds its
+      map from scratch every episode is never wrong about anything, and therefore
+      measures nothing.
+    </p>
+  </div>
+  <div class="callout">
+    <strong>Two protocol choices make the numbers harder, not easier.</strong>
+    The prior map is genuinely stale rather than merely absent
+    (<code>ycb.map_in</code>), and a query gets several navigation attempts —
+    because DualMap, the system being compared against, allows several. Scoring a
+    single attempt would have flattered these results.
+  </div>
+</section>
+
+<section id="loop">
+  <div class="section-head">
+    <p class="eyebrow">Control</p>
+    <h2>One step</h2>
+    <p class="measure">
+      <code>NavAgent.act(frame)</code> is the entire control loop, and it reads as
+      its own summary. Each line is one module; <code>nav_agent.py</code> owns the
+      state machine and nothing else.
+    </p>
+  </div>
+  <figure class="snippet">
+    <figcaption><span>src/osg/agent/nav_agent.py</span><span class="tag">the pipeline</span></figcaption>
+    <pre data-lang="py">def _act_inner(self, frame):
+    floor_y = self.floors.observe(frame, self.step_count)   # which storey
+    self.costmap.update(frame, floor_y=floor_y, ...)        # depth -&gt; occupancy
+
+    if self.kf_selector.is_keyframe(frame.T_wc):
+        self._on_keyframe(frame)                            # detect, map, believe
+        if self.cfg.exploration.search_posterior:
+            self.exploration.glance(self._world(frame))     # surfaces in plain view
+
+    if self.state in (State.INIT, State.EXPLORE, State.GOTO_FRONTIER):
+        self.candidates.check()                             # does a track become a goal
+
+    ...                                                     # dispatch to the state</pre>
+  </figure>
+  <p class="measure note">
+    Before this refactor the same method opened with forty lines of multi-floor
+    bookkeeping — inert in every run of this benchmark — so the path an episode
+    actually takes could not be read off the file.
+  </p>
+</section>
+
+<section id="modules">
+  <div class="section-head">
+    <p class="eyebrow">Layout</p>
+    <h2>Module map</h2>
+    <p class="measure">Each file owns one answerable question.</p>
+  </div>
+  <div class="table-scroll">
+  <table>
+    <thead><tr><th style="width:34%">Module</th><th>Owns</th></tr></thead>
+    <tbody>
+      <tr><td class="mod"><code>agent/nav_agent.py</code></td><td>The control loop and the FSM state — <code>state</code>, goal, path, candidate, deadline</td></tr>
+      <tr><td class="mod"><code>agent/state.py</code></td><td>The states and two literal actions, so a handler can name a state without importing the agent</td></tr>
+      <tr><td class="mod"><code>agent/candidate.py</code></td><td>What becomes a goal: presence, identity, evidence, reachability</td></tr>
+      <tr><td class="mod"><code>agent/approach.py</code></td><td>The terminal walk, the stop decision, the arrival sweep</td></tr>
+      <tr><td class="mod"><code>agent/floor_policy.py</code></td><td>Storeys, portals, stairs. Inert unless <code>floor.enabled</code></td></tr>
+      <tr><td class="mod"><code>exploration/strategy.py</code></td><td>Where to go next — frontiers and mapped surfaces under one index</td></tr>
+      <tr><td class="mod"><code>exploration/search_belief.py</code></td><td><code>b(x)</code>, <code>d(x)</code>, and the log that retires a searched surface</td></tr>
+      <tr><td class="mod"><code>objects/presence.py</code></td><td>Is the object still at its mapped pose</td></tr>
+      <tr><td class="mod"><code>verification/absence.py</code></td><td>“I got there and it was not there”, as evidence</td></tr>
+      <tr><td class="mod"><code>graph/priors.py</code></td><td>Affordance and affinity — which surfaces could hold this class</td></tr>
+      <tr><td class="mod"><code>graph/map_store.py</code></td><td>The snapshot pass 1 writes and pass 2 loads</td></tr>
+      <tr><td class="mod"><code>pipeline/components.py</code></td><td>Which detector, scorer, verifier, benchmark</td></tr>
+      <tr><td class="mod"><code>pipeline/beliefs.py</code></td><td>Which belief models, with which constants</td></tr>
+      <tr><td class="mod"><code>perception/vocabulary.py</code></td><td>Which query strings the detector is asked about</td></tr>
+      <tr><td class="mod"><code>eval/runner.py</code></td><td>Build the stack, drive every episode, summarise</td></tr>
+      <tr><td class="mod"><code>eval/attempts.py</code></td><td>Several navigation attempts per query</td></tr>
+      <tr><td class="mod"><code>eval/prior_map.py</code></td><td>The two-pass protocol</td></tr>
+      <tr><td class="mod"><code>eval/instruments.py</code></td><td>Ground truth, on the runner’s side of the wall</td></tr>
+      <tr><td class="mod"><code>eval/record.py</code></td><td>The 65 fields of <code>episodes.jsonl</code></td></tr>
+    </tbody>
+  </table>
+  </div>
+</section>
+
+<section id="mechanisms">
+  <div class="section-head">
+    <p class="eyebrow">Mechanisms</p>
+    <h2>Four things a static map cannot do</h2>
+    <p class="measure">
+      Each carries the measurement that chose its constants. In this codebase a
+      number is not allowed to exist without one.
+    </p>
+  </div>
+
+  <h3 id="presence">1 · Presence — is it still there?</h3>
+  <div class="measure">
+    <p>
+      A binary Bayes filter in log-odds with three channels kept deliberately
+      apart. The middle one is what a static map lacks entirely.
+    </p>
+  </div>
+  <figure class="snippet">
+    <figcaption><span>objects/presence.py</span><span class="tag">the three channels</span></figcaption>
+    <pre data-lang="txt">Z=1, E=1 :  dl = log( r / q )            positive
+Z=0, E=1 :  dl = log( (1-r) / (1-q) )    NEGATIVE — the channel a static map lacks
+E=0      :  dl = 0                       unobserved is NOT observed-absent</pre>
+  </figure>
+  <div class="measure">
+    <p>
+      <code>E</code> — <em>would we have seen it if it were there</em> — is the
+      whole mechanism, and the depth buffer decides it almost for free. An object
+      that was <strong>removed</strong> leaves the surface behind it visible, so
+      measured depth lands <em>beyond</em> the expected band. An object hidden by
+      a door reads <em>nearer</em>. One signed comparison separates the frame that
+      must update the belief from the frame that must not — which is why only the
+      near side is gated.
+    </p>
+  </div>
+  <figure class="snippet">
+    <figcaption><span>objects/presence.py · expectation()</span><span class="tag">asymmetric by design</span></figcaption>
+    <pre data-lang="py">near = z_c - extent - self.depth_tol_m
+
+# Only the NEAR side is a gate, and that asymmetry is the mechanism.
+# Depth beyond the band means the surface behind the object is visible
+# — the object was removed — and that is precisely the frame whose
+# negative evidence is worth the most, so it must NOT be gated out.
+occluded = float(np.mean(depths &lt; near))
+if occluded &gt; self.occ_ratio_max:
+    return None     # something is in front: this frame cannot see the pose</pre>
+  </figure>
+  <div class="evidence">
+    <span class="label">Measured</span>
+    <div>
+      <p>
+        The clamp is asymmetric on purpose — <span class="num">6.0</span> down,
+        <span class="num">3.0</span> up. A sighting is worth
+        <span class="num">+2.5</span> and a miss <span class="num">−0.9</span>, so
+        a symmetric clamp saturates after three sightings and then needs
+        <span class="num">seven</span> clean misses to undo. That is exactly how a
+        ghost survives an agent standing in front of its empty shelf.
+      </p>
+      <p>
+        <code>min_presence = 0.45</code> is arithmetic, not taste. A belief
+        reloaded from a prior map at <span class="num">0.82</span> lands at
+        <span class="num">0.485</span> after one detector-strength absence reading
+        and <span class="num">0.36</span> after a VLM one. One detector miss does
+        not retire a track; a second does; one VLM answer is decisive alone.
+      </p>
+    </div>
+  </div>
+
+  <h3 id="identity">2 · Identity — is it <em>mine</em>?</h3>
+  <div class="measure">
+    <p>
+      Presence cannot answer this, and that is not a gap to patch but a different
+      question. <strong>A false positive is an object that really is there.</strong>
+      Every look that disproves it as the target also re-detects it as an object
+      and pins its belief at the positive clamp.
+    </p>
+  </div>
+  <figure class="snippet">
+    <figcaption><span>objects/object_layer.py · candidates()</span><span class="tag">the query-side payoff</span></figcaption>
+    <pre data-lang="py">out.sort(key=lambda t: -(t.best_score * t.presence.p))</pre>
+  </figure>
+  <div class="evidence">
+    <span class="label">Measured</span>
+    <div>
+      <p>
+        With the identity channel off, one episode committed to the same wrong
+        track <span class="num">251 times in 500 steps</span>, its belief held at
+        the clamp through 250 absence readings. Turning it on took repeat commits
+        to <span class="num">6</span> and livelocked episodes from
+        <span class="num">7 → 0</span>.
+      </p>
+      <p>
+        <code>max_identity_rejections = 2</code>: one arrival can end on a bad
+        heading or a consumed path — two is a decision.
+      </p>
+    </div>
+  </div>
+
+  <h3 id="search">3 · The search posterior — then look <em>there</em></h3>
+  <div class="measure">
+    <p>
+      DualMap’s answer to a failed candidate is the next-highest similarity, plus
+      an ignore list discarded when the query ends: the discrete search problem
+      with the belief thrown away. No model of where the object went, no cost of
+      getting there, no memory of what was searched, and no way for the retry loop
+      to decide to go <em>explore</em> instead.
+    </p>
+    <p>
+      The classical result is that the optimal order is by
+      <code>b(x)·d(x)/c(x)</code>, and after an unsuccessful look
+      <code>b(x) ← b(x)·(1−d(x))</code>. The pleasing part: frontier selection
+      already computes exactly this index as <code>score / path_cost</code>. So
+      nothing new is added — the candidate set is widened to include the surfaces
+      an object could have been moved to, and the two compete.
+    </p>
+  </div>
+  <figure class="snippet">
+    <figcaption><span>exploration/search_belief.py · InspectionLog</span><span class="tag">not an ignore list</span></figcaption>
+    <pre data-lang="py">def searched(self, ref_id: int, detect_prob: float) -&gt; float:
+    f = self.factor(ref_id) * (1.0 - float(np.clip(detect_prob, 0.0, 0.99)))
+    self.survived[int(ref_id)] = f
+    return f</pre>
+  </figure>
+  <div class="evidence">
+    <span class="label">Why multiply</span>
+    <div><p>
+      A visit multiplies belief rather than zeroing it, so a surface glanced at
+      from four metres stays plausible and one inspected closely mostly stops
+      being. An ignore list cannot tell those apart, and forgets both. DualMap’s
+      is the degenerate case <code>b ← 0</code> after a single look.
+    </p></div>
+  </div>
+  <div class="measure">
+    <p>
+      <code>b(x)</code> decays as <code>exp(−d/L)</code> from where the object was
+      last believed to be. <code>L</code> is <strong>1.0 m</strong>, not the 4.0 m
+      it started at, because the benchmark’s own displacements say so: in-anchor
+      moves have a median of 0.72 m and cross-anchor 6.06 m — a short mode plus a
+      long tail, not one exponential with a 4 m scale.
+    </p>
+  </div>
+  <div class="table-scroll">
+  <table>
+    <thead><tr><th>Proximity model</th><th class="n">overall</th><th class="n">in_anchor</th><th class="n">cross_anchor</th></tr></thead>
+    <tbody>
+      <tr><td>dropped after absence</td><td class="n">12/114</td><td class="n">5/57</td><td class="n">7/57</td></tr>
+      <tr><td><code>L=4.0</code>, floor 0.2</td><td class="n">20/114</td><td class="n">19/57</td><td class="n">1/57</td></tr>
+      <tr class="peak"><td><code>L=1.0</code>, no floor</td><td class="n">36/114</td><td class="n">29/57</td><td class="n">7/57</td></tr>
+    </tbody>
+  </table>
+  </div>
+  <p class="measure note">
+    Share of 114 relocations where the true destination surface lands in the top 5
+    — what one episode can afford to inspect.
+  </p>
+  <div class="evidence">
+    <span class="label">The bug</span>
+    <div>
+      <p>
+        The floor was doing damage, and instructively.
+        <code>max(exp(−d/L), floor)</code> does not <em>mix</em> two hypotheses,
+        it <strong>clips</strong>: every candidate past
+        <code>L·ln(1/floor)</code> gets an identical prior, so the whole far field
+        ties and its order collapses to track id — precisely the regime a
+        cross-anchor move lives in. Removing it took cross-anchor from
+        <span class="num">1/57</span> to <span class="num">7/57</span>.
+      </p>
+      <p>
+        A second trap: ordering and <em>scale</em> are different decisions.
+        Sharpening proximity improved every ranking number and silently switched
+        the search line off — a pilot went from <span class="num">27</span>
+        surface inspections over six episodes to <span class="num">one</span>,
+        because every candidate past the first few now scored below any frontier.
+      </p>
+    </div>
+  </div>
+
+  <h3 id="absence">4 · Absence on arrival</h3>
+  <div class="measure">
+    <p>
+      Walking to where the map said an object was, finding nothing, and stopping
+      there is how a stale map converts a success into a <em>confident</em>
+      failure — and teaches the map nothing, so the next episode makes the same
+      trip. Arriving without a sighting <em>is</em> an observation.
+    </p>
+    <p>
+      Two sensors answer, with their own measured error rates, and the filter does
+      not care which produced the reading. That is the payoff of writing presence
+      as a filter rather than as detector bookkeeping.
+    </p>
+  </div>
+  <figure class="snippet">
+    <figcaption><span>verification/absence.py</span><span class="tag">two sensors, one filter</span></figcaption>
+    <pre data-lang="py">recall, q = float(vc.detector_absence_recall), None      # r = 0.8
+if self.verifier is not None and vc.absence_use_vlm:
+    still = self.verifier.verify_still_there(frame.rgb, proj.bbox(), target)
+    if still is not None:
+        asked_vlm = True
+        recall, q = float(vc.vlm_recall), float(vc.vlm_q)   # r = 0.9, q = 0.2
+        if still:
+            # It IS there and the detector merely missed it.
+            presence_filter.apply_reading(track, True, recall, q)
+            return None</pre>
+  </figure>
+  <div class="evidence">
+    <span class="label">Measured</span>
+    <div>
+      <p>
+        Detector silence over a whole approach is <span class="num">r = 0.8</span>:
+        <span class="num">6790</span> logged expectations give a
+        <span class="num">0.812</span> detection rate in the regime the visibility
+        gate admits. The VLM, forced to choose on a zoomed crop, scored
+        <span class="num">17/20</span> on real present/absent cases.
+      </p>
+      <p>
+        So one trusted “no” is worth about two detector misses —
+        <code>log(0.15/0.98)</code> against <code>log(0.5/0.95)</code> — with no
+        fusion code at all.
+      </p>
+    </div>
+  </div>
+  <div class="measure">
+    <p>Three things it deliberately does <em>not</em> do, each a mistake that was made and measured:</p>
+    <ul class="plain">
+      <li><strong>A failed call is no information, never absence.</strong> Treating a network error, or a “blocked” answer about an obstructed view, as evidence would quietly delete objects behind doors.</li>
+      <li><strong>The detector’s silence only counts where a detection was expected.</strong> An unexpected miss says something about the view, not about the world.</li>
+      <li><strong>Abandoning is not blacklisting.</strong> On a <em>correct</em> map the agent once abandoned the bowl, wandered, and ended the episode standing 0.088 m from the goal — inside the success radius — unable to stop, because the only track that could have been the answer had been struck off for good.</li>
+    </ul>
+    <p>
+      And one thing the arrival sweep does not do: apply a negative reading per
+      frame. Twelve looks at the same object from the same pose are not twelve
+      independent observations — same range, lighting and viewing angle on the
+      same geometry — so multiplying their likelihoods turns one correlated
+      detector failure into overwhelming evidence of absence.
+      <strong>Doing it dropped SR from 0.429 to 0.286.</strong> The sweep’s job is
+      to give the detector a chance, not to vote.
+    </p>
+  </div>
+</section>
+
+<section id="benchmark">
+  <div class="section-head">
+    <p class="eyebrow">Results</p>
+    <h2>The ablation ladder</h2>
+    <p class="measure">
+      Three scenes × 96 episodes, half <code>in_anchor</code> (median displacement
+      0.72 m) and half <code>cross_anchor</code> (6.06 m). Success is Habitat’s own
+      criterion: geodesic distance from the final pose to the nearest authored view
+      point ≤ 0.18 m. One change per condition.
+    </p>
+  </div>
+  <div class="table-scroll">
+  <table>
+    <thead><tr><th style="width:8%">Cond</th><th>Change</th><th class="n">in_anchor</th><th class="n">cross_anchor</th><th class="n">overall</th><th class="n">SPL</th></tr></thead>
+    <tbody>
+      <tr><td>A</td><td>baseline</td><td class="n">0.438</td><td class="n">0.292</td><td class="n">0.365</td><td class="n">0.201</td></tr>
+      <tr><td>B0</td><td>+ identity channel</td><td class="n">0.458</td><td class="n">0.312</td><td class="n">0.385</td><td class="n">0.208</td></tr>
+      <tr><td>B</td><td>+ VLM as candidate gate</td><td class="n">0.333</td><td class="n">0.188</td><td class="n">0.260</td><td class="n">0.140</td></tr>
+      <tr class="peak"><td>C0</td><td>+ higher resolution (1280)</td><td class="n">0.542</td><td class="n">0.375</td><td class="n"><span class="best">0.458</span></td><td class="n">0.220</td></tr>
+      <tr><td>D</td><td>+ search-prior fix</td><td class="n">0.479</td><td class="n">0.292</td><td class="n">0.385</td><td class="n">0.196</td></tr>
+      <tr><td>E</td><td>+ unconditional frontier retirement</td><td class="n">0.500</td><td class="n">0.354</td><td class="n">0.427</td><td class="n">0.221</td></tr>
+      <tr><td>F</td><td>+ two surface-search changes</td><td class="n">0.479</td><td class="n"><span class="best">0.396</span></td><td class="n">0.438</td><td class="n">0.216</td></tr>
+      <tr><td>G</td><td>+ affinity fix</td><td class="n">0.479</td><td class="n">0.375</td><td class="n">0.427</td><td class="n">0.211</td></tr>
+      <tr><td>H</td><td>+ per-class detection gates</td><td class="n">0.521</td><td class="n">0.375</td><td class="n">0.448</td><td class="n">0.228</td></tr>
+      <tr><td>I</td><td>instrumentation only, no behaviour change</td><td class="n">0.500</td><td class="n">0.375</td><td class="n">0.438</td><td class="n">0.218</td></tr>
+      <tr><td>J</td><td>+ highest-scoring names</td><td class="n">0.521</td><td class="n">0.354</td><td class="n">0.438</td><td class="n">0.201</td></tr>
+      <tr class="peak"><td>K</td><td>+ specific names</td><td class="n"><span class="best">0.625</span></td><td class="n">0.271</td><td class="n">0.448</td><td class="n">0.218</td></tr>
+    </tbody>
+  </table>
+  </div>
+  <div class="callout">
+    <strong>The two difficulties trade against each other.</strong>
+    <code>cross_anchor</code> trails <code>in_anchor</code> by 0.1–0.35 throughout,
+    which is intuitive: a cross-room move forces a real <em>search</em> rather than
+    a longer look nearby. No condition is best at both. J → K changed two query
+    strings and moved in-anchor <span class="num">+0.104</span> while cross-anchor
+    fell <span class="num">−0.083</span>. Recent work has been trading between the
+    two, not lifting both.
+  </div>
+  <div class="section-head" style="margin-top:34px">
+    <h3>Mechanism results are clearer than SR</h3>
+  </div>
+  <div class="table-scroll">
+  <table>
+    <thead><tr><th style="width:44%">Result</th><th>Number</th></tr></thead>
+    <tbody>
+      <tr><td>Identity channel removes the livelock</td><td>repeat commits to one wrong track <span class="num">251 → 6</span>; livelocked episodes <span class="num">7 → 0</span></td></tr>
+      <tr><td>False-positive flood fixed (cracker box)</td><td><span class="num">15</span> tracks for one box → <span class="num">1</span>; SR <span class="num">0.143 → 0.429</span></td></tr>
+      <tr><td>Query string fixed (soup can)</td><td>in-situ recall <span class="num">0.03 → 0.19</span>; that target’s SR <span class="num">0.083 → 0.583</span></td></tr>
+      <tr><td>Perception overall (I → K)</td><td>in-situ recall <span class="num">0.357 → 0.471</span>; false-positive-only episodes <span class="num">20 → 6</span></td></tr>
+      <tr><td>The localization cliff</td><td>a track within 0.25 m of the object ⇒ SR <span class="num">0.89</span>; beyond 2 m ⇒ <span class="num">0.03</span></td></tr>
+    </tbody>
+  </table>
+  </div>
+  <div class="evidence">
+    <span class="label">Noise floor</span>
+    <div><p>
+      An operational slip launched the same condition twice; both completed all 96
+      episodes and gave SR <span class="num">0.438</span> vs
+      <span class="num">0.427</span>, with six of seven per-target SRs identical. H
+      and I (I added only instrumentation) gave <span class="num">0.448</span> vs
+      <span class="num">0.438</span>. Two independent repeats agree that
+      run-to-run noise is about <strong>one episode</strong> — so a two-or-three
+      episode difference is <em>not</em> automatically noise.
+    </p></div>
+  </div>
+</section>
+
+<section id="instrument">
+  <div class="section-head">
+    <p class="eyebrow">Instrumentation</p>
+    <h2>The measurement that ended two rounds of guessing</h2>
+    <p class="measure">
+      Twice, a conclusion was drawn about <em>why</em> episodes failed, acted on,
+      and turned out to have been a guess — because the episode record could not
+      separate <em>“the agent never pointed a camera at the new location”</em> from
+      <em>“it did, and the detection fell under the gate”</em>. Those have entirely
+      different fixes.
+    </p>
+  </div>
+  <figure class="snippet">
+    <figcaption><span>eval/instruments.py · GroundTruthVisibility</span><span class="tag">seven points, not one</span></figcaption>
+    <pre data-lang="py">PROBE_OFFSETS_M = 0.06        # the centre and ±6 cm on each axis
+MIN_VISIBLE_FRACTION = 0.5</pre>
+  </figure>
+  <div class="evidence">
+    <span class="label">Why</span>
+    <div><p>
+      Testing the centre pixel alone is far too permissive — an object nine tenths
+      hidden behind a chair back, with only its middle showing, passes. An
+      instrument that counts those as “the agent looked at it” understates in-situ
+      recall by exactly the frames where the detector had no chance.
+    </p></div>
+  </div>
+  <div class="measure">
+    <p>
+      It is <strong>ground truth</strong>, and the contract is absolute: the agent
+      is never given it, never sees these fields, and nothing in that file writes
+      to the agent. That is why it lives on the runner’s side rather than beside
+      the perception it measures.
+    </p>
+  </div>
+</section>
+
+<section id="vocabulary">
+  <div class="section-head">
+    <p class="eyebrow">Perception</p>
+    <h2>The vocabulary is not a detail</h2>
+    <p class="measure">
+      An open-vocabulary head does not detect objects; it scores <strong>names</strong>,
+      and runs class-competitive NMS over its own vocabulary. Which names are in
+      the list changes what gets found.
+    </p>
+  </div>
+  <div class="measure">
+    <p>
+      <strong>The name must be the one the detector answers to.</strong>
+      “pitcher” scores 0.00 on the YCB asset at every resolution and against eight
+      synonyms; “blue plastic pitcher” reaches 0.71. Over 96 episodes the agent had
+      the tomato soup can at least half visible in 431 keyframes and the detector
+      named it <em>twelve times</em>.
+    </p>
+    <p>
+      <strong>But it must be the <em>specific</em> name, not the highest-scoring
+      one.</strong> Re-probed at the dynamic poses, one candidate swapped into the
+      vocabulary at a time:
+    </p>
+  </div>
+  <figure class="snippet">
+    <figcaption><span>scripts/probe_ycb_detection.py</span><span class="tag">recall at the 0.30 gate</span></figcaption>
+    <pre data-lang="txt">005_tomato_soup_can            029_plate
+  cylindrical can  0.75          red dish     0.79
+  red can          0.56          red plate    0.76
+  tin can          0.55          red disc     0.70
+  tomato soup can  0.23          plate        0.47</pre>
+  </figure>
+  <div class="evidence">
+    <span class="label">Condition J</span>
+    <div><p>
+      Took the top scorers, and they cost more than they were worth. On their own
+      targets they were a large win — soup can recall
+      <span class="num">0.03 → 0.21</span>, SR
+      <span class="num">0.083 → 0.500</span> — but the rest of the vocabulary gave
+      back <span class="num">eight</span> episodes for their
+      <span class="num">seven</span>, because “cylindrical can” describes a shape
+      the pitcher and the bleach bottle also have. The cracker box went recall
+      <span class="num">0.32 → 0.58</span> and SR
+      <span class="num">0.667 → 0.333</span>. K kept “tin can” and “red plate”, and
+      took in-anchor to its best value of the campaign.
+    </p></div>
+  </div>
+  <div class="measure">
+    <p>
+      <code>box</code> and <code>book</code> are <em>deliberately absent</em> from
+      the vocabulary. A generic class that fits a target loosely takes the
+      detection away from the specific class that fits it exactly. With the target
+      “cracker box”, the detector labelled every sighting “box” — 263 mapped
+      tracks, three of them the target, none proposable. The same rule is applied
+      per episode:
+    </p>
+  </div>
+  <figure class="snippet">
+    <figcaption><span>perception/vocabulary.py · target_vocabulary()</span><span class="tag">drop the colliding generic</span></figcaption>
+    <pre data-lang="py">parts = low.split()
+n = len(parts)
+if n &lt; len(words) and any(words[i:i + n] == parts for i in range(len(words) - n + 1)):
+    continue        # "box" is a whole-word part of "cracker box" — drop it</pre>
+  </figure>
+</section>
+
+<section id="limits">
+  <div class="section-head">
+    <p class="eyebrow">Honesty</p>
+    <h2>What this cannot show</h2>
+  </div>
+  <div class="measure">
+    <h3>The benchmark’s relocations are not semantic</h3>
+    <p>
+      Of 53 moves whose destination surface is mapped, objects land on: bed 26,
+      desk 19, table 6, cabinet 3, nightstand 3, bench 2, stool 2 — and 37 of the
+      53 land on a category the affinity table does not list for that class. A
+      tomato soup can is put on a bed seven times.
+    </p>
+  </div>
+  <div class="table-scroll">
+  <table>
+    <thead><tr><th>Ranking the 114 relocations by</th><th class="n">top-1</th><th class="n">top-5</th><th class="n">median</th></tr></thead>
+    <tbody>
+      <tr><td>affinity × proximity</td><td class="n">19</td><td class="n">36</td><td class="n">5</td></tr>
+      <tr class="peak"><td>proximity alone</td><td class="n">26</td><td class="n">38</td><td class="n">2</td></tr>
+      <tr><td>affinity alone</td><td class="n">0</td><td class="n">12</td><td class="n">27</td></tr>
+      <tr><td>arbitrary order</td><td class="n">2</td><td class="n">14</td><td class="n">25</td></tr>
+    </tbody>
+  </table>
+  </div>
+  <div class="measure">
+    <p class="note">
+      Affinity alone is no better than arbitrary order, and multiplying it in makes
+      proximity <em>worse</em>. So absence from a six-entry list is not evidence
+      (<code>UNLISTED_AFFINITY = 0.5</code>) and the ranking that remains is
+      softened to a tie-breaker (<code>AFFINITY_POWER = 0.5</code>). This is a
+      limitation of the benchmark, not a result about semantic priors: on a
+      benchmark that moved objects the way people do, a stronger affinity term
+      would be worth more.
+    </p>
+    <h3 style="margin-top:26px">Perception improved across the board and SR did not move</h3>
+    <p class="note">
+      In-situ recall 0.357 → 0.471 and false-positive-only episodes 20 → 6 between
+      I and K, for an overall SR of 0.438 → 0.448. The gains are landing where
+      episodes were already being won.
+    </p>
+    <h3 style="margin-top:26px">Offline ranking metrics are scale-blind</h3>
+    <p class="note">
+      A change that improved every ranking number switched the search line off,
+      because the offline scorer measured order and the live system also reads
+      magnitude. Pilot before trusting a proxy.
+    </p>
+  </div>
+</section>
+
+<section id="locks">
+  <div class="section-head">
+    <p class="eyebrow">Testing</p>
+    <h2>Behaviour locks</h2>
+    <p class="measure">
+      Nearly every constant here was chosen by an experiment. Unit tests prove the
+      pieces still work; they cannot prove the assembled agent still does the
+      <em>same</em> thing — and that is the only claim a refactor of calibrated
+      code is allowed to make. Three locks exist for exactly that.
+    </p>
+  </div>
+  <div class="table-scroll">
+  <table>
+    <thead><tr><th style="width:30%">Lock</th><th>What it catches</th></tr></thead>
+    <tbody>
+      <tr>
+        <td class="mod"><code>test_config_snapshot</code></td>
+        <td>211 flattened defaults, pinned. A constant can only change when someone changes the snapshot too — which puts it in the diff as what it is, rather than as a line lost in a file move.</td>
+      </tr>
+      <tr>
+        <td class="mod"><code>test_episode_record_schema</code></td>
+        <td>The 65 <code>episodes.jsonl</code> keys, derived the way the runner builds them. Nine analysis scripts read this record by name and none would fail loudly on a drop — they would report zero, and the conclusion drawn from that zero would be wrong.</td>
+      </tr>
+      <tr>
+        <td class="mod"><code>test_trajectory_lock</code></td>
+        <td>A real authored episode, hashed. The stub fixture (120 steps, no GPU) covers mapping, keyframing, frontier selection and the give-up nets; the dynamic fixture (real detector + presence + search posterior, 300 steps) reaches DONE at step 236 having inspected three surfaces and made 1501 belief updates.</td>
+      </tr>
+    </tbody>
+  </table>
+  </div>
+  <div class="evidence">
+    <span class="label">Detail</span>
+    <div><p>
+      The dynamic lock asserts a counter fingerprint <em>before</em> the action
+      hash, on purpose. <code>presence_negative 477 → 471</code> names the module
+      that moved; a bare hash mismatch says only that something did.
+    </p></div>
+  </div>
+  <figure class="snippet">
+    <figcaption><span>terminal</span><span class="tag">the whole suite</span></figcaption>
+    <pre data-lang="sh">pytest tests/unit -q          # 398 passed, ~4 s, no GPU or data
+pytest tests/integration -q   # + the trajectory locks, ~65 s</pre>
+  </figure>
+</section>
+
+<footer>
+  <p>
+    <span class="pill">osg</span>
+    &nbsp;Full design and experiment log in <code>docs/DYNAMIC_SCENES.md</code>;
+    in-repo module reference in <code>docs/ARCHITECTURE.md</code>;
+    report-facing summaries in <code>docs/REPORT_zh.md</code> and
+    <code>docs/PROGRESS_zh.md</code>.
+  </p>
+</footer>
+</main>
+</div>
+
+<script>
+/* Minimal Python/shell highlighter. No CDN is reachable from an artifact, and
+   the snippets here are short and known, so a regex pass is the right size of
+   tool — it tokenises comments and strings first so keywords inside them are
+   never recoloured. */
+(function () {
+  var KW = /\b(def|class|return|if|elif|else|for|while|in|not|and|or|is|None|True|False|import|from|as|with|lambda|try|except|raise|continue|break|pass|yield|assert)\b/g;
+
+  function esc(s) {
+    return s.replace(/&/g, "&amp;").replace(/</g, "&lt;").replace(/>/g, "&gt;");
+  }
+
+  function highlight(src) {
+    var out = "";
+    var i = 0;
+    while (i < src.length) {
+      var ch = src[i];
+      // comment to end of line
+      if (ch === "#") {
+        var nl = src.indexOf("\n", i);
+        if (nl === -1) nl = src.length;
+        out += '<span class="tok-com">' + esc(src.slice(i, nl)) + "</span>";
+        i = nl;
+        continue;
+      }
+      // string literal
+      if (ch === '"' || ch === "'") {
+        var q = ch, j = i + 1;
+        while (j < src.length && src[j] !== q) {
+          if (src[j] === "\\") j++;
+          j++;
+        }
+        out += '<span class="tok-str">' + esc(src.slice(i, j + 1)) + "</span>";
+        i = j + 1;
+        continue;
+      }
+      // run of ordinary code up to the next comment or quote
+      var next = src.length;
+      ["#", '"', "'"].forEach(function (c) {
+        var k = src.indexOf(c, i);
+        if (k !== -1 && k < next) next = k;
+      });
+      var chunk = esc(src.slice(i, next));
+      chunk = chunk
+        .replace(/\b(\d+\.?\d*)\b/g, '<span class="tok-num">$1</span>')
+        .replace(KW, '<span class="tok-kw">$1</span>')
+        .replace(/\b(self|cls)\b/g, '<span class="tok-self">$1</span>')
+        .replace(/(<span class="tok-kw">def<\/span>\s+)([A-Za-z_]\w*)/g,
+                 '$1<span class="tok-def">$2</span>');
+      out += chunk;
+      i = next;
+    }
+    return out;
+  }
+
+  document.querySelectorAll('pre[data-lang="py"], pre[data-lang="sh"]').forEach(function (el) {
+    el.innerHTML = highlight(el.textContent);
+  });
+})();
+</script>
