@@ -36,7 +36,7 @@ def make_objectnav_config(cfg):
         ds.scenes_dir = cfg.eval.scenes_dir
         # Restrict to specific scenes (e.g. single-floor only: the 2D costmap /
         # room-seg scene graph cannot handle stairs). Default ["*"] = all.
-        content_scenes = getattr(cfg.eval, "content_scenes", None)
+        content_scenes = cfg.eval.content_scenes
         if content_scenes:
             ds.content_scenes = list(content_scenes)
 
@@ -69,7 +69,7 @@ def make_objectnav_config(cfg):
         # max_scene_repeat_steps (default 10000), so a ~30-episode run stays
         # inside a single scene -- unrepresentative of the val split. -1 keeps
         # the habitat default.
-        msre = getattr(cfg.eval, "max_scene_repeat_episodes", -1)
+        msre = cfg.eval.max_scene_repeat_episodes
         if msre and msre > 0:
             hab_cfg.habitat.environment.iterator_options.max_scene_repeat_episodes = msre
         hab_cfg.habitat.seed = cfg.seed
@@ -94,7 +94,7 @@ class HabitatObjectNavEnv:
         # Only used when agent.use_habitat_navmesh is set; harmless otherwise.
         self._follower = None
         self._action_name = {v: k for k, v in self.ACTIONS.items()}
-        self._navmesh_goal_radius = float(getattr(cfg.agent, "navmesh_goal_radius", 0.1))
+        self._navmesh_goal_radius = float(cfg.agent.navmesh_goal_radius)
 
     def _ensure_follower(self):
         if self._follower is None:

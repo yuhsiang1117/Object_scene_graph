@@ -99,30 +99,30 @@ def _make_affinity(cfg):
     idea" makes the search posterior fall back to a flat weight over every
     surface in the house -- the undirected wandering C3 exists to replace.
     """
-    ec = getattr(cfg, "exploration", None)
-    if ec is None or not getattr(ec, "affinity_llm", False):
+    ec = cfg.exploration
+    if ec is None or not ec.affinity_llm:
         return None
     from ..graph.containers import CONTAINER_CATEGORIES
     from ..llm.affinity import AffinityProvider
     from ..llm.client import ChatClient
 
     client = None
-    if getattr(cfg.llm, "api_key", ""):
+    if cfg.llm.api_key:
         client = ChatClient(
             cfg.llm.base_url, cfg.llm.text_model, cfg.llm.api_key,
             cfg.llm.timeout_s, cfg.llm.max_image_px, cfg.llm.send_response_format,
         )
     return AffinityProvider(
         client, sorted(CONTAINER_CATEGORIES),
-        cache_path=str(getattr(ec, "affinity_cache", "") or "") or None,
+        cache_path=str(ec.affinity_cache or "") or None,
     )
 
 
 def _make_presence_filter(cfg):
     """None unless scene_graph.presence.enabled -- the filter must be an opt-in
     A/B, not a silent default (docs/DYNAMIC_SCENES.md, Phase 1)."""
-    pc = getattr(cfg.scene_graph, "presence", None)
-    if pc is None or not getattr(pc, "enabled", False):
+    pc = cfg.scene_graph.presence
+    if pc is None or not pc.enabled:
         return None
     from ..objects.presence import PresenceFilter, RecallModel
 
@@ -135,7 +135,7 @@ def _make_presence_filter(cfg):
         recall=recall,
         q_false_alarm=pc.q_false_alarm,
         l_clamp=pc.l_clamp,
-        l_clamp_pos=getattr(pc, "l_clamp_pos", 3.0),
+        l_clamp_pos=pc.l_clamp_pos,
         occ_ratio_max=pc.occ_ratio_max,
         depth_tol_m=pc.depth_tol_m,
         # Expectation shares the ADMISSION threshold by construction: expecting
@@ -186,13 +186,13 @@ class NavAgent:
         self._nav_fn = nav_fn
         self._reachable_fn = reachable_fn
         self._use_navmesh = (
-            nav_fn is not None and bool(getattr(cfg.agent, "use_habitat_navmesh", False))
+            nav_fn is not None and bool(cfg.agent.use_habitat_navmesh)
         )
         # Terminal-view verification mode: skip the pre-approach best_crop VLM
         # call and instead verify the live close-up frame at the STOP decision
         # (see _do_approach). Requires a verifier; no-op when verifier is None.
         self._terminal_verify = (
-            verifier is not None and bool(getattr(cfg.verification, "terminal", False))
+            verifier is not None and bool(cfg.verification.terminal)
         )
         self.profiler = profiler or Profiler()
         # Debug hook: if set, called with (frame, dets) every keyframe right
@@ -205,19 +205,19 @@ class NavAgent:
         # One costmap per storey. With floor.per_floor_costmap off the stack
         # holds exactly one layer forever and `self.costmap` is that single map,
         # so the single-floor code path is byte-identical.
-        _f = getattr(cfg, "floor", None)
-        self._stairs_on = bool(getattr(_f, "stairs", False))
+        _f = cfg.floor
+        self._stairs_on = bool(_f.stairs)
         # Drive frontier goals to the free-snapped centroid rather than an
         # UNKNOWN cell. Only meaningful on the navmesh, where unknown space
         # gets snapped unpredictably; the costmap planner treats unknown as
         # traversable and is unaffected either way.
         self._frontier_goal_free = bool(
-            getattr(cfg.exploration, "frontier_goal_free_cell", False)
+            cfg.exploration.frontier_goal_free_cell
         )
         self._frontier_cost_free = bool(
-            getattr(cfg.exploration, "frontier_cost_free_cell", False)
+            cfg.exploration.frontier_cost_free_cell
         )
-        self._cross_floor_on = bool(getattr(_f, "cross_floor", False))
+        self._cross_floor_on = bool(_f.cross_floor)
         self._floor_stack = FloorStack(
             resolution_m=cfg.mapping.resolution_m,
             room_seg_kwargs=dict(
@@ -231,31 +231,31 @@ class NavAgent:
         # Which storey the agent is on (docs/MULTI_FLOOR.md). Constructed
         # unconditionally so the estimate is always logged; whether it FEEDS
         # the costmap is gated by floor.enabled / floor.estimate_only.
-        fcfg = getattr(cfg, "floor", None)
+        fcfg = cfg.floor
         self.floors = FloorEstimator(
             camera_height=cfg.agent.camera_height,
-            level_tol_m=getattr(fcfg, "level_tol_m", 0.35),
-            merge_m=getattr(fcfg, "merge_m", 0.6),
-            new_level_m=getattr(fcfg, "new_level_m", 1.8),
-            min_dwell_steps=getattr(fcfg, "min_dwell_steps", 6),
-            min_horizontal_run_m=getattr(fcfg, "min_horizontal_run_m", 2.5),
+            level_tol_m=fcfg.level_tol_m,
+            merge_m=fcfg.merge_m,
+            new_level_m=fcfg.new_level_m,
+            min_dwell_steps=fcfg.min_dwell_steps,
+            min_horizontal_run_m=fcfg.min_horizontal_run_m,
         )
         # Cross-floor exploration needs the height layer to see portals, so it
         # implies track_height even when stair detection is off.
         self._switch_policy = (
             FloorSwitchPolicy(
                 max_steps=cfg.agent.max_steps,
-                near_frontier_m=getattr(fcfg, "near_frontier_m", 4.0),
-                min_interval_steps=getattr(fcfg, "switch_min_interval", 50),
-                no_switch_before=getattr(fcfg, "no_switch_before", 50),
-                no_switch_after_frac=getattr(fcfg, "no_switch_after_frac", 0.7),
-                use_target_evidence=getattr(fcfg, "use_target_evidence", True),
-                early_switch_step=getattr(fcfg, "early_switch_step", 30),
-                min_objects_to_judge=getattr(fcfg, "min_objects_to_judge", 8),
-                strong_evidence=getattr(fcfg, "strong_evidence", 2),
-                evidence_patience_steps=getattr(fcfg, "evidence_patience_steps", 120),
+                near_frontier_m=fcfg.near_frontier_m,
+                min_interval_steps=fcfg.switch_min_interval,
+                no_switch_before=fcfg.no_switch_before,
+                no_switch_after_frac=fcfg.no_switch_after_frac,
+                use_target_evidence=fcfg.use_target_evidence,
+                early_switch_step=fcfg.early_switch_step,
+                min_objects_to_judge=fcfg.min_objects_to_judge,
+                strong_evidence=fcfg.strong_evidence,
+                evidence_patience_steps=fcfg.evidence_patience_steps,
             )
-            if getattr(fcfg, "cross_floor", False) else None
+            if fcfg.cross_floor else None
         )
         self.frontier_extractor = FrontierExtractor(
             min_cells=cfg.exploration.frontier_min_cells,
@@ -269,7 +269,7 @@ class NavAgent:
             refine_every=cfg.scene_graph.refine_every,
             refine_max_center_move_m=cfg.scene_graph.refine_max_center_move_m,
             link_dist_m=cfg.scene_graph.link_dist_m,
-            link_max_frame_gap=getattr(cfg.scene_graph, "link_max_frame_gap", None),
+            link_max_frame_gap=cfg.scene_graph.link_max_frame_gap,
             min_det_score=cfg.scene_graph.min_det_score,
             min_det_bbox_px=cfg.scene_graph.min_det_bbox_px,
             confirm_baseline_m=cfg.scene_graph.confirm_baseline_m,
@@ -280,9 +280,9 @@ class NavAgent:
             container_top_h_m=tuple(cfg.scene_graph.container_top_h_m),
             container_min_area_m2=cfg.scene_graph.container_min_area_m2,
             container_support_tol_m=cfg.scene_graph.container_support_tol_m,
-            container_min_obs=getattr(cfg.scene_graph, "container_min_obs", 1),
-            container_min_score=getattr(cfg.scene_graph, "container_min_score", 0.0),
-            container_merge_m=getattr(cfg.scene_graph, "container_merge_m", 0.0),
+            container_min_obs=cfg.scene_graph.container_min_obs,
+            container_min_score=cfg.scene_graph.container_min_score,
+            container_merge_m=cfg.scene_graph.container_merge_m,
         )
         self.keyframes = KeyframeStore(save_dir=keyframe_dir)
         self.kf_selector = KeyframeSelector(
@@ -293,7 +293,7 @@ class NavAgent:
         # selection and path planning both get the fallback).
         self.planner = HybridVoronoiPlanner(
             collision_m=cfg.agent.agent_radius + cfg.mapping.inflate_margin_m,
-            goal_near_m=getattr(cfg.exploration, "voronoi_goal_near_m", 0.7),
+            goal_near_m=cfg.exploration.voronoi_goal_near_m,
             inflate_radius_m=cfg.agent.agent_radius + cfg.mapping.inflate_margin_m,
         )
         self.controller = WaypointController(forward_m=cfg.agent.forward_m)
@@ -379,7 +379,7 @@ class NavAgent:
         # `frontier_stub_block` fired 2.87 times per failing episode against
         # 0.39 per success.
         self._frontier_reach_m = float(
-            getattr(self.cfg.exploration, "voronoi_goal_near_m", 0.7)
+            self.cfg.exploration.voronoi_goal_near_m
         ) + FRONTIER_ARRIVAL_TOL_M + 0.1
         self._candidate_id: Optional[int] = None
         self._goal_xy: Optional[np.ndarray] = None
@@ -471,12 +471,12 @@ class NavAgent:
                 (self.step_count, int(floor_id),
                  round(float(frame.camera_position[1]) - self.cfg.agent.camera_height, 3))
             )
-        fcfg = getattr(self.cfg, "floor", None)
+        fcfg = self.cfg.floor
         floor_y = self._floor_y
-        live_floor = getattr(fcfg, "enabled", False) and not getattr(fcfg, "estimate_only", True)
+        live_floor = fcfg.enabled and not fcfg.estimate_only
         if live_floor:
             floor_y = self.floors.height_of(floor_id)
-            if getattr(fcfg, "per_floor_costmap", False):
+            if fcfg.per_floor_costmap:
                 # Point the stack at the agent's storey BEFORE mapping, so this
                 # frame lands in that floor's own grid. While on stairs the
                 # estimator freezes floor_id, so the treads keep going to the
@@ -509,7 +509,7 @@ class NavAgent:
 
         if self.kf_selector.is_keyframe(frame.T_wc):
             self._on_keyframe(frame)
-            if getattr(self.cfg.exploration, "search_posterior", False):
+            if self.cfg.exploration.search_posterior:
                 self._glance_at_surfaces(frame)
 
         # Candidate target check happens in every state except terminal ones
@@ -642,7 +642,7 @@ class NavAgent:
             # agent short of the pose success is actually measured at.
             if self._approach_at_viewpoint:
                 pass
-            elif getattr(self.cfg.agent, "approach_depth_stop", True):
+            elif self.cfg.agent.approach_depth_stop:
                 if depth is not None:
                     if depth <= self.cfg.agent.approach_stop_depth_m:
                         stop_reason = "depth"
@@ -779,7 +779,7 @@ class NavAgent:
                 self.scene_graph.rebuild(
                     self._room_labels, self.costmap, self.object_layer,
                     floors=self.floors
-                    if getattr(getattr(self.cfg, "floor", None), "enabled", False) else None,
+                    if self.cfg.floor.enabled else None,
                 )
 
     def _detect_stairs(self) -> None:
@@ -860,10 +860,10 @@ class NavAgent:
             arrived = (
                 self._goal_xy is not None
                 and float(np.linalg.norm(agent_xy - self._goal_xy))
-                <= float(getattr(self.cfg.exploration, "search_arrival_m", 1.2))
+                <= float(self.cfg.exploration.search_arrival_m)
             )
             spent = self.step_count - self._search_started_step
-            if not arrived and spent < int(getattr(self.cfg.exploration, "search_max_steps", 60)):
+            if not arrived and spent < int(self.cfg.exploration.search_max_steps):
                 return  # still on the way: stay committed to this surface
             self._mark_surface_searched(arrived=arrived)
         with self.profiler.timeit("frontier_extract"):
@@ -913,7 +913,7 @@ class NavAgent:
             self._search_container = int(surface.ref_id)
             self._search_started_step = self.step_count
             self._surface_face_turns = int(
-                getattr(self.cfg.exploration, "search_face_turns", 8)
+                self.cfg.exploration.search_face_turns
             )
             # Actually GO there. Only GOTO_FRONTIER follows _goal_xy; setting the
             # goal while the state stayed EXPLORE meant the agent never moved,
@@ -1015,11 +1015,11 @@ class NavAgent:
         (1 - d), and a passing look gets a smaller d.
         """
         pf = self.object_layer.presence_filter
-        containers = getattr(self.scene_graph, "containers", None)
+        containers = self.scene_graph.containers
         if pf is None or not containers:
             return
-        d = float(getattr(self.cfg.exploration, "search_glance_detect_prob", 0.35))
-        rng = float(getattr(self.cfg.exploration, "search_glance_range_m", 4.0))
+        d = float(self.cfg.exploration.search_glance_detect_prob)
+        rng = float(self.cfg.exploration.search_glance_range_m)
         K, T_cw = frame.intrinsics.K(), frame.T_cw
         h, w = frame.depth.shape
         for cid, node in containers.items():
@@ -1045,19 +1045,19 @@ class NavAgent:
         space is worth against a plausible surface.
         """
         cfg = self.cfg.exploration
-        if not getattr(cfg, "search_posterior", False):
+        if not cfg.search_posterior:
             return None
-        if not getattr(self.scene_graph, "containers", None):
+        if not self.scene_graph.containers:
             return None
         cands = build_container_candidates(
             self.scene_graph,
             self.target,
             self._search_log,
-            detect_prob=float(getattr(cfg, "search_detect_prob", 0.8)),
+            detect_prob=float(cfg.search_detect_prob),
             last_known_xy=self._last_known_target_xy(),
-            proximity_len_m=float(getattr(cfg, "search_proximity_len_m", 1.0)),
-            proximity_floor=float(getattr(cfg, "search_proximity_floor", 0.0)),
-            surface_mass=float(getattr(cfg, "search_surface_mass", 0.5)),
+            proximity_len_m=float(cfg.search_proximity_len_m),
+            proximity_floor=float(cfg.search_proximity_floor),
+            surface_mass=float(cfg.search_surface_mass),
             plane=PLANE,
             affinity_source=self._affinity,
         )
@@ -1084,8 +1084,8 @@ class NavAgent:
         # inspections and 33 m against 45 and 40 m for a plain global argmax,
         # because crossing the house repeatedly is what the global index does
         # once the nearby surfaces are retired.
-        room_bonus = float(getattr(cfg, "search_same_room_bonus", 1.0))
-        if room_bonus > 1.0 and getattr(self.scene_graph, "rooms", None):
+        room_bonus = float(cfg.search_same_room_bonus)
+        if room_bonus > 1.0 and self.scene_graph.rooms:
             here = self.scene_graph.room_of_point(agent_xy)
             if here is not None:
                 for c in cands:
@@ -1094,12 +1094,12 @@ class NavAgent:
                         c.prior *= room_bonus
         surface = select_candidate(
             cands, self.planner, self.costmap, agent_xy,
-            top_n=int(getattr(cfg, "top_n_frontiers", 5)),
-            min_path_cost_m=float(getattr(cfg, "min_path_cost_m", 0.5)),
+            top_n=int(cfg.top_n_frontiers),
+            min_path_cost_m=float(cfg.min_path_cost_m),
         )
         if surface is None or surface.utility is None:
             return None
-        beta = float(getattr(cfg, "search_frontier_weight", 1.0))
+        beta = float(cfg.search_frontier_weight)
         if best_frontier is not None and best_frontier.path_cost:
             frontier_util = beta * (best_frontier.score or 0.0) / best_frontier.path_cost
             if frontier_util >= surface.utility:
@@ -1157,12 +1157,12 @@ class NavAgent:
             return None
         if self._surface_face_turns <= 0:
             return None
-        node = getattr(self.scene_graph, "containers", {}).get(self._search_container)
+        node = self.scene_graph.containers.get(self._search_container)
         if node is None:
             return None
         agent_xy = frame.camera_position[list(PLANE)]
         if float(np.linalg.norm(agent_xy - self._goal_xy)) > float(
-            getattr(self.cfg.exploration, "search_arrival_m", 1.2)
+            self.cfg.exploration.search_arrival_m
         ):
             return None  # not there yet; nothing to look at from here
 
@@ -1190,9 +1190,9 @@ class NavAgent:
         """
         if self._search_container is None:
             return
-        d = float(getattr(self.cfg.exploration, "search_detect_prob", 0.8))
+        d = float(self.cfg.exploration.search_detect_prob)
         if not arrived:
-            d *= float(getattr(self.cfg.exploration, "search_unreached_credit", 0.25))
+            d *= float(self.cfg.exploration.search_unreached_credit)
         remaining = self._search_log.searched(self._search_container, d)
         self.search_log_events.append(
             {
@@ -1324,10 +1324,10 @@ class NavAgent:
         An earlier +0.1 m "clearance" was enough on its own to change the snap
         result and perturb single-floor trajectories.
         """
-        fcfg = getattr(self.cfg, "floor", None)
-        if not getattr(self.cfg.agent, "navmesh_3d_goals", False):
+        fcfg = self.cfg.floor
+        if not self.cfg.agent.navmesh_3d_goals:
             return None
-        if not getattr(fcfg, "enabled", False) or not self.floors.levels:
+        if not fcfg.enabled or not self.floors.levels:
             return None
         return self.floors.height_of(self.floors.floor_of_height(float(center[1])))
 
@@ -1338,13 +1338,8 @@ class NavAgent:
             min_score=self.cfg.verification.min_score,
             min_bbox_px=self.cfg.verification.min_bbox_px,
             min_evidence=self.cfg.verification.min_evidence,
-            min_presence=getattr(
-                getattr(self.cfg.scene_graph, "presence", None), "min_presence", 0.0
-            ),
-            max_identity_rejections=int(getattr(
-                getattr(self.cfg.scene_graph, "presence", None),
-                "max_identity_rejections", 0,
-            )),
+            min_presence=self.cfg.scene_graph.presence.min_presence,
+            max_identity_rejections=int(self.cfg.scene_graph.presence.max_identity_rejections),
         )
         if not candidates:
             return
@@ -1372,9 +1367,7 @@ class NavAgent:
             # VLM verify the candidate before committing (no VERIFYING state in
             # navmesh mode). Reject -> blacklist and keep exploring; this is the
             # only FP gate in the navmesh path.
-            if self.verifier is not None and not getattr(
-                self.cfg.verification, "absence_only", False
-            ):
+            if self.verifier is not None and not self.cfg.verification.absence_only:
                 with self.profiler.timeit("verification"):
                     ok = self.verifier.verify(track, self.target)
                 if not ok:
@@ -1497,7 +1490,7 @@ class NavAgent:
         target was there, this is a geometry or timing problem, not absence.
         """
         vc = self.cfg.verification
-        if not getattr(vc, "absence_on_arrival", True):
+        if not vc.absence_on_arrival:
             return None
         pf = self.object_layer.presence_filter
         track = (
@@ -1510,17 +1503,17 @@ class NavAgent:
         # ask it about the target's own footprint rather than trusting the
         # detector's silence alone. A failed call returns None and is treated as
         # no information, never as absence.
-        recall, q = float(getattr(vc, "detector_absence_recall", 0.5)), None
+        recall, q = float(vc.detector_absence_recall), None
         asked_vlm = False
-        if self.verifier is not None and getattr(vc, "absence_use_vlm", True):
+        if self.verifier is not None and vc.absence_use_vlm:
             proj = track.ellipsoid.project(frame.intrinsics.K(), frame.T_cw)
             if proj is not None:
                 with self.profiler.timeit("absence_vlm"):
                     still = self.verifier.verify_still_there(frame.rgb, proj.bbox(), self.target)
                 if still is not None:
                     asked_vlm = True
-                    recall = float(getattr(vc, "vlm_recall", 0.9))
-                    q = float(getattr(vc, "vlm_q", 0.2))
+                    recall = float(vc.vlm_recall)
+                    q = float(vc.vlm_q)
                     if still:
                         # It IS there and the detector merely missed it. Let the
                         # stop stand -- this is the case that made a correct map
@@ -1531,7 +1524,7 @@ class NavAgent:
         # means something where a detection was likely (frustum, range, apparent
         # size, occlusion -- C1 already answers this). A VLM that answered about
         # the region has already looked, so its answer stands on its own.
-        if not asked_vlm and getattr(vc, "absence_requires_expectation", True):
+        if not asked_vlm and vc.absence_requires_expectation:
             # A sweep that expected to see it at ANY heading has looked at it.
             if self._scan_expected == 0 and pf.expectation(track, frame, center_only=True) is None:
                 self.stats["absence_not_expected"] = self.stats.get("absence_not_expected", 0) + 1
@@ -1542,7 +1535,7 @@ class NavAgent:
         if asked_vlm:
             self.stats["absence_vlm"] = self.stats.get("absence_vlm", 0) + 1
 
-        if p >= float(getattr(vc, "abandon_below_p", 0.35)):
+        if p >= float(vc.abandon_below_p):
             return None  # still believed: stop as before, and keep the evidence
         self.stats["absence_abandon"] = self.stats.get("absence_abandon", 0) + 1
         # Walking to a mapped pose and not finding the TARGET says something the
@@ -1600,7 +1593,7 @@ class NavAgent:
         # of the camera before the VLM call, then verify that well-framed frame.
         if (
             self.verifier is not None
-            and getattr(self.cfg.verification, "center_before_verify", True)
+            and self.cfg.verification.center_before_verify
         ):
             det = self._best_target_detection(frame)
             if det is not None:
@@ -1687,7 +1680,7 @@ class NavAgent:
         # None keeps the legacy "use the agent's own height" behaviour.
         self._goal_floor_y_cache = floor_y
         self._approach_at_viewpoint = False
-        if self._use_navmesh and getattr(self.cfg.agent, "approach_to_viewpoint", False):
+        if self._use_navmesh and self.cfg.agent.approach_to_viewpoint:
             # HM3D scores success as the distance from the final pose to the
             # nearest GOAL VIEW POINT, and those are sampled on rings at fixed
             # radii around the object. Stopping when the target's depth reaches
@@ -1741,12 +1734,12 @@ class NavAgent:
             # Navigate to the object itself; the navmesh snaps to the nearest
             # standable point (effectively a viewpoint), like old /goal_object.
             self._goal_xy = obj_xy.copy()
-        elif getattr(self.cfg.agent, "approach_navigable_goal", False) and agent_xy is not None:
+        elif self.cfg.agent.approach_navigable_goal and agent_xy is not None:
             self._goal_xy = self._approach_goal_xy(obj_xy, agent_xy)
         else:
             self._goal_xy = self._nearest_free_xy(obj_xy)
         self._target_obj_xy = obj_xy.copy()
-        self._scan_turns_left = int(getattr(self.cfg.agent, "approach_scan_turns", 12))
+        self._scan_turns_left = int(self.cfg.agent.approach_scan_turns)
         self._scan_expected = 0
         self.state = State.APPROACH
         self._current_path = None

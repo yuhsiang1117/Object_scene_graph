@@ -20,11 +20,10 @@ are set.
 """
 from __future__ import annotations
 
-import types
-
 import numpy as np
 
 from osg.agent.nav_agent import STOP_ACTION, NavAgent, State
+from osg.core.config import OSGConfig
 from osg.core.types import CameraIntrinsics, Detection
 from osg.exploration.async_scorer import AsyncScorer
 from osg.exploration.scorer import FrontierScorer
@@ -45,54 +44,32 @@ APPROACH_BBOX_THRESHOLD = 40_000.0
 _INTRINSICS = CameraIntrinsics(fx=320.0, fy=320.0, cx=320.0, cy=240.0, width=640, height=480)
 
 
-def make_cfg(**agent_overrides) -> types.SimpleNamespace:
-    cfg = types.SimpleNamespace(
-        mapping=types.SimpleNamespace(
-            resolution_m=0.05, inflate_margin_m=0.07,
-            obstacle_low_m=0.1, obstacle_high_m=1.5, max_range_m=5.0, depth_stride=4,
-        ),
-        exploration=types.SimpleNamespace(
-            frontier_min_cells=8, frontier_dedup_m=1.0,
-            unscored_prior=0.3, min_path_cost_m=0.5, top_n_frontiers=5,
-            info_gain_weight=2.0, info_gain_radius_m=2.5,
-            # Defaults from ExplorationConfig; the stub must carry every field
-            # _select_new_frontier reads or it fails with AttributeError
-            # rather than testing anything.
-            los_visibility_penalty=1.0, continuity_weight=0.0,
-            search_posterior=False, search_detect_prob=0.8,
-            search_proximity_len_m=1.0, search_proximity_floor=0.0,
-            search_frontier_weight=1.0, voronoi_goal_near_m=0.7,
-            search_surface_mass=0.5,
-            affinity_llm=False, affinity_cache="",
-            search_arrival_m=1.2, search_max_steps=60, search_unreached_credit=0.25,
-            search_glance_detect_prob=0.35, search_glance_range_m=4.0, search_same_room_bonus=4.0,
-        ),
-        scene_graph=types.SimpleNamespace(
-            room_min_radius_m=0.9, room_door_width_m=1.2,
-            assoc_score_thresh=0.4, assoc_depth_gate_m=0.5, assoc_category_gate=True,
-            min_obs_for_refine=3, refine_every=3, refine_max_center_move_m=0.5,
-            link_dist_m=1.0, link_max_frame_gap=50,
-            keyframe_trans_m=0.25, keyframe_rot_deg=30.0, room_seg_every_kf=10,
-            min_det_score=0.35, min_det_bbox_px=1500.0, confirm_baseline_m=0.0,
-            repeat_view_discount=0.2,
-            container_top_h_m=(0.2, 1.4), container_min_area_m2=0.06,
-            container_support_tol_m=0.15, container_min_obs=2, container_min_score=0.5, container_merge_m=1.0,
-        ),
-        agent=types.SimpleNamespace(
-            agent_radius=0.18, forward_m=0.25, turn_deg=30.0, initial_scan=False,
-            camera_height=0.88, approach_stop_bbox_px=APPROACH_BBOX_THRESHOLD,
-            approach_stop_depth_m=1.0, approach_max_steps=12,
-            approach_goal_tolerance_m=0.12, approach_arrival_tol_m=0.1,
-            approach_to_viewpoint=False, approach_scan_turns=12,
-        ),
-        verification=types.SimpleNamespace(
-            ring_radii_m=[0.8, 1.2, 1.5, 2.0], min_obs=3, min_score=0.45, min_bbox_px=3000.0,
-            min_evidence=0.0,
-            absence_on_arrival=True, absence_requires_expectation=True, detector_absence_recall=0.5, absence_use_vlm=True,
-            vlm_recall=0.9, vlm_q=0.2, absence_only=False, absence_categories_max=5, abandon_below_p=1.0,
-        ),
-        detector=types.SimpleNamespace(vocabulary=["chair", "bed"]),
-    )
+def make_cfg(**agent_overrides):
+    """The SHIPPED config, plus the handful of values these tests deliberately
+    differ on.
+
+    This used to be a forty-field `SimpleNamespace` mirroring whichever fields
+    NavAgent happened to read. Two things went wrong with that. It had to be
+    extended by hand every time the agent read a new field, and it silently
+    drifted: `search_surface_mass` sat at 0.5 here against 1.0 shipped,
+    `detector_absence_recall` at 0.5 against 0.8, `room_door_width_m` at 1.2
+    against 2.0 -- so the tests were asserting on constants nothing runs with.
+
+    `OSGConfig()` needs no Hydra and no yaml. Anything below is a test
+    condition, stated in one visible line, and anything NOT below is exercised
+    at the value the benchmark actually uses.
+    """
+    cfg = OSGConfig()
+    # No 360-degree scan: these tests drive one state at a time and a twelve
+    # step spin at the top of every episode is not the thing under test.
+    cfg.agent.initial_scan = False
+    # Hand-built costmaps here are filled with FREE and a few OCCUPIED cells;
+    # the obstacle band that produced them is not part of any assertion.
+    cfg.mapping.obstacle_low_m = 0.1
+    # Candidate tests build tracks from one or two synthetic detections, which
+    # cannot clear an evidence bar meant for real multi-view accumulation.
+    cfg.verification.min_evidence = 0.0
+    cfg.detector.vocabulary = ["chair", "bed"]
     for k, v in agent_overrides.items():
         setattr(cfg.agent, k, v)
     return cfg

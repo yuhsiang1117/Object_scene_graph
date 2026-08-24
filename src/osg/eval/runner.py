@@ -73,7 +73,7 @@ def build_scorer(cfg) -> AsyncScorer:
     # Geometric-only exploration (no LLM): nearest frontier weighted by
     # exploration range (info gain). select_frontier falls back to
     # unscored_prior for every frontier.
-    if getattr(cfg.exploration, "scorer", "llm_text") in ("nearest", "geometric", "none"):
+    if cfg.exploration.scorer in ("nearest", "geometric", "none"):
         from ..exploration.scorer import NullScorer
         return AsyncScorer(NullScorer())
     # Old-algorithm pipeline: text-LLM frontier ranking over the scene-graph
@@ -106,7 +106,7 @@ def build_verifier(cfg):
     return VLMVerifier(
         client,
         accept_confidence=cfg.verification.accept_confidence,
-        choice_mode=getattr(cfg.verification, "choice_mode", True),
+        choice_mode=cfg.verification.choice_mode,
     )
 
 
@@ -117,7 +117,7 @@ def build_detector(cfg):
         return YoloeDetector(
             weights=cfg.detector.weights,
             conf=cfg.detector.conf,
-            class_conf=dict(getattr(cfg.detector, "class_conf", {}) or {}),
+            class_conf=dict(cfg.detector.class_conf or {}),
             imgsz=cfg.detector.imgsz,
             half=cfg.detector.half,
             device=cfg.detector.device,
@@ -408,14 +408,13 @@ def _rearm_agent(agent, cfg, steps: int) -> None:
     )
     presence = getattr(agent.object_layer, "presence_filter", None)
     if track is not None and presence is not None:
-        vc = getattr(cfg, "verification", None)
+        vc = cfg.verification
         presence.apply_reading(
             track, False,
-            float(getattr(vc, "vlm_recall", 0.9)),
-            float(getattr(vc, "vlm_q", 0.2)),
+            float(vc.vlm_recall),
+            float(vc.vlm_q),
         )
-        pc = getattr(cfg.scene_graph, "presence", None)
-        bar = float(getattr(pc, "min_presence", 0.45)) if pc else 0.45
+        bar = float(cfg.scene_graph.presence.min_presence)
         bar = min(max(bar, 1e-3), 1.0 - 1e-3)
         # One detector-strength step below the bar: far enough that this attempt
         # is over, near enough that one sighting undoes it.
@@ -455,7 +454,7 @@ def _map_path(root: str, scene: str) -> Path:
 
 def _save_map(cfg, agent, episode) -> None:
     """Pass 1: keep the map this episode built, keyed by scene."""
-    root = str(getattr(cfg.ycb, "map_out", "") or "")
+    root = str(cfg.ycb.map_out or "")
     if not root:
         return
     from ..graph.map_store import save_map
@@ -471,17 +470,16 @@ def _save_map(cfg, agent, episode) -> None:
 
 def _load_prior_map(cfg, agent, scene: str) -> Optional[dict]:
     """Pass 2: start from the map pass 1 built, not from an empty one."""
-    root = str(getattr(cfg.ycb, "map_in", "") or "")
+    root = str(cfg.ycb.map_in or "")
     if not root:
         return None
     from ..graph.map_store import apply_map, load_map
 
     path = _map_path(root, scene)
     blob = load_map(path)
-    pc = getattr(cfg.scene_graph, "presence", None)
     n = apply_map(
         agent, blob,
-        max_log_odds=float(getattr(pc, "reload_max_log_odds", 1.5)) if pc else 1.5,
+        max_log_odds=float(cfg.scene_graph.presence.reload_max_log_odds),
     )
     return {
         "path": str(path),
@@ -577,7 +575,7 @@ def run_eval(cfg) -> dict:
     out_dir.mkdir(parents=True, exist_ok=True)
 
     _unload_ollama_models(cfg)
-    eval_mode = str(getattr(cfg.eval, "mode", "objectnav"))
+    eval_mode = str(cfg.eval.mode)
     if eval_mode == "ycb_authored":
         from ..sim.ycb_env import YCBAuthoredNavEnv
 
@@ -657,7 +655,7 @@ def run_eval(cfg) -> dict:
         # An attempt ends when the agent decides to STOP; if that decision does
         # not score, the map keeps everything it learned (beliefs, searched
         # surfaces, new objects) and the agent is re-armed for another go.
-        attempts_allowed = max(1, int(getattr(cfg.eval, "attempts", 1)))
+        attempts_allowed = max(1, int(cfg.eval.attempts))
         attempts_used, attempt_log = 1, []
         gt_view = _GroundTruthVisibility(
             _authored_episode_metadata(episode).get("target_position"))

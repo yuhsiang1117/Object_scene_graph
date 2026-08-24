@@ -578,9 +578,9 @@ class _RelocationPolicy:
 
     def __init__(self, cfg, layouts: Sequence[AuthoredLayout]) -> None:
         ycb = cfg.ycb
-        self.at_step = int(getattr(ycb, "relocate_at_step", -1))
-        self.when = str(getattr(ycb, "relocate_when", "any"))
-        self.deadline_steps = int(getattr(ycb, "relocate_deadline_steps", 120))
+        self.at_step = int(ycb.relocate_at_step)
+        self.when = str(ycb.relocate_when)
+        self.deadline_steps = int(ycb.relocate_deadline_steps)
         # Firing mid-episode is opt-in, but KNOWING the pair is not: the
         # two-pass protocol changes the world between runs, and the metrics
         # still need to know what moved and where it moved from.
@@ -620,7 +620,7 @@ class YCBAuthoredNavEnv(HabitatObjectNavEnv):
         self._relocation = _RelocationPolicy(cfg, self.prepared.discovery.layouts)
         dataset = _make_dataset(
             self.prepared, self._layout_by_key,
-            targets=[str(t) for t in getattr(cfg.ycb, "targets", []) or []],
+            targets=[str(t) for t in cfg.ycb.targets or []],
         )
         self._hab_cfg = make_objectnav_config(cfg)
         self.env = habitat.Env(config=self._hab_cfg, dataset=dataset)
@@ -632,7 +632,7 @@ class YCBAuthoredNavEnv(HabitatObjectNavEnv):
         self._frame_id = 0
         self._follower = None
         self._action_name = {value: key for key, value in self.ACTIONS.items()}
-        self._navmesh_goal_radius = float(getattr(cfg.agent, "navmesh_goal_radius", 0.1))
+        self._navmesh_goal_radius = float(cfg.agent.navmesh_goal_radius)
         self._active_objects: List[Any] = []
 
     def reset(self):
