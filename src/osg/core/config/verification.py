@@ -73,6 +73,11 @@ class VerificationConfig:
     # through furniture) must not trigger the expensive approach+verify loop.
     min_score: float = 0.45
     min_bbox_px: int = 3000
+    # The same exemption one stage later. Without it the deadlock simply moves:
+    # a track seeded from a distant sighting can only grow its best box by being
+    # approached, and it can only be approached by being proposed. Of the 11
+    # deadlocked episodes, 8 clear this gate once admitted and 3 do not.
+    target_bypasses_bbox_gate: bool = False
     # Evidence-score gate (P1i follow-up, 2026-07-19): threshold picked from
     # a real 8-episode/1343-track measurement (scripts/orphan_node_check.py)
     # of evidence separated by whether a track ever reached candidate

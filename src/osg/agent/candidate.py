@@ -64,6 +64,7 @@ class CandidatePolicy:
             min_evidence=self.nav.cfg.verification.min_evidence,
             min_presence=self.nav.cfg.scene_graph.presence.min_presence,
             max_identity_rejections=int(self.nav.cfg.scene_graph.presence.max_identity_rejections),
+            target_bypasses_bbox=self.nav.cfg.verification.target_bypasses_bbox_gate,
         )
         if not candidates:
             return

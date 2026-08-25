@@ -117,6 +117,7 @@ class NavAgent:
             confirm_baseline_m=cfg.scene_graph.confirm_baseline_m,
             repeat_view_discount=cfg.scene_graph.repeat_view_discount,
             presence_filter=build_presence_filter(cfg),
+            target_bypasses_gates=cfg.scene_graph.target_bypasses_gates,
         )
         self.scene_graph = SceneGraph(
             container_top_h_m=tuple(cfg.scene_graph.container_top_h_m),
@@ -272,6 +273,7 @@ class NavAgent:
         self.detector.set_vocabulary(
             target_vocabulary(self.target, self.cfg.detector.vocabulary)
         )
+        self.object_layer.set_target(self.target)
 
     def rearm(self, max_steps: int) -> None:
         """Give the agent another attempt without giving it a new map.

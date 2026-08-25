@@ -115,6 +115,30 @@ class SceneGraphConfig:
     # (frontier scoring, room segmentation, relinking) still had to pay for.
     min_det_score: float = 0.35
     min_det_bbox_px: float = 1500.0
+    # Admit the episode's target on the DETECTOR's terms, bypassing the two
+    # gates above.
+    #
+    # Those gates price "is this worth remembering" for a scene full of
+    # furniture the agent is not looking for. Applied to the target they
+    # deadlock: measured over 96 episodes of condition L, 33% of the times the
+    # detector named the target the map discarded it, and in 11 episodes it
+    # discarded EVERY naming -- no track, so no candidate, so no approach, so
+    # the detection never got closer, bigger or more confident. All 11 failed.
+    #
+    # Five of those 11 are a contradiction rather than a threshold. Condition H
+    # lowered detector.class_conf to 0.20 for the pitcher, tin can, banana and
+    # red plate on a 900-pose false-positive census; min_det_score 0.35 then
+    # discards everything those classes gained between 0.20 and 0.35. Their
+    # boxes were 5146, 5077, 3102, 2808 and 1258 px -- far above the size gate,
+    # thrown away on score alone. It is why H moved the population by one
+    # episode.
+    #
+    # The other six are the size gate on genuinely small, genuinely confident
+    # sightings: a bowl named 20 times at 3.26 m, score 0.91, 608 px box.
+    #
+    # Admission is not candidacy: evidence, observation count, presence and the
+    # identity channel all still decide whether a track may become a goal.
+    target_bypasses_gates: bool = False
     # Evidence-score corroboration (P1i, FUS3DMaps-inspired 2026-07-19): a
     # detection that only re-matches an existing track from nearly the same
     # camera position adds little real corroborating evidence (no parallax)

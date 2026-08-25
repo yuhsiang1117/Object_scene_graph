@@ -8,6 +8,7 @@ from typing import Dict, List, Optional
 import numpy as np
 
 from ..core.geometry import ellipse_from_mask
+from ..core.labels import normalize_label
 from ..core.types import Detection, FrameData
 from ..mapping.costmap import PLANE
 from .association import DataAssociator, Observation, ObjectTrack
@@ -30,6 +31,7 @@ class ObjectLayer:
         link_max_frame_gap: Optional[int] = None,
         min_det_score: float = 0.0,
         min_det_bbox_px: float = 0.0,
+        target_bypasses_gates: bool = False,
         confirm_baseline_m: float = 0.0,
         repeat_view_discount: float = 0.2,
         presence_filter: Optional[PresenceFilter] = None,
@@ -47,6 +49,12 @@ class ObjectLayer:
         self.link_max_frame_gap = link_max_frame_gap
         self.min_det_score = min_det_score
         self.min_det_bbox_px = min_det_bbox_px
+        # The gates below exist to keep INCIDENTAL noise out of the map. The
+        # episode's target is not incidental, and it is the one class whose
+        # confidence threshold was chosen deliberately per class
+        # (detector.class_conf). See `_admits`.
+        self.target_bypasses_gates = bool(target_bypasses_gates)
+        self.target_label: str = ""
         # confirm_baseline_m: camera-position distance from a track's first
         # sighting beyond which a re-match counts as genuine multi-view
         # corroboration (full evidence weight) rather than a repeated glance
@@ -68,9 +76,50 @@ class ObjectLayer:
             "obs_rejected": 0,    # no ellipse, or no valid depth under the mask
             "ellipsoid_rejected": 0,  # depth too sparse to back-project a quadric
             "tracks_created": 0,
+            "target_bypassed": 0,  # admitted only because it is the target
         }
 
     # ------------------------------------------------------------------ api
+
+    def set_target(self, label: str) -> None:
+        """Which class this episode is hunting. Only read by `_admits`."""
+        self.target_label = normalize_label(label)
+
+    def _admits(self, det: Detection) -> bool:
+        """Is this detection worth putting in the map?
+
+        The two gates price "is this worth remembering" for a scene full of
+        furniture the agent is not looking for. Applied to the TARGET they
+        create a deadlock, measured over 96 episodes: 33% of the times the
+        detector named the target the map discarded it, and in 11 episodes it
+        discarded EVERY naming -- so no track formed, so no candidate formed,
+        so the agent never approached, so the detection never got bigger or
+        more confident. All 11 failed. A bowl was named 20 times at 3.26 m with
+        a score of 0.91 and a 608 px box, and the map refused all twenty.
+
+        The score half is worse than a bad threshold, it is a contradiction.
+        `detector.class_conf` lowers the DETECTOR to 0.20 for the pitcher, the
+        tin can, the banana and the red plate -- condition H, chosen from a
+        900-pose false-positive census -- and this gate then discards everything
+        those four classes gained between 0.20 and 0.35. Five of the eleven
+        deadlocked episodes are exactly that: boxes of 5146, 5077, 3102, 2808
+        and 1258 px, far above the size gate, thrown away on score alone.
+
+        So when the flag is on, the target is admitted on the DETECTOR's terms:
+        the per-class threshold already decided it. Admission is not candidacy --
+        evidence, observation count, presence and the identity channel all still
+        gate whether a track may become a goal.
+        """
+        if (
+            self.target_bypasses_gates
+            and self.target_label
+            and normalize_label(det.label) == self.target_label
+        ):
+            return True
+        return (
+            det.score >= self.min_det_score
+            and self._bbox_px(det) >= self.min_det_bbox_px
+        )
 
     def update(self, frame: FrameData, dets: List[Detection]) -> None:
         # Node-creation quality gate: a low-confidence or sliver detection
@@ -79,12 +128,16 @@ class ObjectLayer:
         # would-be match still consumes that track's slot so a second, good
         # detection of the same object this frame doesn't spawn a duplicate),
         # but only detections clearing the bar reach track creation/update.
-        admitted = [
-            d for d in dets
-            if d.score >= self.min_det_score and self._bbox_px(d) >= self.min_det_bbox_px
-        ]
+        admitted = [d for d in dets if self._admits(d)]
         self.funnel["det_seen"] += len(dets)
         self.funnel["det_admitted"] += len(admitted)
+        if self.target_bypasses_gates and self.target_label:
+            self.funnel["target_bypassed"] += sum(
+                1 for d in admitted
+                if normalize_label(d.label) == self.target_label
+                and not (d.score >= self.min_det_score
+                         and self._bbox_px(d) >= self.min_det_bbox_px)
+            )
         # Presence runs on EVERY keyframe, before the early return and against
         # the UNFILTERED detections. A frame with nothing admitted is precisely
         # the frame where negative evidence is worth the most -- the agent is
@@ -180,6 +233,7 @@ class ObjectLayer:
         min_evidence: float = 0.0,
         min_presence: float = 0.0,
         max_identity_rejections: int = 0,
+        target_bypasses_bbox: bool = False,
     ) -> List[ObjectTrack]:
         """Non-blacklisted tracks matching the target with enough support,
         detection quality, accumulated evidence (fragment detections and
@@ -204,7 +258,13 @@ class ObjectLayer:
         for t in self._tracks.values():
             if t.blacklisted or t.n_obs < min_obs or t.evidence < min_evidence:
                 continue
-            if t.best_score < min_score or t.best_bbox_px < min_bbox_px:
+            if t.best_score < min_score:
+                continue
+            # The size gate rejects slivers of furniture. For the target it
+            # re-creates the admission deadlock one stage later: a track seeded
+            # from a distant sighting can only grow its best box by being
+            # approached, and it can only be approached by being proposed.
+            if not target_bypasses_bbox and t.best_bbox_px < min_bbox_px:
                 continue
             if t.presence.p < min_presence:
                 continue

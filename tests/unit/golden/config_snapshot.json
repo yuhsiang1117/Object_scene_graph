@@ -215,6 +215,7 @@
   "scene_graph.room_door_width_m": 2.0,
   "scene_graph.room_min_radius_m": 0.9,
   "scene_graph.room_seg_every_kf": 10,
+  "scene_graph.target_bypasses_gates": false,
   "seed": 42,
   "verification.abandon_below_p": 1.0,
   "verification.absence_categories_max": 5,
@@ -239,6 +240,7 @@
     1.5,
     2.0
   ],
+  "verification.target_bypasses_bbox_gate": false,
   "verification.terminal": false,
   "verification.unreachable_is_absorbing": true,
   "verification.vlm_model": "qwen2.5vl:7b",
