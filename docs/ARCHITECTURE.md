@@ -262,7 +262,44 @@ not easier:
 | H | + per-class detection gates | 0.521 | 0.375 | 0.448 | 0.228 |
 | I | (instrumentation only, no behaviour change) | 0.500 | 0.375 | 0.438 | 0.218 |
 | J | + highest-scoring names | 0.521 | 0.354 | 0.438 | 0.201 |
-| **K** | + specific names | **0.625** | 0.271 | 0.448 | 0.218 |
+| **K** | + specific names | 0.625 | 0.271 | 0.448 | 0.218 |
+| **L** | + reachability at the viewpoint, non-absorbing; glance floor | **0.667** | **0.396** | **0.531** | **0.256** |
+
+L is the best overall of the ladder by 0.073 and ties the best cross_anchor, and
+it is the first condition that lifts both halves at once rather than trading
+between them. +8 episodes against a noise floor of about one. Two defects, both
+found by tracing the largest failure bucket rather than by tuning:
+
+  an unreachable candidate was struck off **permanently**, and the question was
+  asked about the object's own position rather than the pose the agent would
+  drive to. Six of 00829's 36 target poses are off-navmesh with a reachable
+  viewpoint — proven with no detector in the loop.
+
+  a glance retired a surface **once per keyframe**, unbounded, so 64% of the
+  candidate set was written off per episode, most of it never visited. The
+  floor is `1 - search_detect_prob`, making true the claim `glance`'s own
+  docstring already made: a passing look is weaker evidence than standing there.
+
+Both ship OFF (`agent.reachable_via_viewpoint`,
+`verification.unreachable_is_absorbing`, `exploration.search_glance_floor`), so
+L is reproducible and the defaults still are K.
+
+What L moved, down the funnel:
+
+| | K | L |
+|---|---|---|
+| mapped it at the new pose | 48/96 | **62/96** |
+| search arrived at the true surface | 3/96 | 6/96 |
+| committed to a track on the real object | 54/96 | 60/96 |
+| conversion once committed | 80% | 85% |
+| never committed | 4 | **0** |
+| in-situ recall | 0.471 | **0.523** |
+| surfaces retired unvisited (median) | 52/82 | **1/54** |
+| surface inspections per episode | 2.15 | **4.01** |
+
+The gain is not evenly spread: +6 episodes on 00829, +2 on 00880, **0 on 00848**,
+and per target +0.25 on the cracker box against −0.08 on the tin can. 00829 is
+the scene most of the tuning was done on, which is exactly the caveat to carry.
 
 Two things the overall column hides:
 
@@ -442,7 +479,15 @@ knob.
 number switched the search line off entirely, because the offline scorer measured
 order and the live system also reads magnitude. Pilot before trusting a proxy.
 
-**Perception improved across the board and SR did not move.** In-situ recall
+**Two failure modes are now measured and unfixed.** 36% of the times the
+detector names the target, the map discards the detection at the admission gate;
+in four episodes of one run *every* naming was discarded, twice for a bowl named
+7 and 10 times at 3.3 m with a best box of ~550 px against the 1200 gate. Since
+no track forms, no candidate forms, so the agent never goes closer and the box
+never gets bigger — a bootstrap deadlock. And 00848 did not move at all under L,
+with cross_anchor there at 0.133.
+
+**Perception improved across the board and SR did not move (as of K).** In-situ recall
 0.357 → 0.471 and false-positive-only episodes 20 → 6 between I and K, for an
 overall SR of 0.438 → 0.448. The gains are landing where episodes were already
 being won.
