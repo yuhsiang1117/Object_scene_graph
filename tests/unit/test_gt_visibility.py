@@ -176,3 +176,60 @@ def test_a_mostly_visible_object_still_counts():
     v.observe_keyframe(frame, [], "bowl")
     assert v.kf_in_view == 1
     assert v.fields()["gt_mean_visible_fraction"] == 1.0
+
+
+# ------------------------------------------------- the admission split (K+1)
+#
+# The record could say "the detector named the object" and "no track exists near
+# it" and leave the reader to guess which of two very different things happened:
+# the detection was too small or too weak to seed a track, or it was admitted and
+# the mapping lost it. Nineteen episodes of the last campaign sat in that gap --
+# the object named in a median of 3 keyframes, the nearest same-label track 4.0 m
+# away. A query string and a threshold are different fixes.
+
+
+def _det(label, bbox, score=0.9):
+    from osg.core.types import Detection
+
+    x1, y1, x2, y2 = bbox
+    return Detection(
+        label=label, score=score,
+        bbox_xyxy=np.array([float(x1), float(y1), float(x2), float(y2)]),
+        mask=np.zeros((480, 640), dtype=bool),
+    )
+
+
+def _centred_frame():
+    """Depth well beyond the target, so nothing occludes it."""
+    return _frame(5.0)
+
+
+def test_a_detection_under_the_size_gate_counts_as_named_but_not_admitted():
+    v = GroundTruthVisibility([0.0, 0.0, 2.0], min_det_score=0.3, min_det_bbox_px=1200.0)
+    # 20x20 = 400 px, over the projected centre: named, but the object layer
+    # would discard it before it could ever seed a track.
+    v.observe_keyframe(_centred_frame(), [_det("bowl", (310, 230, 330, 250))], "bowl")
+    assert v.kf_in_view == 1
+    assert v.kf_detected == 1, "the detector did name it"
+    assert v.kf_admitted == 0, "but the map would never have seen it"
+    assert v.fields()["gt_best_det_bbox_px"] == 400.0
+
+
+def test_a_detection_over_both_gates_is_admitted():
+    v = GroundTruthVisibility([0.0, 0.0, 2.0], min_det_score=0.3, min_det_bbox_px=1200.0)
+    v.observe_keyframe(_centred_frame(), [_det("bowl", (280, 200, 360, 280))], "bowl")
+    assert v.kf_detected == 1 and v.kf_admitted == 1
+
+
+def test_a_confident_detection_still_fails_the_size_gate():
+    """The two gates are separate, and it is the SIZE one that bites here: YCB
+    targets are an order of magnitude smaller than HM3D furniture."""
+    v = GroundTruthVisibility([0.0, 0.0, 2.0], min_det_score=0.3, min_det_bbox_px=1200.0)
+    v.observe_keyframe(_centred_frame(), [_det("bowl", (315, 235, 325, 245), score=0.99)], "bowl")
+    assert v.kf_detected == 1 and v.kf_admitted == 0
+
+
+def test_gates_default_to_open_so_the_instrument_is_usable_without_them():
+    v = GroundTruthVisibility([0.0, 0.0, 2.0])
+    v.observe_keyframe(_centred_frame(), [_det("bowl", (310, 230, 330, 250))], "bowl")
+    assert v.kf_admitted == 1

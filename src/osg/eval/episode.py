@@ -57,7 +57,10 @@ def run_episode(cfg, env, agent, episode, target, frame, detector, debug=None) -
 
     attempts_allowed = max(1, int(cfg.eval.attempts))
     outcome.gt_view = GroundTruthVisibility(
-        authored_episode_metadata(episode).get("target_position"))
+        authored_episode_metadata(episode).get("target_position"),
+        min_det_score=cfg.scene_graph.min_det_score,
+        min_det_bbox_px=cfg.scene_graph.min_det_bbox_px,
+    )
     # Read-only: the agent hands over what it saw, and is given nothing.
     agent.on_keyframe_detections = (
         lambda f, dets: outcome.gt_view.observe_keyframe(f, dets, target))

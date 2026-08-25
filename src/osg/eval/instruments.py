@@ -52,8 +52,20 @@ class GroundTruthVisibility:
     # different surface in the way.
     OCCLUSION_TOL_M = 0.25
 
-    def __init__(self, target_xyz: Optional[Sequence[float]]) -> None:
+    def __init__(
+        self,
+        target_xyz: Optional[Sequence[float]],
+        min_det_score: float = 0.0,
+        min_det_bbox_px: float = 0.0,
+    ) -> None:
         self.target = None if target_xyz is None else np.asarray(target_xyz, dtype=float)
+        # The ADMISSION gates, so the instrument can separate two failures the
+        # rest of the record conflates: the detector never named the object, and
+        # the detector named it but the object layer refused the detection.
+        # Those have different fixes -- a query string against a threshold --
+        # and 19 episodes of the last campaign sat in the ambiguity.
+        self.min_det_score = float(min_det_score)
+        self.min_det_bbox_px = float(min_det_bbox_px)
         self.frames = 0
         self.in_view = 0
         self.min_range_m = float("inf")
@@ -62,6 +74,8 @@ class GroundTruthVisibility:
         self.kf_detected = 0
         self.best_offaxis = float("inf")
         self.best_det_score = 0.0
+        self.kf_admitted = 0       # named AND large/confident enough to seed a track
+        self.best_det_bbox_px = 0.0
         self.visible_fraction_sum = 0.0
         self.by_framing = {k: [0, 0] for k in
                            ("close_centred", "close_peripheral",
@@ -113,15 +127,29 @@ class GroundTruthVisibility:
         self.best_offaxis = min(self.best_offaxis, offaxis)
         want = normalize_label(target_label)
         best = 0.0
+        best_px = 0.0
+        admitted = False
         for det in dets or []:
             if normalize_label(det.label) != want:
                 continue
             x1, y1, x2, y2 = [float(c) for c in det.bbox_xyxy]
-            if x1 - 8.0 <= u <= x2 + 8.0 and y1 - 8.0 <= v <= y2 + 8.0:
-                best = max(best, float(det.score))
+            if not (x1 - 8.0 <= u <= x2 + 8.0 and y1 - 8.0 <= v <= y2 + 8.0):
+                continue
+            px = max(0.0, x2 - x1) * max(0.0, y2 - y1)
+            best = max(best, float(det.score))
+            best_px = max(best_px, px)
+            # The same test ObjectLayer.update applies. `dets` here is the RAW
+            # detector output -- the instrument is handed it before the layer
+            # filters -- so without this the record cannot tell a detection that
+            # became a track from one that was discarded on arrival.
+            if float(det.score) >= self.min_det_score and px >= self.min_det_bbox_px:
+                admitted = True
         if best > 0.0:
             self.kf_detected += 1
             self.best_det_score = max(self.best_det_score, best)
+            self.best_det_bbox_px = max(self.best_det_bbox_px, best_px)
+        if admitted:
+            self.kf_admitted += 1
         # Recall conditioned on framing, which is the thing H could not see.
         centred = offaxis <= 0.6
         if z <= 3.0:
@@ -185,6 +213,8 @@ class GroundTruthVisibility:
                                if self.min_range_m < float("inf") else None),
             "gt_kf_in_view": self.kf_in_view,
             "gt_kf_detected": self.kf_detected,
+            "gt_kf_admitted": self.kf_admitted,
+            "gt_best_det_bbox_px": round(self.best_det_bbox_px, 1),
             "gt_best_offaxis": (round(self.best_offaxis, 3)
                                 if self.best_offaxis < float("inf") else None),
             "gt_best_det_score": round(self.best_det_score, 3),

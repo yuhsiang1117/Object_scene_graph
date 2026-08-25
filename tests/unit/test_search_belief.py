@@ -420,3 +420,54 @@ def test_surface_mass_scales_every_candidate_without_reordering():
     assert sorted(lo, key=lo.get) == sorted(hi, key=hi.get)
     for k in lo:
         assert hi[k] == pytest.approx(2.0 * lo[k])
+
+
+# ------------------------------------------------- the glance, counted (K+1)
+#
+# `_scan_at_viewpoint` states the principle explicitly: "twelve looks at the same
+# object from the same pose are not twelve independent observations -- same
+# range, same lighting, same viewing angle on the same geometry -- so multiplying
+# their likelihoods turns one correlated detector failure into overwhelming
+# evidence of absence. Measured: doing it dropped SR from 0.429 to 0.286."
+#
+# `glance` applies exactly that multiplication, once per KEYFRAME, to every
+# container in view. These tests pin the arithmetic so the size of the effect is
+# a number rather than an argument.
+
+
+def test_repeated_glances_compound_without_bound():
+    log = InspectionLog()
+    d = 0.35
+    for _ in range(20):
+        log.searched(1, d)
+    surviving = log.factor(1)
+    assert surviving == pytest.approx(0.65 ** 20, rel=1e-6)
+    assert surviving < 1e-3, (
+        "a surface merely in view for twenty keyframes is retired harder than "
+        "one the agent drove to and inspected"
+    )
+
+
+def test_a_glanced_surface_can_fall_below_an_inspected_one():
+    """The ordering this produces is the wrong way round: an inspection is
+    supposed to be the strong evidence and a passing look the weak one."""
+    glanced, inspected = InspectionLog(), InspectionLog()
+    for _ in range(6):
+        glanced.searched(1, 0.35)          # six keyframes of walking past
+    inspected.searched(1, 0.8)             # one real arrival, faced and looked at
+    assert glanced.factor(1) < inspected.factor(1)
+
+
+def test_survival_report_counts_what_the_search_has_written_off():
+    from osg.exploration.strategy import ExplorationStrategy
+
+    strategy = ExplorationStrategy.__new__(ExplorationStrategy)
+    strategy.search_log = InspectionLog()
+    strategy._glanced = {1, 2}
+    for _ in range(20):
+        strategy.search_log.searched(1, 0.35)
+    strategy.search_log.searched(2, 0.35)
+    report = strategy.survival_report()
+    assert report["surfaces_touched"] == 2
+    assert report["surfaces_retired"] == 1
+    assert report["glance_containers"] == 2

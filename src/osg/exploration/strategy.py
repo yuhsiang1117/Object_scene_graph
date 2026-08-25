@@ -143,6 +143,7 @@ class ExplorationStrategy:
         # "is this frontier worth pushing at", and only a pursuit resets it.
         self.progress_ref_step = 0
         self.progress_ref_xy = np.zeros(2)
+        self._glanced: set = set()
 
     # ------------------------------------------------------------- blacklist
 
@@ -364,6 +365,13 @@ class ExplorationStrategy:
             if measured > 1e-3 and measured < z - 0.5:
                 continue  # something solid between us and the surface
             self.search_log.searched(cid, d)
+            # Instrumentation only. A glance is applied per KEYFRAME, so a
+            # surface the agent lingers near is multiplied many times over; how
+            # many, and how much belief survives it, is not otherwise visible in
+            # the record. Counted here so the question can be answered with a
+            # number instead of an argument.
+            self.stats["glance_updates"] = self.stats.get("glance_updates", 0) + 1
+            self._glanced.add(int(cid))
 
     def _select_surface(self, world: WorldView, best_frontier):
         """The best mapped surface, if it beats the best frontier on b*d/c.
@@ -531,6 +539,22 @@ class ExplorationStrategy:
             }
         )
         self.search_container = None
+
+    def survival_report(self) -> dict:
+        """How much of the search space is still believed in.
+
+        `retired` counts surfaces whose surviving belief factor has fallen below
+        a tenth -- effectively out of the search whether or not the agent ever
+        went to one.
+        """
+        factors = list(self.search_log.survived.values())
+        return {
+            "glance_containers": len(self._glanced),
+            "surfaces_touched": len(factors),
+            "surfaces_retired": sum(1 for f in factors if f < 0.1),
+            "surface_factor_min": round(min(factors), 5) if factors else None,
+            "surface_factor_median": round(sorted(factors)[len(factors) // 2], 4) if factors else None,
+        }
 
     def note_progress(self, world: WorldView) -> None:
         """Restart the pursuit's progress window. A fresh pursuit needs its own,
