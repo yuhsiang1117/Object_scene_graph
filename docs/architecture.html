@@ -781,12 +781,49 @@ if self.verifier is not None and vc.absence_use_vlm:
       <tr><td>H</td><td>+ per-class detection gates</td><td class="n">0.521</td><td class="n">0.375</td><td class="n">0.448</td><td class="n">0.228</td></tr>
       <tr><td>I</td><td>instrumentation only, no behaviour change</td><td class="n">0.500</td><td class="n">0.375</td><td class="n">0.438</td><td class="n">0.218</td></tr>
       <tr><td>J</td><td>+ highest-scoring names</td><td class="n">0.521</td><td class="n">0.354</td><td class="n">0.438</td><td class="n">0.201</td></tr>
-      <tr class="peak"><td>K</td><td>+ specific names</td><td class="n"><span class="best">0.625</span></td><td class="n">0.271</td><td class="n">0.448</td><td class="n">0.218</td></tr>
+      <tr><td>K</td><td>+ specific names</td><td class="n">0.625</td><td class="n">0.271</td><td class="n">0.448</td><td class="n">0.218</td></tr>
+      <tr class="peak"><td>L</td><td>+ reachability at the viewpoint, non-absorbing; glance floor</td><td class="n"><span class="best">0.667</span></td><td class="n"><span class="best">0.396</span></td><td class="n"><span class="best">0.531</span></td><td class="n"><span class="best">0.256</span></td></tr>
     </tbody>
   </table>
   </div>
+  <div class="evidence">
+    <span class="label">L, and how</span>
+    <div>
+      <p>
+        L is the first condition to lift <em>both</em> halves instead of trading
+        between them: <span class="num">+8</span> episodes overall against a
+        noise floor of about one, and the best cross_anchor of the campaign.
+        Neither change came from tuning. Both came from tracing the largest
+        failure bucket -- 22 of 53 failures where the detector named the object
+        at its new pose and no track within 0.5 m ever existed -- to two defects
+        that break principles stated elsewhere in this codebase's own comments.
+      </p>
+      <p>
+        An unreachable candidate was struck off <strong>permanently</strong>,
+        and the question was asked about the object's own position rather than
+        the pose the agent would drive to. Six of 00829's thirty-six target
+        poses are off-navmesh with a reachable viewpoint -- shown with no
+        detector in the loop.
+      </p>
+      <p>
+        And a glance retired a surface once per <em>keyframe</em>, unbounded:
+        <span class="num">64%</span> of the candidate set written off per
+        episode, most of it never visited. Bounding it at
+        <code>1 - search_detect_prob</code> took surfaces retired from
+        <span class="num">52 of 82</span> to <span class="num">1 of 54</span>
+        and roughly doubled inspections per episode,
+        <span class="num">2.15 &rarr; 4.01</span>.
+      </p>
+      <p>
+        The gain is concentrated, and that is the caveat to carry:
+        <span class="num">+6</span> episodes on 00829,
+        <span class="num">+2</span> on 00880, <span class="num">0</span> on
+        00848. 00829 is the scene most of the tuning was done on.
+      </p>
+    </div>
+  </div>
   <div class="callout">
-    <strong>The two difficulties trade against each other.</strong>
+    <strong>The two difficulties traded against each other, up to K.</strong>
     <code>cross_anchor</code> trails <code>in_anchor</code> by 0.1–0.35 throughout,
     which is intuitive: a cross-room move forces a real <em>search</em> rather than
     a longer look nearby. No condition is best at both. J → K changed two query
