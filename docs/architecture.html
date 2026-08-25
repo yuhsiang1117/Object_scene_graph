@@ -415,8 +415,8 @@ footer {
   </p>
   <dl class="stats">
     <div class="stat"><dt>Scenes × episodes</dt><dd>3 <span class="unit">× 96</span></dd></div>
-    <div class="stat"><dt>Best in-anchor SR</dt><dd>0.625</dd></div>
-    <div class="stat"><dt>Best cross-anchor SR</dt><dd>0.396</dd></div>
+    <div class="stat"><dt>Best in-anchor SR</dt><dd>0.771</dd></div>
+    <div class="stat"><dt>Best cross-anchor SR</dt><dd>0.458</dd></div>
     <div class="stat"><dt>Run-to-run noise</dt><dd>≈1 <span class="unit">ep</span></dd></div>
     <div class="stat"><dt>Pinned defaults</dt><dd>211</dd></div>
   </dl>
@@ -782,7 +782,8 @@ if self.verifier is not None and vc.absence_use_vlm:
       <tr><td>I</td><td>instrumentation only, no behaviour change</td><td class="n">0.500</td><td class="n">0.375</td><td class="n">0.438</td><td class="n">0.218</td></tr>
       <tr><td>J</td><td>+ highest-scoring names</td><td class="n">0.521</td><td class="n">0.354</td><td class="n">0.438</td><td class="n">0.201</td></tr>
       <tr><td>K</td><td>+ specific names</td><td class="n">0.625</td><td class="n">0.271</td><td class="n">0.448</td><td class="n">0.218</td></tr>
-      <tr class="peak"><td>L</td><td>+ reachability at the viewpoint, non-absorbing; glance floor</td><td class="n"><span class="best">0.667</span></td><td class="n"><span class="best">0.396</span></td><td class="n"><span class="best">0.531</span></td><td class="n"><span class="best">0.256</span></td></tr>
+      <tr><td>L</td><td>+ reachability at the viewpoint, non-absorbing; glance floor</td><td class="n">0.667</td><td class="n">0.396</td><td class="n">0.531</td><td class="n">0.256</td></tr>
+      <tr class="peak"><td>M</td><td>+ the target admitted on the detector&rsquo;s terms</td><td class="n"><span class="best">0.771</span></td><td class="n"><span class="best">0.458</span></td><td class="n"><span class="best">0.615</span></td><td class="n"><span class="best">0.302</span></td></tr>
     </tbody>
   </table>
   </div>
@@ -790,10 +791,10 @@ if self.verifier is not None and vc.absence_use_vlm:
     <span class="label">L, and how</span>
     <div>
       <p>
-        L is the first condition to lift <em>both</em> halves instead of trading
-        between them: <span class="num">+8</span> episodes overall against a
-        noise floor of about one, and the best cross_anchor of the campaign.
-        Neither change came from tuning. Both came from tracing the largest
+        L and M are the first conditions to lift <em>both</em> halves instead of
+        trading between them: M is <span class="num">+16</span> episodes on K
+        against a noise floor of about one, and the best of the ladder on every
+        column. None of the three changes came from tuning. All came from tracing the largest
         failure bucket -- 22 of 53 failures where the detector named the object
         at its new pose and no track within 0.5 m ever existed -- to two defects
         that break principles stated elsewhere in this codebase's own comments.
@@ -815,10 +816,27 @@ if self.verifier is not None and vc.absence_use_vlm:
         <span class="num">2.15 &rarr; 4.01</span>.
       </p>
       <p>
-        The gain is concentrated, and that is the caveat to carry:
-        <span class="num">+6</span> episodes on 00829,
-        <span class="num">+2</span> on 00880, <span class="num">0</span> on
-        00848. 00829 is the scene most of the tuning was done on.
+        And the map discarded <span class="num">33%</span> of the times the
+        detector <em>named</em> the target. In eleven episodes it discarded
+        <em>every</em> naming &mdash; no track, so no candidate, so no approach,
+        so the detection never got closer or bigger. All eleven failed. Five of
+        them were a contradiction rather than a threshold:
+        <code>detector.class_conf</code> lowers the detector to 0.20 for the four
+        weakest classes and <code>min_det_score</code> 0.35 then discards
+        everything they gained &mdash; boxes of <span class="num">5146</span>,
+        <span class="num">5077</span>, <span class="num">3102</span> px, thrown
+        away on score alone. Two thresholds for one decision, in two config
+        groups, the tighter one downstream.
+      </p>
+      <p>
+        The gain is not evenly spread, and one scene refuses to move:
+        00829 goes <span class="num">21 &rarr; 32</span> of 36 and 00880
+        <span class="num">11 &rarr; 16</span> of 30, while 00848 is
+        <span class="num">11/30</span> under all three conditions and identical
+        in both halves every time. Thirteen of its nineteen failures never name
+        the target at all. That is a coverage-and-perception scene, and none of
+        these changes touches it &mdash; while 00829, where the gain is largest,
+        is the scene most of the tuning was done on.
       </p>
     </div>
   </div>
