@@ -56,6 +56,19 @@ class ObjectLayer:
         self.repeat_view_discount = repeat_view_discount
         self.presence_filter = presence_filter
         self._rng = np.random.default_rng(rng_seed)
+        # Track-creation funnel. Instrumentation only: nine failures of the last
+        # campaign named the target 4-36 times at its new pose and ended with
+        # the ONLY same-label tracks in the map being the ones loaded from the
+        # prior -- distance 0.00 m to a prior track, i.e. no new track was
+        # created at all, not a badly placed one. Nothing said which of the four
+        # ways that can happen actually happened.
+        self.funnel = {
+            "det_seen": 0,        # detections the detector produced
+            "det_admitted": 0,    # cleared the score and size gates
+            "obs_rejected": 0,    # no ellipse, or no valid depth under the mask
+            "ellipsoid_rejected": 0,  # depth too sparse to back-project a quadric
+            "tracks_created": 0,
+        }
 
     # ------------------------------------------------------------------ api
 
@@ -70,6 +83,8 @@ class ObjectLayer:
             d for d in dets
             if d.score >= self.min_det_score and self._bbox_px(d) >= self.min_det_bbox_px
         ]
+        self.funnel["det_seen"] += len(dets)
+        self.funnel["det_admitted"] += len(admitted)
         # Presence runs on EVERY keyframe, before the early return and against
         # the UNFILTERED detections. A frame with nothing admitted is precisely
         # the frame where negative evidence is worth the most -- the agent is
@@ -91,11 +106,14 @@ class ObjectLayer:
             det = dets[det_idx]
             obs = self._make_observation(det, frame, K, T_cw)
             if obs is None:
+                self.funnel["obs_rejected"] += 1
                 continue
             if track_id is None:
                 ell = Ellipsoid.init_from_detection(det, frame, rng=self._rng)
                 if ell is None:
+                    self.funnel["ellipsoid_rejected"] += 1
                     continue
+                self.funnel["tracks_created"] += 1
                 track = ObjectTrack(
                     id=self._next_id, label=det.label, ellipsoid=ell, first_cam_xy=cam_xy.copy(),
                 )

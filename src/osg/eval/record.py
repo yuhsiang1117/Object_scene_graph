@@ -167,7 +167,11 @@ def build_episode_record(
         "llm_calls": scorer.n_calls - scorer_before[0],
         "llm_errors": scorer.n_errors - scorer_before[1],
         "llm_last_error": scorer.last_error if scorer.last_error != scorer_before[2] else None,
-        "agent_stats": {**agent.stats, **agent.exploration.survival_report()},
+        "agent_stats": {
+            **agent.stats,
+            **agent.exploration.survival_report(),
+            **agent.object_layer.funnel,
+        },
         # Phase 2 dynamic-scene evidence: when beliefs flipped, what the agent
         # believed when it committed to a goal, and what it still believed about
         # the target at the end.

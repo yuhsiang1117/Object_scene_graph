@@ -354,3 +354,77 @@ def test_the_arrival_sweep_turns_toward_the_object_not_blindly():
     # already facing it -> no turn, decide on this frame
     need, _ = turn_needed((0, 0), (1, 0), np.radians(5))
     assert not need
+
+
+# ------------------------------------------- the track-creation funnel (K+1)
+#
+# Nine failures of the last campaign named the target at its NEW pose in 4 to 36
+# keyframes and finished with the only same-label tracks in the map being the
+# ones loaded from the prior -- 0.00 m from a prior track, so no new track was
+# created at all rather than one created in the wrong place. A detection can be
+# lost in four places between the detector and the map, and the record named
+# none of them.
+
+
+def _det_with_mask(label, box, score=0.9, mask_box=None):
+    import numpy as np
+
+    from osg.core.types import Detection
+
+    x1, y1, x2, y2 = box
+    mask = np.zeros((480, 640), dtype=bool)
+    mx1, my1, mx2, my2 = mask_box if mask_box else box
+    mask[int(my1):int(my2), int(mx1):int(mx2)] = True
+    return Detection(
+        label=label, score=score,
+        bbox_xyxy=np.array([float(x1), float(y1), float(x2), float(y2)]),
+        mask=mask,
+    )
+
+
+def _frame_with_depth(depth):
+    import numpy as np
+
+    from osg.core.types import CameraIntrinsics, FrameData
+
+    k = CameraIntrinsics(fx=320.0, fy=320.0, cx=320.0, cy=240.0, width=640, height=480)
+    return FrameData(
+        frame_id=1,
+        rgb=np.zeros((480, 640, 3), dtype=np.uint8),
+        depth=np.full((480, 640), depth, dtype=np.float32),
+        T_wc=np.eye(4),
+        intrinsics=k,
+    )
+
+
+def test_the_funnel_counts_a_detection_all_the_way_to_a_track():
+    from osg.objects.object_layer import ObjectLayer
+
+    layer = ObjectLayer(min_det_score=0.3, min_det_bbox_px=1200.0)
+    layer.update(_frame_with_depth(2.0), [_det_with_mask("bowl", (280, 200, 360, 280))])
+    f = layer.funnel
+    assert (f["det_seen"], f["det_admitted"], f["tracks_created"]) == (1, 1, 1)
+    assert f["obs_rejected"] == 0 and f["ellipsoid_rejected"] == 0
+
+
+def test_a_detection_below_the_size_gate_never_reaches_the_map():
+    from osg.objects.object_layer import ObjectLayer
+
+    layer = ObjectLayer(min_det_score=0.3, min_det_bbox_px=1200.0)
+    layer.update(_frame_with_depth(2.0), [_det_with_mask("bowl", (310, 230, 330, 250))])
+    f = layer.funnel
+    assert f["det_seen"] == 1 and f["det_admitted"] == 0 and f["tracks_created"] == 0
+
+
+def test_a_detection_with_no_readable_depth_is_counted_where_it_dies():
+    """Depth of zero means the sensor returned nothing under the mask. The
+    detection is admitted, and then quietly discarded -- which is exactly the
+    case the funnel exists to make visible."""
+    from osg.objects.object_layer import ObjectLayer
+
+    layer = ObjectLayer(min_det_score=0.3, min_det_bbox_px=1200.0)
+    layer.update(_frame_with_depth(0.0), [_det_with_mask("bowl", (280, 200, 360, 280))])
+    f = layer.funnel
+    assert f["det_admitted"] == 1
+    assert f["obs_rejected"] == 1
+    assert f["tracks_created"] == 0
