@@ -263,12 +263,13 @@ not easier:
 | I | (instrumentation only, no behaviour change) | 0.500 | 0.375 | 0.438 | 0.218 |
 | J | + highest-scoring names | 0.521 | 0.354 | 0.438 | 0.201 |
 | **K** | + specific names | 0.625 | 0.271 | 0.448 | 0.218 |
-| **L** | + reachability at the viewpoint, non-absorbing; glance floor | **0.667** | **0.396** | **0.531** | **0.256** |
+| L | + reachability at the viewpoint, non-absorbing; glance floor | 0.667 | 0.396 | 0.531 | 0.256 |
+| **M** | + the target admitted on the detector's terms | **0.771** | **0.458** | **0.615** | **0.302** |
 
-L is the best overall of the ladder by 0.073 and ties the best cross_anchor, and
-it is the first condition that lifts both halves at once rather than trading
-between them. +8 episodes against a noise floor of about one. Two defects, both
-found by tracing the largest failure bucket rather than by tuning:
+M is +16 episodes on K and the best of the ladder on every column. L and M both
+lift *both* halves at once rather than trading between them, which no condition
+from A to K managed. Three defects, all found by tracing the largest failure
+bucket rather than by tuning:
 
   an unreachable candidate was struck off **permanently**, and the question was
   asked about the object's own position rather than the pose the agent would
@@ -280,26 +281,54 @@ found by tracing the largest failure bucket rather than by tuning:
   floor is `1 - search_detect_prob`, making true the claim `glance`'s own
   docstring already made: a passing look is weaker evidence than standing there.
 
+  and the map discarded **33% of the times the detector named the target** —
+  in 11 episodes it discarded *every* naming, so no track formed, so no
+  candidate, so no approach, so the detection never got closer or bigger. All
+  11 failed. Five of them were a contradiction rather than a threshold:
+  `detector.class_conf` lowers the detector to 0.20 for the four weakest
+  classes and `scene_graph.min_det_score` 0.35 then throws away everything they
+  gained — boxes of 5146, 5077, 3102, 2808 and 1258 px, discarded on score
+  alone. Two thresholds for one decision, in two config groups, the tighter one
+  downstream. It is the likeliest reason condition H moved the population by a
+  single episode.
+
 Both ship OFF (`agent.reachable_via_viewpoint`,
 `verification.unreachable_is_absorbing`, `exploration.search_glance_floor`), so
 L is reproducible and the defaults still are K.
 
 What L moved, down the funnel:
 
-| | K | L |
-|---|---|---|
-| mapped it at the new pose | 48/96 | **62/96** |
-| search arrived at the true surface | 3/96 | 6/96 |
-| committed to a track on the real object | 54/96 | 60/96 |
-| conversion once committed | 80% | 85% |
-| never committed | 4 | **0** |
-| in-situ recall | 0.471 | **0.523** |
-| surfaces retired unvisited (median) | 52/82 | **1/54** |
-| surface inspections per episode | 2.15 | **4.01** |
+| | K | L | M |
+|---|---|---|---|
+| mapped it at the new pose | 48/96 | 62/96 | **71/96** |
+| committed to a track on the real object | 54/96 | 60/96 | **66/96** |
+| conversion once committed | 80% | 85% | **89%** |
+| hit the 500-step cap | 37 | 35 | **23** |
+| looked within 3 m and missed | 29 | 20 | **12** |
+| in-situ recall | 0.471 | 0.523 | 0.525 |
+| surfaces retired unvisited (median) | 52/82 | **1/54** | 1/54 |
+| surface inspections per episode | 2.15 | **4.01** | 3.9 |
 
-The gain is not evenly spread: +6 episodes on 00829, +2 on 00880, **0 on 00848**,
-and per target +0.25 on the cracker box against −0.08 on the tin can. 00829 is
-the scene most of the tuning was done on, which is exactly the caveat to carry.
+**The gain is not evenly spread, and one scene refuses to move at all:**
+
+| scene | K | L | M |
+|---|---|---|---|
+| 00829 | 21/36 | 27/36 | **32/36** |
+| 00848 | 11/30 | 11/30 | **11/30** |
+| 00880 | 11/30 | 13/30 | 16/30 |
+
+00848 is 0.367 under all three conditions and *identical in both halves*
+(in_anchor 0.600, cross_anchor 0.133) every time. Its failures say why: 13 of 19
+never named the target at all and 11 of 30 episodes never looked at its new
+pose. 115 bypass admissions fired there and changed nothing, because the fix
+recovers detections that were discarded and on that scene the detections do not
+exist. That is a coverage-and-perception scene, and none of these three changes
+touches it. 00829, where the gain is largest, is also the scene most of the
+tuning was done on.
+
+The false-positive risk M takes did not materialise: 491 detections entered
+through the exemption across 96 episodes and same-label tracks per episode are
+unchanged (median 3, p90 6, max 8).
 
 Two things the overall column hides:
 

@@ -46,19 +46,38 @@ SURFACE_TOL_M = 0.5
 # ------------------------------------------------------------------ discovery
 
 def run_tag_of(run_dir: Path) -> Optional[str]:
-    """The `+run_tag` override, read from Hydra's parallel tree."""
+    """The `+run_tag` override, read from Hydra's parallel tree.
+
+    The two trees are named by two SEPARATE evaluations of `${now:...}` -- the
+    episodes directory from `output_dir`, the config directory by Hydra itself --
+    and they can land a second apart. Matching them exactly makes such a run
+    invisible: condition M's first scene wrote `20260825_163247` against a Hydra
+    dir of `16-32-46`, so a third of the condition silently vanished and the
+    headline read 0.450 instead of 0.633.
+
+    A one-second skew has no other cause here, so a small window is safe: two
+    eval runs cannot start within seconds of each other on one GPU. The window
+    is searched nearest-first and the first tagged hit wins.
+    """
+    import datetime
+
     name = run_dir.name
     if len(name) != 15 or name[8] != "_":
         return None
-    day, hms = name[:8], name[9:]
-    hydra = (Path("outputs") / f"{day[:4]}-{day[4:6]}-{day[6:]}"
-             / f"{hms[:2]}-{hms[2:4]}-{hms[4:]}" / ".hydra" / "overrides.yaml")
-    if not hydra.is_file():
+    try:
+        stamp = datetime.datetime.strptime(name, "%Y%m%d_%H%M%S")
+    except ValueError:
         return None
-    for line in hydra.read_text(encoding="utf-8").splitlines():
-        line = line.strip().lstrip("- ")
-        if line.startswith("+run_tag="):
-            return line.split("=", 1)[1].strip()
+    for delta in (0, -1, 1, -2, 2):
+        moment = stamp + datetime.timedelta(seconds=delta)
+        hydra = (Path("outputs") / moment.strftime("%Y-%m-%d")
+                 / moment.strftime("%H-%M-%S") / ".hydra" / "overrides.yaml")
+        if not hydra.is_file():
+            continue
+        for line in hydra.read_text(encoding="utf-8").splitlines():
+            line = line.strip().lstrip("- ")
+            if line.startswith("+run_tag="):
+                return line.split("=", 1)[1]
     return None
 
 
