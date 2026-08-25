@@ -91,6 +91,16 @@ class ExplorationConfig:
     # A surface in plain view counts as searched without driving to it: the
     # binding budget is inspections (about fifty steps each), not travel.
     search_glance_detect_prob: float = 0.35
+    # The floor glancing alone may not push a surface past. 0.0 is the shipped
+    # behaviour: unbounded compounding, once per keyframe, for every container
+    # in view. `_scan_at_viewpoint` refuses exactly this multiplication and says
+    # why -- "twelve looks at the same object from the same pose are not twelve
+    # independent observations ... measured: doing it dropped SR from 0.429 to
+    # 0.286" -- and the glance path was never given the same treatment.
+    # 0.2 is not a taste: it is what a real arrival and inspection is worth
+    # (1 - search_detect_prob), so it makes the docstring's claim true, that a
+    # passing look is weaker evidence than standing there.
+    search_glance_floor: float = 0.0
     search_glance_range_m: float = 4.0
     # Finishing the room you are in beats crossing the house and coming back.
     search_same_room_bonus: float = 4.0

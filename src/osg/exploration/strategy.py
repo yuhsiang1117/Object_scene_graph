@@ -364,7 +364,7 @@ class ExplorationStrategy:
             measured = float(frame.depth[int(v), int(u)])
             if measured > 1e-3 and measured < z - 0.5:
                 continue  # something solid between us and the surface
-            self.search_log.searched(cid, d)
+            self.search_log.searched(cid, d, floor=float(self.cfg.search_glance_floor))
             # Instrumentation only. A glance is applied per KEYFRAME, so a
             # surface the agent lingers near is multiplied many times over; how
             # many, and how much belief survives it, is not otherwise visible in

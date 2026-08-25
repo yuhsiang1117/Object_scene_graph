@@ -105,6 +105,7 @@
   "exploration.search_face_turns": 8,
   "exploration.search_frontier_weight": 1.0,
   "exploration.search_glance_detect_prob": 0.35,
+  "exploration.search_glance_floor": 0.0,
   "exploration.search_glance_range_m": 4.0,
   "exploration.search_max_steps": 60,
   "exploration.search_posterior": false,

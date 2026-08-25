@@ -471,3 +471,43 @@ def test_survival_report_counts_what_the_search_has_written_off():
     assert report["surfaces_touched"] == 2
     assert report["surfaces_retired"] == 1
     assert report["glance_containers"] == 2
+
+
+def test_a_floor_bounds_what_glancing_alone_can_retire():
+    """Measured over 24 episodes: a surface is glanced a median of 8.4 times an
+    episode, leaving 0.65^8.4 = 0.027, against the 0.2 an actual arrival and
+    inspection is worth. The floor makes the docstring's claim true."""
+    log = InspectionLog()
+    for _ in range(20):
+        log.searched(1, 0.35, floor=0.2)
+    assert log.factor(1) == pytest.approx(0.2)
+
+
+def test_the_floor_never_raises_a_surface_an_inspection_ruled_out():
+    """A glance may only stop itself going lower. If the agent has been there and
+    found nothing, walking past afterwards must not restore belief."""
+    log = InspectionLog()
+    log.searched(1, 0.8)                       # arrived, looked, found nothing
+    assert log.factor(1) == pytest.approx(0.2)
+    log.searched(1, 0.8)                       # and again
+    assert log.factor(1) == pytest.approx(0.04)
+    log.searched(1, 0.35, floor=0.2)           # now merely walk past it
+    assert log.factor(1) == pytest.approx(0.04), "a glance cannot undo an inspection"
+
+
+def test_the_floor_is_off_by_default_and_compounds_as_before():
+    log = InspectionLog()
+    for _ in range(20):
+        log.searched(1, 0.35)
+    assert log.factor(1) == pytest.approx(0.65 ** 20, rel=1e-6)
+
+
+def test_an_inspection_still_passes_through_the_floor():
+    """The floor bounds glances, not the search. A surface the agent actually
+    inspected must still be able to fall out of contention."""
+    log = InspectionLog()
+    for _ in range(6):
+        log.searched(1, 0.35, floor=0.2)
+    assert log.factor(1) == pytest.approx(0.2)
+    log.searched(1, 0.8)
+    assert log.factor(1) == pytest.approx(0.04)

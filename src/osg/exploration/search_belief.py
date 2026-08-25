@@ -64,8 +64,26 @@ class InspectionLog:
     def factor(self, ref_id: int) -> float:
         return float(self.survived.get(int(ref_id), 1.0))
 
-    def searched(self, ref_id: int, detect_prob: float) -> float:
-        f = self.factor(ref_id) * (1.0 - float(np.clip(detect_prob, 0.0, 0.99)))
+    def searched(self, ref_id: int, detect_prob: float, floor: float = 0.0) -> float:
+        """Retire some of a surface's belief. `floor` bounds what THIS kind of
+        look may do on its own.
+
+        The docstring above says a glance is weaker evidence than standing at the
+        surface. The arithmetic did not enforce it: a glance is applied once per
+        keyframe, so a surface merely in view compounds without bound. Measured
+        over 24 episodes, a surface is glanced a median of 8.4 times per episode
+        -- 0.65^8.4 = 0.027 -- against the 0.2 a real arrival and inspection is
+        worth. Forty-four of seventy-five surfaces end an episode retired below
+        0.1, most of them never visited.
+
+        `min(current, floor)` rather than `floor`, so the bound can only stop a
+        glance going lower; it can never raise a surface an inspection has
+        already ruled out.
+        """
+        current = self.factor(ref_id)
+        f = current * (1.0 - float(np.clip(detect_prob, 0.0, 0.99)))
+        if floor > 0.0:
+            f = max(f, min(current, float(floor)))
         self.survived[int(ref_id)] = f
         return f
 
