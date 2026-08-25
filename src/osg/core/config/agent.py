@@ -94,5 +94,22 @@ class AgentConfig:
     # _check_candidates blacklists it -- every cross-floor target is discarded.
     # Needs floor.enabled for the floor heights. See docs/MULTI_FLOOR.md.
     navmesh_3d_goals: bool = False
+    # Ask whether the pose the agent would DRIVE TO is reachable, not whether
+    # the object's own position is.
+    #
+    # `_check_candidates` queries Habitat with the object's (x, z). For anything
+    # resting on furniture that point is inside the furniture, and this is the
+    # same fact that made the approach goal unwinnable until it was moved onto a
+    # viewpoint ring: "a tabletop object's centre is an occupied cell inside the
+    # furniture, so the follower stalls against it".
+    #
+    # Measured over the 36 authored target poses of 00829, with no detector
+    # involved: the object's own position is off the navmesh in 6 of them, and
+    # in ALL SIX an authored viewpoint is reachable. The benchmark defines
+    # success as standing at such a viewpoint, so those episodes are solvable by
+    # construction and the agent was giving up on them. Worst hit are exactly
+    # the two lowest-SR targets -- the pitcher (3 of 6 poses) and the bleach
+    # bottle (2 of 6).
+    reachable_via_viewpoint: bool = False
 
 

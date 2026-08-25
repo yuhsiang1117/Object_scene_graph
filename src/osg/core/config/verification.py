@@ -55,6 +55,19 @@ class VerificationConfig:
     # remain; the belief arithmetic still does its work in the ranking. Lower
     # this only to A/B the stricter behaviour.
     abandon_below_p: float = 1.0
+    # Is "I cannot reach that" a permanent verdict?
+    #
+    # True is the shipped behaviour and it blacklists, which is absorbing --
+    # the one thing this pipeline says everywhere else that no state may be.
+    # The absence path, the map loader and the attempt protocol each had to have
+    # a blacklist removed for the same reason; this is the fourth site and the
+    # only one still holding one. Measured on condition K, `unreachable_skip`
+    # fired in 18 of 53 failing episodes and 2 of 43 successful ones.
+    #
+    # False routes it to the identity channel instead: one unreachable verdict
+    # is evidence, two retire the track (max_identity_rejections), and a track
+    # that becomes reachable later can come back.
+    unreachable_is_absorbing: bool = True
     min_obs: int = 3
     # Candidate quality gates: sliver/fragment detections (a chair edge seen
     # through furniture) must not trigger the expensive approach+verify loop.

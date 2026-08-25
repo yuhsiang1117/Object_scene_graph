@@ -17,6 +17,7 @@
   "agent.navmesh_3d_goals": false,
   "agent.navmesh_approach_steps": 200,
   "agent.navmesh_goal_radius": 0.1,
+  "agent.reachable_via_viewpoint": false,
   "agent.success_distance": 0.1,
   "agent.turn_deg": 30.0,
   "agent.use_habitat_navmesh": false,
@@ -238,6 +239,7 @@
     2.0
   ],
   "verification.terminal": false,
+  "verification.unreachable_is_absorbing": true,
   "verification.vlm_model": "qwen2.5vl:7b",
   "verification.vlm_q": 0.2,
   "verification.vlm_recall": 0.9,

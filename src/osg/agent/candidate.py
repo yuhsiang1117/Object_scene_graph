@@ -81,12 +81,18 @@ class CandidatePolicy:
             # visible-but-unreachable object, e.g. in a sealed bathroom): the
             # agent can never get there, so blacklist it and keep exploring for
             # a reachable goal instead of stopping and failing the episode.
-            if self.nav._reachable_fn is not None and not self.nav._reachable_fn(
-                obj_xy, self.nav.floors.goal_floor_y(obj_center)
-            ):
-                self.nav.object_layer.blacklist(track.id)
+            if self.nav._reachable_fn is not None and not self._reachable(track, obj_xy, obj_center):
+                self.nav.stats["unreachable_skip"] = (
+                    self.nav.stats.get("unreachable_skip", 0) + 1
+                )
+                if self.nav.cfg.verification.unreachable_is_absorbing:
+                    self.nav.object_layer.blacklist(track.id)
+                else:
+                    # Not a verdict. "I could not get there" is one piece of
+                    # evidence about this candidate, and the identity channel is
+                    # where evidence that presence cannot carry already goes.
+                    track.identity_rejections += 1
                 self.nav._candidate_id = None
-                self.nav.stats["unreachable_skip"] = self.nav.stats.get("unreachable_skip", 0) + 1
                 return
             # VLM verify the candidate before committing (no VERIFYING state in
             # navmesh mode). Reject -> blacklist and keep exploring; this is the
@@ -145,6 +151,31 @@ class CandidatePolicy:
                 "center": [float(v) for v in self.nav.object_layer.center_of(track)],
             }
         )
+
+    def _reachable(self, track, obj_xy, obj_center) -> bool:
+        """Can the agent get to this candidate?
+
+        The honest form of the question is about the pose it would DRIVE to.
+        `_start_approach` already sends the agent to a viewpoint on the ring,
+        never to the object's own position -- which for anything resting on
+        furniture is inside the furniture and off the navmesh. Asking about the
+        object's position and then striking the track off is how a solvable
+        episode is abandoned: on 00829, six of thirty-six authored target poses
+        are off-navmesh and all six have a reachable viewpoint.
+        """
+        floor_y = self.nav.floors.goal_floor_y(obj_center)
+        if self.nav.cfg.agent.reachable_via_viewpoint:
+            view_xy = self.nav.viewpoint_planner.approach_viewpoint(
+                obj_xy, self.nav.costmap
+            )
+            if view_xy is None:
+                view_xy = self.nav.viewpoint_planner.approach_viewpoint(
+                    obj_xy, self.nav.costmap,
+                    require_line_of_sight=False, allow_unknown=True,
+                )
+            if view_xy is not None and self.nav._reachable_fn(view_xy, floor_y):
+                return True
+        return bool(self.nav._reachable_fn(obj_xy, floor_y))
 
     def verify(self, frame: FrameData) -> str:
         track = (
