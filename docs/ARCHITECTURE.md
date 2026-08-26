@@ -264,7 +264,8 @@ not easier:
 | J | + highest-scoring names | 0.521 | 0.354 | 0.438 | 0.201 |
 | **K** | + specific names | 0.625 | 0.271 | 0.448 | 0.218 |
 | L | + reachability at the viewpoint, non-absorbing; glance floor | 0.667 | 0.396 | 0.531 | 0.256 |
-| **M** | + the target admitted on the detector's terms | **0.771** | **0.458** | **0.615** | **0.302** |
+| **M** | + the target admitted on the detector's terms | **0.771** | 0.458 | **0.615** | **0.302** |
+| M2 | (M repeated, identical config) | 0.729 | **0.479** | 0.604 | 0.290 |
 
 M is +16 episodes on K and the best of the ladder on every column. L and M both
 lift *both* halves at once rather than trading between them, which no condition
@@ -320,13 +321,34 @@ What L moved, down the funnel:
 | surfaces retired unvisited (median) | 52/82 | **1/54** | 1/54 |
 | surface inspections per episode | 2.15 | **4.01** | 3.9 |
 
+**M was repeated to find out how much of that is signal.** M2 is the same
+configuration run a second time, and it reproduces to within one episode on the
+headline and within one at every stage of the funnel:
+
+| | M | M2 |
+|---|---|---|
+| SR | 0.615 (59/96) | 0.604 (58/96) |
+| in_anchor / cross_anchor | 0.771 / 0.458 | 0.729 / 0.479 |
+| mapped it at the new pose | 71/96 | 70/96 |
+| committed to a track on the real object | 66/96 | 65/96 |
+| conversion once committed | 89% | 89% |
+| search arrived at the true surface | 3/96 | 3/96 |
+
+Mean of the two runs is 0.609 against K's 0.448 — **+15.5 episodes at a noise
+floor of about one**, so the gain is real. Per scene the repeat lands at −2, +1
+and +0.
+
 **The gain is not evenly spread, and one scene refuses to move at all:**
 
-| scene | K | L | M |
-|---|---|---|---|
-| 00829 | 21/36 | 27/36 | **32/36** |
-| 00848 | 11/30 | 11/30 | **11/30** |
-| 00880 | 11/30 | 13/30 | 16/30 |
+| scene | K | L | M | M2 |
+|---|---|---|---|---|
+| 00829 | 21/36 | 27/36 | 32/36 | 30/36 |
+| 00848 | 11/30 | 11/30 | **11/30** | **12/30** |
+| 00880 | 11/30 | 13/30 | 16/30 | 16/30 |
+
+00848's in_anchor half is **identical at 0.600 across all four runs** — K, L, M
+and M2. That scene is not noisy, it is stuck, and everything changed so far has
+been irrelevant to it.
 
 00848 is 0.367 under all three conditions and *identical in both halves*
 (in_anchor 0.600, cross_anchor 0.133) every time. Its failures say why: 13 of 19
