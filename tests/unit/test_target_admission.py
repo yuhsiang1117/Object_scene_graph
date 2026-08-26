@@ -128,3 +128,79 @@ def test_the_candidate_size_gate_moves_the_deadlock_one_stage_later():
     assert layer.candidates("bowl", target_bypasses_bbox=True, **common), (
         "and it can only grow that box by being approached"
     )
+
+
+# ---------------------------------------------- candidate ranking, measured
+#
+# Over the 170 within-episode pairs of K, L and M where a correct and a wrong
+# BELIEVED track compete, the chance the key puts the correct one first:
+#
+#     best_score alone                   0.635
+#     best_score * presence.p (shipped)  0.729
+#     presence.p alone                   0.800
+#
+# Multiplying by detector confidence hurts, because a confident false positive
+# is exactly a distant object that really does look like the target. Per episode
+# with a real choice, the correct track is chosen 64/93 shipped, 73/93 by
+# presence tie-broken on evidence.
+
+
+def _track(tid, label, score, p, evidence, centre=(0.0, 0.5, 0.0)):
+    from osg.objects.association import ObjectTrack
+    from osg.objects.ellipsoid import Ellipsoid
+
+    t = ObjectTrack(id=tid, label=label,
+                    ellipsoid=Ellipsoid(center=np.array(centre),
+                                        axes=np.array([0.1, 0.1, 0.1]), R=np.eye(3)))
+    t.best_score, t.evidence = score, evidence
+    t.best_bbox_px = 9000.0
+    t.presence.log_odds = math.log(p / (1 - p))
+    for _ in range(3):
+        t.observations.append(None)
+    return t
+
+
+def _layer_with(tracks):
+    layer = ObjectLayer()
+    for t in tracks:
+        layer._tracks[t.id] = t
+    return layer
+
+
+import math  # noqa: E402
+
+
+GATES = dict(min_obs=1, min_score=0.0, min_bbox_px=0, min_evidence=0.0)
+
+
+def test_a_confident_ghost_outranks_a_believed_track_today():
+    """The shipped key. A false positive the detector is sure about beats the
+    track the agent has actually been confirming."""
+    ghost   = _track(1, "bowl", score=0.95, p=0.60, evidence=2.0)
+    real    = _track(2, "bowl", score=0.40, p=0.93, evidence=5.0)
+    layer = _layer_with([ghost, real])
+    assert layer.candidates("bowl", **GATES)[0] is ghost
+
+
+def test_ranking_by_belief_picks_the_track_the_agent_has_been_confirming():
+    ghost   = _track(1, "bowl", score=0.95, p=0.60, evidence=2.0)
+    real    = _track(2, "bowl", score=0.40, p=0.93, evidence=5.0)
+    layer = _layer_with([ghost, real])
+    assert layer.candidates("bowl", rank_by_presence=True, **GATES)[0] is real
+
+
+def test_evidence_breaks_the_tie_when_belief_saturates():
+    """Presence clamps, so believed tracks bunch at the top and the tie-break
+    decides. Evidence beats score there too: 73/93 against 69/93."""
+    thin  = _track(1, "bowl", score=0.95, p=0.93, evidence=0.5)
+    solid = _track(2, "bowl", score=0.40, p=0.93, evidence=6.0)
+    layer = _layer_with([thin, solid])
+    assert layer.candidates("bowl", rank_by_presence=True, **GATES)[0] is solid
+
+
+def test_the_shipped_ranking_is_unchanged_by_default():
+    ghost = _track(1, "bowl", score=0.95, p=0.60, evidence=2.0)
+    real  = _track(2, "bowl", score=0.40, p=0.93, evidence=5.0)
+    layer = _layer_with([ghost, real])
+    ranked = layer.candidates("bowl", **GATES)
+    assert [t.id for t in ranked] == [1, 2]

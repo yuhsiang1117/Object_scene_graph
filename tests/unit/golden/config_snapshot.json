@@ -234,6 +234,7 @@
   "verification.min_evidence": 1.0,
   "verification.min_obs": 3,
   "verification.min_score": 0.45,
+  "verification.rank_candidates_by_presence": false,
   "verification.ring_radii_m": [
     0.8,
     1.2,

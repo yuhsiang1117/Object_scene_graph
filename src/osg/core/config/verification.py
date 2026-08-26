@@ -78,6 +78,17 @@ class VerificationConfig:
     # approached, and it can only be approached by being proposed. Of the 11
     # deadlocked episodes, 8 clear this gate once admitted and 3 do not.
     target_bypasses_bbox_gate: bool = False
+    # Rank candidates by belief, tie-broken on evidence, instead of by
+    # `best_score * presence.p`.
+    #
+    # Measured over the 170 within-episode pairs of K, L and M where a correct
+    # and a wrong BELIEVED track compete, the chance the key puts the correct one
+    # first: best_score alone 0.635, best_score * p 0.729 (shipped), p alone
+    # 0.800. Multiplying by detector confidence hurts, because a confident false
+    # positive is precisely a distant object that really does look like the
+    # target -- best_score is highest where it misleads. Per episode with a real
+    # choice, the correct track is chosen 64/93 shipped and 73/93 this way.
+    rank_candidates_by_presence: bool = False
     # Evidence-score gate (P1i follow-up, 2026-07-19): threshold picked from
     # a real 8-episode/1343-track measurement (scripts/orphan_node_check.py)
     # of evidence separated by whether a track ever reached candidate

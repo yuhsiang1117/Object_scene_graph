@@ -234,6 +234,7 @@ class ObjectLayer:
         min_presence: float = 0.0,
         max_identity_rejections: int = 0,
         target_bypasses_bbox: bool = False,
+        rank_by_presence: bool = False,
     ) -> List[ObjectTrack]:
         """Non-blacklisted tracks matching the target with enough support,
         detection quality, accumulated evidence (fragment detections and
@@ -244,6 +245,26 @@ class ObjectLayer:
         the whole query-side payoff of the presence filter: a track the agent
         has since looked at and not found sinks below one it has not disproved,
         instead of being re-proposed on every replan.
+
+        `rank_by_presence` goes one step further, and the step is measured. Over
+        the 170 within-episode pairs of K, L and M where a correct and a wrong
+        BELIEVED track compete, the probability that the key puts the correct one
+        first:
+
+            best_score alone                   0.635
+            best_score * presence.p  (shipped) 0.729
+            presence.p alone                   0.800
+
+        Multiplying by detector confidence HURTS, which makes sense once stated:
+        a confident false positive is exactly a distant object that really does
+        look like the target, so `best_score` is high precisely where it misleads.
+        Presence is the channel that asks "did I look there recently and see it",
+        which is the question a stale map needs answered.
+
+        Presence saturates at the clamp, so it needs a tie-break, and evidence
+        beats score there too. Per episode with a real choice to make, correct
+        track chosen: 64/93 shipped, 69/93 by presence alone, 73/93 by presence
+        then evidence.
 
         `max_identity_rejections` (0 disables) retires a track the agent has
         walked to and found was not the target that many times. Presence cannot
@@ -272,7 +293,10 @@ class ObjectLayer:
                 continue
             if t.label.lower().replace(" ", "_") == target:
                 out.append(t)
-        out.sort(key=lambda t: -(t.best_score * t.presence.p))
+        if rank_by_presence:
+            out.sort(key=lambda t: (-t.presence.p, -t.evidence))
+        else:
+            out.sort(key=lambda t: -(t.best_score * t.presence.p))
         return out
 
     @staticmethod
