@@ -292,9 +292,20 @@ bucket rather than by tuning:
   downstream. It is the likeliest reason condition H moved the population by a
   single episode.
 
-Both ship OFF (`agent.reachable_via_viewpoint`,
-`verification.unreachable_is_absorbing`, `exploration.search_glance_floor`), so
-L is reproducible and the defaults still are K.
+All five ship OFF (`agent.reachable_via_viewpoint`,
+`verification.unreachable_is_absorbing`, `exploration.search_glance_floor`,
+`scene_graph.target_bypasses_gates`, `verification.target_bypasses_bbox_gate`),
+so every condition of the ladder stays reproducible from its own overrides and
+the winning combination is asserted in exactly one place:
+
+```bash
+python scripts/run_eval.py +experiment=ycb_dynamic_best \
+  'ycb.scenes=[00829-QaLdnwvtxbs]' ycb.map_in=outputs/maps_v5/00829-QaLdnwvtxbs
+```
+
+`configs/experiment/ycb_dynamic_best.yaml` is condition M. It is pinned by
+`test_the_best_known_configuration_still_composes`, because if it drifts the best
+result on this benchmark stops being reproducible and nothing else would notice.
 
 What L moved, down the funnel:
 
@@ -503,6 +514,24 @@ tie-breaker (`AFFINITY_POWER = 0.5`). This is a limitation of the benchmark, not
 a result about semantic priors: on a benchmark that moved objects the way people
 do, a stronger affinity term would be worth more, and `AFFINITY_POWER` is the
 knob.
+
+**`min_presence = 0.45` is already at the best point on its curve — do not
+lower it.** Two or three episodes per condition end with a correct track blocked
+only by this gate, which looks like a cheap win. Measured over the 254 correct
+and 709 wrong same-label tracks pooled across K, L and M:
+
+| threshold | correct admitted | wrong admitted | ratio |
+|---|---|---|---|
+| **0.45** | 201/254 | 289/709 | **0.696** |
+| 0.35 | 205/254 | 300/709 | 0.683 |
+| 0.30 | 207/254 | 320/709 | 0.647 |
+| 0.25 | 217/254 | 393/709 | 0.552 |
+
+0.45 is the maximum of that ratio. Dropping to 0.30 recovers **at most one** of
+the blocked episodes while admitting 31 more wrong tracks, and 0.25 recovers two
+to four for 104 more. Since candidate ranking has no distance term, every extra
+wrong track is a chance to outrank the right one — so the gate can only be
+loosened *after* the ranking is fixed, not before.
 
 **No proximity model can rank a cross-anchor destination.** The prior decays as
 `exp(-d/L)` from the last known pose, and `L=1.0` is right for in_anchor moves

@@ -79,3 +79,53 @@ if __name__ == "__main__":  # regenerate deliberately, never automatically
         encoding="utf-8",
     )
     print(f"wrote {SNAPSHOT}")
+
+
+# ------------------------------------------------- the best-known config (M)
+#
+# The five flags that separate condition M from K each default to OFF, so the
+# ladder stays reproducible from its own overrides and the winning combination
+# is asserted in exactly one place. That makes the preset load-bearing: if it
+# drifts, the best result on the benchmark stops being reproducible and nothing
+# else would notice.
+
+def test_the_best_known_configuration_still_composes():
+    from hydra import compose, initialize_config_dir
+
+    from osg.core.config import register_configs
+
+    register_configs()
+    root = Path(__file__).resolve().parents[2] / "configs"
+    with initialize_config_dir(config_dir=str(root), version_base="1.3"):
+        cfg = compose(config_name="config", overrides=["+experiment=ycb_dynamic_best"])
+
+    # condition M: the five flags, and the K campaign line they sit on
+    assert cfg.agent.reachable_via_viewpoint is True
+    assert cfg.verification.unreachable_is_absorbing is False
+    assert cfg.exploration.search_glance_floor == 0.2
+    assert cfg.scene_graph.target_bypasses_gates is True
+    assert cfg.verification.target_bypasses_bbox_gate is True
+
+    assert cfg.eval.attempts == 3
+    assert cfg.detector.imgsz == 1280
+    assert cfg.eval.rgb_width == 1280
+    assert cfg.scene_graph.presence.enabled is True
+    assert cfg.exploration.search_posterior is True
+    assert cfg.verification.absence_only is True
+    assert cfg.scene_graph.min_det_bbox_px == 1200
+    assert cfg.verification.min_bbox_px == 800
+
+    # the prior map is deliberately not baked in: which snapshot the agent
+    # navigates from IS the experiment.
+    assert not cfg.ycb.map_in
+
+
+def test_the_five_flags_still_default_off():
+    """If one of these ever ships ON, the A-M ladder stops being reproducible
+    from the overrides recorded against it."""
+    cfg = OSGConfig()
+    assert cfg.agent.reachable_via_viewpoint is False
+    assert cfg.verification.unreachable_is_absorbing is True
+    assert cfg.exploration.search_glance_floor == 0.0
+    assert cfg.scene_graph.target_bypasses_gates is False
+    assert cfg.verification.target_bypasses_bbox_gate is False
