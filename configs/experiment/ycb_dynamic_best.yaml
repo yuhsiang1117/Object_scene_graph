@@ -1,9 +1,15 @@
 # @package _global_
 #
-# The best-scoring configuration on the dynamic YCB benchmark: condition M,
-# 0.615 over 96 episodes (in_anchor 0.771, cross_anchor 0.458, SPL 0.302),
-# against the previous best of 0.458 (C0) and the previous head of the ladder
-# 0.448 (K). See docs/ARCHITECTURE.md for the full A-M table.
+# The best-scoring configuration on the dynamic YCB benchmark: condition N,
+# 0.635 over 96 episodes (in_anchor 0.812, cross_anchor 0.458, SPL 0.319),
+# against 0.448 for the previous head of the ladder (K) and 0.458 for the
+# previous best (C0). See docs/ARCHITECTURE.md for the full A-N table.
+#
+# Replication status, which matters more here than the headline: condition M
+# (this minus the last flag) was run TWICE and reproduced at 0.615 and 0.604 --
+# one episode apart, and within one at every stage of the funnel. N is a single
+# run at +2.5 episodes over that pair's mean, which matches what the offline
+# analysis predicted for it but has not itself been repeated.
 #
 #   python scripts/run_eval.py +experiment=ycb_dynamic_best \
 #     'ycb.scenes=[00829-QaLdnwvtxbs]' \
@@ -52,6 +58,10 @@ verification:
   min_bbox_px: 800
   unreachable_is_absorbing: false
   target_bypasses_bbox_gate: true
+  # N: rank candidates by belief, tie-broken on evidence. Multiplying by
+  # detector confidence hurts -- a confident false positive is precisely a
+  # distant object that really does look like the target.
+  rank_candidates_by_presence: true
 
 llm:
   text_model: nvidia/nemotron-3.5-lightning-30b-a3b

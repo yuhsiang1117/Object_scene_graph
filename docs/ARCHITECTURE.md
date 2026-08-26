@@ -266,6 +266,26 @@ not easier:
 | L | + reachability at the viewpoint, non-absorbing; glance floor | 0.667 | 0.396 | 0.531 | 0.256 |
 | **M** | + the target admitted on the detector's terms | **0.771** | 0.458 | **0.615** | **0.302** |
 | M2 | (M repeated, identical config) | 0.729 | **0.479** | 0.604 | 0.290 |
+| **N** | + candidates ranked by belief, not by belief x confidence | **0.812** | 0.458 | **0.635** | **0.319** |
+
+N is the best measured configuration and is what
+`+experiment=ycb_dynamic_best` composes. It is **+2.5 episodes over the mean of
+M's two runs**, which is what the offline analysis predicted for it, and it is a
+single run — M is the replicated result. The change it makes is one sort key:
+
+| ranking key | P(correct track ranked first) |
+|---|---|
+| `best_score` alone | 0.635 |
+| `best_score * presence.p` (K–M) | 0.729 |
+| **`presence.p`, evidence as tie-break** (N) | **0.800** |
+
+Multiplying by detector confidence *hurts*, because a confident false positive is
+precisely a distant object that really does look like the target — `best_score`
+is highest exactly where it misleads. Live, N commits to the correct track in
+19/35 competing episodes against M's 19/40 and M2's 18/38, and all of the gain
+lands in in_anchor and on 00880. Two other ranking fixes were killed offline
+first: a distance/cost term (net −7, since for a cross-anchor move the ghost sits
+near the start and the true object is far) and loosening `min_presence`.
 
 M is +16 episodes on K and the best of the ladder on every column. L and M both
 lift *both* halves at once rather than trading between them, which no condition
@@ -340,14 +360,14 @@ and +0.
 
 **The gain is not evenly spread, and one scene refuses to move at all:**
 
-| scene | K | L | M | M2 |
-|---|---|---|---|---|
-| 00829 | 21/36 | 27/36 | 32/36 | 30/36 |
-| 00848 | 11/30 | 11/30 | **11/30** | **12/30** |
-| 00880 | 11/30 | 13/30 | 16/30 | 16/30 |
+| scene | K | L | M | M2 | N |
+|---|---|---|---|---|---|
+| 00829 | 21/36 | 27/36 | 32/36 | 30/36 | 32/36 |
+| 00848 | 11/30 | 11/30 | **11/30** | **12/30** | **11/30** |
+| 00880 | 11/30 | 13/30 | 16/30 | 16/30 | 18/30 |
 
-00848's in_anchor half is **identical at 0.600 across all four runs** — K, L, M
-and M2. That scene is not noisy, it is stuck, and everything changed so far has
+00848's in_anchor half is **identical at 0.600 across all five runs** — K, L, M,
+M2 and N. That scene is not noisy, it is stuck, and everything changed so far has
 been irrelevant to it.
 
 00848 is 0.367 under all three conditions and *identical in both halves*

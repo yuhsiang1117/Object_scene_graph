@@ -99,12 +99,13 @@ def test_the_best_known_configuration_still_composes():
     with initialize_config_dir(config_dir=str(root), version_base="1.3"):
         cfg = compose(config_name="config", overrides=["+experiment=ycb_dynamic_best"])
 
-    # condition M: the five flags, and the K campaign line they sit on
+    # condition N: the six flags, and the K campaign line they sit on
     assert cfg.agent.reachable_via_viewpoint is True
     assert cfg.verification.unreachable_is_absorbing is False
     assert cfg.exploration.search_glance_floor == 0.2
     assert cfg.scene_graph.target_bypasses_gates is True
     assert cfg.verification.target_bypasses_bbox_gate is True
+    assert cfg.verification.rank_candidates_by_presence is True
 
     assert cfg.eval.attempts == 3
     assert cfg.detector.imgsz == 1280
@@ -129,3 +130,4 @@ def test_the_five_flags_still_default_off():
     assert cfg.exploration.search_glance_floor == 0.0
     assert cfg.scene_graph.target_bypasses_gates is False
     assert cfg.verification.target_bypasses_bbox_gate is False
+    assert cfg.verification.rank_candidates_by_presence is False
