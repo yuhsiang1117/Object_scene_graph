@@ -504,6 +504,30 @@ a result about semantic priors: on a benchmark that moved objects the way people
 do, a stronger affinity term would be worth more, and `AFFINITY_POWER` is the
 knob.
 
+**No proximity model can rank a cross-anchor destination.** The prior decays as
+`exp(-d/L)` from the last known pose, and `L=1.0` is right for in_anchor moves
+(median 0.72 m) and wrong for cross_anchor ones (6.06 m). The obvious fix is a
+mixture, which `container_prior`'s own comment anticipates. It was swept
+offline over all 114 relocations, both as `w·exp(-d/L) + (1-w)` and as a proper
+two-scale `w·exp(-d/L_near) + (1-w)·exp(-d/L_far)`:
+
+| model | in_anchor | cross_anchor | total |
+|---|---|---|---|
+| shipped, `w=1.0` | 20/57 | 2/57 | 22/114 |
+| flat mix `w=0.5` | 18/57 | 5/57 | 23/114 |
+| flat mix `w=0.0` | 4/57 | 8/57 | 12/114 |
+| two-scale `w=0.5, L_far=6` | 21/57 | 2/57 | 23/114 |
+| two-scale `w=0.4, L_far=6` | 21/57 | 2/57 | 23/114 |
+
+Every setting lands on the same frontier: the best total is 23/114 against the
+shipped 22, and cross_anchor never exceeds 5/57 except by destroying in_anchor.
+Combined with the earlier result that affinity alone ranks no better than
+arbitrary order, this says the search prior **has no signal for a cross-room
+move**. That is a limit of the feature set — distance from the old pose, plus a
+category affordance table — not a tuning problem, and no amount of sweeping will
+move it. Ranking work should go into candidate selection, where the information
+does exist, or a genuinely new signal should be found.
+
 **Offline ranking metrics are scale-blind.** A change that improved every ranking
 number switched the search line off entirely, because the offline scorer measured
 order and the live system also reads magnitude. Pilot before trusting a proxy.
