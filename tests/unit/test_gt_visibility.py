@@ -233,3 +233,41 @@ def test_gates_default_to_open_so_the_instrument_is_usable_without_them():
     v = GroundTruthVisibility([0.0, 0.0, 2.0])
     v.observe_keyframe(_centred_frame(), [_det("bowl", (310, 230, 330, 250))], "bowl")
     assert v.kf_admitted == 1
+
+
+# ------------------------------------------- unconditional proximity (Q+1)
+#
+# "Never looked at the new pose" is one bucket covering two failures with two
+# different fixes: the agent never went there, or it went there and the object
+# was never visible from anywhere it stood. Condition R gave the agent three
+# times the exploration budget and moved the bucket by one episode, which says
+# the split is not where it was assumed to be.
+
+
+def test_proximity_is_recorded_even_when_the_object_is_never_visible():
+    v = GroundTruthVisibility([0.0, 0.0, 2.0])
+    # Camera at the origin, but the depth buffer says something solid is in the
+    # way at 0.5 m, so the object is never seen.
+    v.observe(_frame(0.5))
+    assert v.in_view == 0, "correctly not visible"
+    assert v.fields()["gt_min_range_any_m"] == 2.0, "but the agent WAS 2 m away"
+    assert v.fields()["gt_frames_within_3m"] == 1
+
+
+def test_proximity_and_visibility_agree_when_the_object_is_seen():
+    v = GroundTruthVisibility([0.0, 0.0, 2.0])
+    v.observe(_frame(5.0))
+    f = v.fields()
+    assert v.in_view == 1
+    assert f["gt_min_range_any_m"] == f["gt_min_range_m"] == 2.0
+
+
+def test_a_far_frame_is_not_counted_as_close():
+    v = GroundTruthVisibility([0.0, 0.0, 9.0])
+    v.observe(_frame(5.0))
+    assert v.fields()["gt_frames_within_3m"] == 0
+    assert v.fields()["gt_min_range_any_m"] == 9.0
+
+
+def test_it_is_none_when_there_is_no_authored_target():
+    assert GroundTruthVisibility(None).fields()["gt_min_range_any_m"] is None

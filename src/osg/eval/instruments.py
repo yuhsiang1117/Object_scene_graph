@@ -68,6 +68,16 @@ class GroundTruthVisibility:
         self.min_det_bbox_px = float(min_det_bbox_px)
         self.frames = 0
         self.in_view = 0
+        # How close the agent ever got, REGARDLESS of whether it could see the
+        # object. Without this, "never looked at the new pose" is one bucket
+        # covering two different failures with two different fixes: the agent
+        # never went there, or it went there and the object was never visible
+        # from anywhere it stood. Seventeen episodes of condition Q sit in that
+        # ambiguity, and giving the agent three times the exploration budget
+        # (condition R) moved the bucket by one, which is evidence the split is
+        # not where it was assumed to be.
+        self.min_range_any_m = float("inf")
+        self.frames_within_3m = 0
         self.min_range_m = float("inf")
         self.close_frames = 0  # in view within 3 m, where detection is plausible
         self.kf_in_view = 0
@@ -85,6 +95,12 @@ class GroundTruthVisibility:
         if self.target is None:
             return
         self.frames += 1
+        # Proximity first, and unconditionally: this is the half that says
+        # whether the agent was ever in a position to see the object at all.
+        reach = float(np.linalg.norm(frame.camera_position - self.target))
+        self.min_range_any_m = min(self.min_range_any_m, reach)
+        if reach <= 3.0:
+            self.frames_within_3m += 1
         seen = self._project(frame)
         if seen is None:
             return
@@ -211,6 +227,11 @@ class GroundTruthVisibility:
             "gt_in_view_close_frames": self.close_frames,
             "gt_min_range_m": (round(self.min_range_m, 3)
                                if self.min_range_m < float("inf") else None),
+            # Unconditional proximity: how close the agent got whether or not it
+            # could see the object, and how long it spent that close.
+            "gt_min_range_any_m": (round(self.min_range_any_m, 3)
+                                   if self.min_range_any_m < float("inf") else None),
+            "gt_frames_within_3m": self.frames_within_3m,
             "gt_kf_in_view": self.kf_in_view,
             "gt_kf_detected": self.kf_detected,
             "gt_kf_admitted": self.kf_admitted,
