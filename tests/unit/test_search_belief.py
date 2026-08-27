@@ -511,3 +511,97 @@ def test_an_inspection_still_passes_through_the_floor():
     assert log.factor(1) == pytest.approx(0.2)
     log.searched(1, 0.8)
     assert log.factor(1) == pytest.approx(0.04)
+
+
+# ------------------------- the anchor is dropped when it stops being believed
+#
+# Inspections a greedy search needs to reach the true destination surface, over
+# the benchmark's 114 relocations:
+#
+#                       reaches it   median   within 10
+#     in_anchor   prox    23/57         2        23
+#     in_anchor   flat    15/57        17         5
+#     cross       prox    12/57        22         4
+#     cross       flat    20/57        16         9
+#
+# The halves want opposite models and no mixture serves both -- swept offline,
+# flat and two-scale alike, every setting lands on one frontier. The agent's own
+# presence belief says which half it is in.
+
+
+def _strategy(drop_below):
+    import types
+    from osg.core.config import OSGConfig
+    from osg.exploration.strategy import ExplorationStrategy
+
+    cfg = OSGConfig()
+    cfg.exploration.search_drop_proximity_below = drop_below
+    return ExplorationStrategy(cfg, planner=None, scorer=None, viewpoint_planner=None,
+                               affinity=None, stats={}, profiler=types.SimpleNamespace())
+
+
+def _world_with(p):
+    import types
+
+    import numpy as np
+
+    from osg.objects.association import ObjectTrack
+    from osg.objects.ellipsoid import Ellipsoid
+    from osg.objects.object_layer import ObjectLayer
+
+    layer = ObjectLayer()
+    t = ObjectTrack(id=1, label="bowl",
+                    ellipsoid=Ellipsoid(center=np.array([2.0, 0.6, 3.0]),
+                                        axes=np.array([0.1, 0.1, 0.1]), R=np.eye(3)))
+    t.presence.log_odds = math.log(p / (1 - p))
+    t.presence.n_expected = 20
+    layer._tracks[1] = t
+    return types.SimpleNamespace(object_layer=layer, target="bowl")
+
+
+import math  # noqa: E402
+
+
+def test_a_believed_anchor_still_drives_the_search():
+    s = _strategy(0.45)
+    where = s._last_known_target_xy(_world_with(0.90))
+    assert where is not None and np.allclose(where, [2.0, 3.0])
+
+
+def test_a_disbelieved_anchor_is_dropped_and_the_search_becomes_a_sweep():
+    """A flat prior over prior*d/cost IS a nearest-first sweep, since a constant
+    prior orders surfaces by travel cost alone."""
+    s = _strategy(0.45)
+    assert s._last_known_target_xy(_world_with(0.10)) is None
+    assert s.stats["search_proximity_dropped"] == 1
+
+
+def test_the_anchor_is_kept_forever_by_default():
+    s = _strategy(0.0)
+    assert s._last_known_target_xy(_world_with(0.001)) is not None
+    assert "search_proximity_dropped" not in s.stats
+
+
+def test_dropping_the_anchor_leaves_travel_cost_in_charge():
+    """Which is what makes "drop the anchor" mean "sweep", with no second
+    mechanism needed.
+
+    Without an anchor the priors still vary, because affinity does -- but only
+    across the table's narrow range, and affinity alone was measured to rank no
+    better than arbitrary order. With an anchor they vary by orders of
+    magnitude, so the anchor, not the cost, decides where the agent goes.
+    """
+    graph = _Graph([_Node(1, "counter", [0.0, 0.8, 0.0]),
+                    _Node(2, "table", [3.0, 0.8, 0.0]),
+                    _Node(3, "desk", [9.0, 0.8, 0.0])])
+    anchored = build_container_candidates(graph, "bowl", InspectionLog(),
+                                          last_known_xy=np.zeros(2))
+    flat = build_container_candidates(graph, "bowl", InspectionLog(), last_known_xy=None)
+
+    def spread(cands):
+        priors = [c.prior for c in cands]
+        return max(priors) / min(priors)
+
+    assert spread(anchored) > 100, "the anchor dominates: exp(-9/1) against exp(0)"
+    assert spread(flat) < 1.3, "without it, only the affinity table's narrow range"
+    assert spread(anchored) > 80 * spread(flat)

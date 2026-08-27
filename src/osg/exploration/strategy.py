@@ -96,6 +96,9 @@ class ExplorationStrategy:
             dedup_m=self.cfg.frontier_dedup_m,
         )
         self.goal_prefer_free = bool(self.cfg.frontier_goal_free_cell)
+        # Below this belief in the last known pose, stop anchoring the search on
+        # it. 0.0 keeps the anchor forever, which is the shipped behaviour.
+        self.drop_proximity_below = float(self.cfg.search_drop_proximity_below)
         self.cost_prefer_free = bool(self.cfg.frontier_cost_free_cell)
         # How far from a frontier goal still counts as NOT having reached it.
         #
@@ -444,26 +447,38 @@ class ExplorationStrategy:
         return surface
 
     def _last_known_target_xy(self, world: WorldView):
-        """Where the target was last believed to be.
+        """Where the target was last believed to be -- while it is still believed.
 
         Proximity encodes "objects are moved by someone doing a task, so short
-        displacements dominate". This used to return None once absence was
-        confirmed, on the reasoning that the premise had been refuted -- and
-        with the proximity model of the time it measured better that way.
+        displacements dominate", and for the half of the benchmark that moves a
+        median 0.72 m it is worth a great deal.
 
-        It was the model that was wrong, not the premise. Confirming the object
-        is not at its old POSE does not refute short displacements; the
-        benchmark's in_anchor relocations move a median 0.72 m, so the object is
-        usually still within a metre or two of where it was, on a neighbouring
-        surface. What made keeping the term look bad was the 0.2 floor, which
-        tied every distant candidate together (see SearchConfig). With
-        exp(-d/1.0) and no floor, keeping the term takes the true destination
-        into the top 5 in 29 of 57 in_anchor cases against 5 of 57 when it is
-        dropped, and cross_anchor is unharmed at 7 of 57 either way.
+        This used to return None once absence was confirmed, on the reasoning
+        that the premise had been refuted, and that was removed because with the
+        proximity model of the time it measured worse. The removal went one step
+        too far: the premise is refuted, and the right question is WHEN.
 
-        Surfaces already looked at are retired by the InspectionLog, which is
-        the right instrument for "I have ruled this one out" -- a belief the
-        prior should not be trying to express a second time.
+        Measured over the 114 relocations, inspections a greedy search needs to
+        reach the true destination surface:
+
+                              reaches it   median   within 10
+            in_anchor   prox    23/57         2        23
+            in_anchor   flat    15/57        17         5
+            cross       prox    12/57        22         4
+            cross       flat    20/57        16         9
+
+        The two halves want opposite models, and a mixture cannot serve both --
+        swept, both flat and two-scale, every setting lands on one frontier. But
+        the agent does not have to guess which half it is in. Its own presence
+        belief answers: while the map still believes the object is where it left
+        it, short displacements are the live hypothesis; once that belief has
+        fallen below the bar the agent proposes candidates at, the hypothesis is
+        dead and what remains is coverage -- which a flat prior over
+        `prior * d / cost` already is, since a constant prior orders surfaces by
+        travel cost alone.
+
+        `drop_proximity_below` is 0.0 by default, which keeps the term forever
+        and is the shipped behaviour.
         """
         best = None
         for track in world.object_layer.tracks(include_blacklisted=True):
@@ -472,6 +487,16 @@ class ExplorationStrategy:
             if best is None or track.presence.n_expected > best.presence.n_expected:
                 best = track
         if best is None:
+            return None
+        if self.drop_proximity_below > 0.0 and best.presence.p < self.drop_proximity_below:
+            # The map has stopped believing the object is there. Anchoring the
+            # search on a pose it no longer believes in is worse than not
+            # anchoring it at all -- on the cross-anchor half, proximity reaches
+            # the true surface within ten inspections 4 times in 57 against a
+            # plain nearest-first sweep's 9.
+            self.stats["search_proximity_dropped"] = (
+                self.stats.get("search_proximity_dropped", 0) + 1
+            )
             return None
         return world.object_layer.center_of(best)[list(PLANE)]
 

@@ -61,6 +61,23 @@ class ExplorationConfig:
     # far candidates stay ordered by distance and cross_anchor recovers from
     # 1/57 to 7/57. Keep it at 0.0 unless something needs a genuine mixture.
     search_proximity_floor: float = 0.0
+    # Stop anchoring the search on the last known pose once the map has stopped
+    # believing the object is there. 0.0 keeps the anchor forever (shipped).
+    #
+    # The two halves of the benchmark want opposite models and no mixture serves
+    # both -- swept offline, flat and two-scale alike, every setting lands on one
+    # frontier. Inspections a greedy search needs to reach the true destination:
+    #
+    #                       reaches it   median   within 10
+    #     in_anchor   prox    23/57         2        23
+    #     in_anchor   flat    15/57        17         5
+    #     cross       prox    12/57        22         4
+    #     cross       flat    20/57        16         9
+    #
+    # The agent does not have to guess which half it is in: its own presence
+    # belief answers. Set this to `scene_graph.presence.min_presence` to switch
+    # exactly when the map stops proposing that pose as a goal.
+    search_drop_proximity_below: float = 0.0
     # Belief carried by the single most plausible mapped surface. The candidate
     # priors are affinity x proximity normalised so the best of them equals this,
     # which separates the ORDERING (what the proximity model is for) from the
