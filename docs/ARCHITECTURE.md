@@ -267,6 +267,46 @@ not easier:
 | **M** | + the target admitted on the detector's terms | **0.771** | 0.458 | **0.615** | **0.302** |
 | M2 | (M repeated, identical config) | 0.729 | **0.479** | 0.604 | 0.290 |
 | **N** | + candidates ranked by belief, not by belief x confidence | **0.812** | 0.458 | **0.635** | **0.319** |
+| Q | + the search anchor dropped once the agent has been there | 0.708 | **0.500** | 0.604 | 0.303 |
+
+Q is the best `cross_anchor` of the campaign (0.500 against a previous best of
+0.479) and the first condition ever to move scene 00848, which had sat at
+in_anchor 0.600 for five consecutive runs. It buys that by trading, at worse
+than one for one: −5 in_anchor for +2 cross_anchor.
+
+### Cross-anchor decomposes, and the half that moves is not the half that binds
+
+```
+    SR  =  P(look at it)  x  P(success | looked)
+```
+
+| | P(look) | P(convert) | SR |
+|---|---|---|---|
+| cross_anchor K | 0.71 | 0.38 | 0.271 |
+| cross_anchor N | 0.69 | 0.67 | 0.458 |
+| cross_anchor Q | 0.73 | 0.69 | 0.500 |
+| in_anchor K | 0.94 | 0.67 | 0.625 |
+| in_anchor N | **0.94** | 0.87 | 0.812 |
+| in_anchor Q | **0.94** | 0.76 | 0.708 |
+
+**Every gain from K to Q is conversion. `P(look)` has never moved** — 0.94 on
+in_anchor and 0.69–0.73 on cross_anchor, in every condition. It is now the
+binding constraint: cross_anchor cannot exceed 0.73 however good conversion
+gets, and conversion is already 0.69. It also shows what Q actually cost — its
+in_anchor loss is conversion (0.87 → 0.76), not coverage.
+
+And the surface search is not what moves `P(look)`. It arrives at the true
+destination surface **3 times in 96 in every condition measured** — K, M, M2, N
+and Q alike — while consuming a growing share of the budget:
+
+| | K | N | Q |
+|---|---|---|---|
+| surface inspections | 206 | 343 | 367 |
+| frontier goals | **412** | 231 | **139** |
+
+`search_frontier_weight = 0.3` devalues unexplored space by 70% to fund it.
+Inspections nearly doubled, frontier goals fell by two thirds, and `P(look)`
+did not move on either half.
 
 N is the best measured configuration and is what
 `+experiment=ycb_dynamic_best` composes. It is **+2.5 episodes over the mean of
