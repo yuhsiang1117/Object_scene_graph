@@ -39,6 +39,23 @@ class VerificationConfig:
     # These are those rates, not a guess.
     vlm_recall: float = 0.9
     vlm_q: float = 0.2
+    # Beyond this range, "I did not see it" is not evidence of absence. 0.0
+    # disables the check, which is the shipped behaviour.
+    #
+    # In navmesh mode the follower cannot distinguish arrived from unreachable,
+    # so an unreachable goal ends the approach exactly as an arrival does and a
+    # reading is taken from wherever the agent happens to stand. Measured on
+    # 00848: a track 0.38 m from the true object was read as absent from 6.4 m
+    # away, on a VLM answer about a handful of pixels, and collapsed 0.82 ->
+    # 0.36. All six pitcher episodes on that scene are byte-identical as a
+    # result, and its per-target SR is 0.056.
+    #
+    # 3.0 m is the split the ground-truth instrument already measures: in-situ
+    # recall is 0.52-0.63 within three metres and 0.24-0.26 beyond, so past that
+    # the detector's silence is close to uninformative -- and the viewpoint rings
+    # the agent stops on top out at 2.0 m, so a genuine arrival is always inside
+    # it.
+    absence_max_range_m: float = 0.0
     # Build the verifier for the ABSENCE check only, leaving the pre-approach
     # candidate gate off, so a run isolates one variable.
     absence_only: bool = False

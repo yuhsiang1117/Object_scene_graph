@@ -463,3 +463,95 @@ def test_an_arrival_that_finds_nothing_is_recorded_on_the_track():
 class _null:
     def __enter__(self): return self
     def __exit__(self, *a): return False
+
+
+# --------------------------- absence needs the agent to have GOT there (Q+2)
+#
+# In navmesh mode the follower returns None for arrived-or-unreachable alike, so
+# an unreachable goal ends the approach exactly as an arrival does. Measured on
+# 00848: the agent commits at step 1 to a track 0.38 m from the true object, is
+# told the goal is unreachable while still 6.4 m away, asks the VLM about a
+# handful of pixels at that range, gets "bare", and applies it at full strength.
+# The correct track collapses 0.82 -> 0.36 and the agent never approaches the
+# object again. All six pitcher episodes on that scene are byte-identical.
+
+
+def _sensor(max_range, verifier=None):
+    import types
+
+    from osg.core.config import OSGConfig
+    from osg.verification.absence import AbsenceSensor
+
+    cfg = OSGConfig()
+    cfg.verification.absence_max_range_m = max_range
+    cfg.verification.absence_requires_expectation = False
+    cfg.verification.absence_use_vlm = verifier is not None
+    return AbsenceSensor(cfg, verifier=verifier,
+                         profiler=types.SimpleNamespace(timeit=lambda n: _null()),
+                         stats={})
+
+
+def _track_at(z):
+    import numpy as np
+
+    from osg.objects.association import ObjectTrack
+    from osg.objects.ellipsoid import Ellipsoid
+
+    return ObjectTrack(id=1, label="blue plastic pitcher",
+                       ellipsoid=Ellipsoid(center=np.array([0.0, 0.0, float(z)]),
+                                           axes=np.array([0.1, 0.1, 0.1]), R=np.eye(3)))
+
+
+def test_a_reading_from_across_the_room_is_refused():
+    from osg.objects.presence import PresenceFilter
+
+    sensor = _sensor(3.0)
+    track = _track_at(6.4)
+    before = track.presence.p
+    assert sensor.observe(track, "blue plastic pitcher", _frame_with_depth(6.4),
+                          PresenceFilter(), scan_expected=1, reason="path_consumed") is None
+    assert track.presence.p == before, "the belief must not move"
+    assert track.absence_arrivals == 0, "and this is not an arrival"
+    assert sensor.stats["absence_too_far"] == 1
+
+
+def test_a_reading_at_arm_s_length_is_still_taken():
+    from osg.objects.presence import PresenceFilter
+
+    sensor = _sensor(3.0)
+    track = _track_at(1.2)
+    before = track.presence.p
+    verdict = sensor.observe(track, "blue plastic pitcher", _frame_with_depth(1.2),
+                             PresenceFilter(), scan_expected=1, reason="depth")
+    assert verdict is not None and track.presence.p < before
+    assert track.absence_arrivals == 1
+
+
+def test_the_range_gate_is_off_by_default():
+    """0.0 keeps the shipped behaviour, so the A/B has a control."""
+    from osg.core.config import OSGConfig
+    from osg.objects.presence import PresenceFilter
+
+    assert OSGConfig().verification.absence_max_range_m == 0.0
+    sensor = _sensor(0.0)
+    track = _track_at(6.4)
+    assert sensor.observe(track, "blue plastic pitcher", _frame_with_depth(6.4),
+                          PresenceFilter(), scan_expected=1, reason="path_consumed") is not None
+
+
+def test_the_gate_is_checked_before_the_vlm_is_asked():
+    """A call about a handful of pixels is not worth making, and its answer is
+    not worth having."""
+    from osg.objects.presence import PresenceFilter
+
+    class _CountingVerifier:
+        def __init__(self): self.calls = 0
+        def verify_still_there(self, *a, **k):
+            self.calls += 1
+            return False
+
+    v = _CountingVerifier()
+    sensor = _sensor(3.0, verifier=v)
+    sensor.observe(_track_at(6.4), "blue plastic pitcher", _frame_with_depth(6.4),
+                   PresenceFilter(), scan_expected=1, reason="path_consumed")
+    assert v.calls == 0

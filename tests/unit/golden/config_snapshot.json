@@ -220,6 +220,7 @@
   "seed": 42,
   "verification.abandon_below_p": 1.0,
   "verification.absence_categories_max": 5,
+  "verification.absence_max_range_m": 0.0,
   "verification.absence_on_arrival": true,
   "verification.absence_only": false,
   "verification.absence_requires_expectation": true,

@@ -79,6 +79,27 @@ class AbsenceSensor:
         vc = self.cfg
         if not vc.absence_on_arrival or presence_filter is None or track is None:
             return None
+        # "I got there and it was gone" requires having GOT THERE.
+        #
+        # In navmesh mode the follower returns None for arrived-or-unreachable
+        # alike, so an unreachable goal ends the approach exactly as an arrival
+        # does and a reading is taken from wherever the agent is standing.
+        # Measured on 00848: the agent commits at step 1 to a track 0.38 m from
+        # the true object, is told the goal is unreachable while still 6.4 m
+        # away, asks the VLM about a handful of pixels at that range, gets
+        # "bare", and applies it at full strength -- r=0.9, q=0.2. The correct
+        # track goes 0.82 -> 0.36 and the agent never goes near the object
+        # again. All six pitcher episodes on that scene are byte-identical.
+        #
+        # The expectation gate would have caught this, but it is skipped
+        # whenever the VLM answers, on the reasoning that a model that looked at
+        # the region has already answered for itself. That reasoning holds at
+        # arm's length and not at six metres.
+        if vc.absence_max_range_m > 0.0:
+            depth = float(track.ellipsoid.mean_depth_at(frame.T_cw))
+            if depth > vc.absence_max_range_m:
+                self.stats["absence_too_far"] = self.stats.get("absence_too_far", 0) + 1
+                return None
         # The VLM is a second sensor with its own (r, q); when it is available,
         # ask it about the target's own footprint rather than trusting the
         # detector's silence alone. A failed call returns None and is treated as
