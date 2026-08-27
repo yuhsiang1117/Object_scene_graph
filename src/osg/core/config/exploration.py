@@ -75,9 +75,14 @@ class ExplorationConfig:
     #     cross       flat    20/57        16         9
     #
     # The agent does not have to guess which half it is in: its own presence
-    # belief answers. Set this to `scene_graph.presence.min_presence` to switch
-    # exactly when the map stops proposing that pose as a goal.
-    search_drop_proximity_below: float = 0.0
+    # belief answers -- but the right event is an ARRIVAL, not a belief level.
+    # A first attempt keyed this on `presence.p < min_presence` and fired in 56%
+    # of in_anchor episodes against the 30% predicted, because presence also
+    # decays from ordinary missed expectations while the agent walks past. It
+    # dropped the anchor on the half that needs it and cost three episodes on
+    # the first scene. `ObjectTrack.absence_arrivals` counts only "I went to
+    # look and it was gone".
+    search_drop_proximity_after_absence: bool = False
     # Belief carried by the single most plausible mapped surface. The candidate
     # priors are affinity x proximity normalised so the best of them equals this,
     # which separates the ORDERING (what the proximity model is for) from the

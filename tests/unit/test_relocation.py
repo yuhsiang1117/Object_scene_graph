@@ -428,3 +428,38 @@ def test_a_detection_with_no_readable_depth_is_counted_where_it_dies():
     assert f["det_admitted"] == 1
     assert f["obs_rejected"] == 1
     assert f["tracks_created"] == 0
+
+
+def test_an_arrival_that_finds_nothing_is_recorded_on_the_track():
+    """`absence_arrivals` is the event the search prior keys on, and it must be
+    distinct from both of its neighbours: `identity_rejections` also counts
+    unreachable verdicts and failed attempts, and `presence.p` also decays from
+    ordinary missed expectations while merely walking past."""
+    import types
+
+    import numpy as np
+
+    from osg.core.config import OSGConfig
+    from osg.objects.association import ObjectTrack
+    from osg.objects.ellipsoid import Ellipsoid
+    from osg.objects.presence import PresenceFilter
+    from osg.verification.absence import AbsenceSensor
+
+    cfg = OSGConfig()
+    cfg.verification.absence_requires_expectation = False
+    cfg.verification.absence_use_vlm = False
+    sensor = AbsenceSensor(cfg, verifier=None,
+                           profiler=types.SimpleNamespace(timeit=lambda n: _null()),
+                           stats={})
+    track = ObjectTrack(id=1, label="bowl",
+                        ellipsoid=Ellipsoid(center=np.array([1.0, 0.6, 2.0]),
+                                            axes=np.array([0.1, 0.1, 0.1]), R=np.eye(3)))
+    assert track.absence_arrivals == 0
+    sensor.observe(track, "bowl", _frame_with_depth(2.0), PresenceFilter(),
+                   scan_expected=1, reason="deadline")
+    assert track.absence_arrivals == 1, "the agent went there and it was gone"
+
+
+class _null:
+    def __enter__(self): return self
+    def __exit__(self, *a): return False

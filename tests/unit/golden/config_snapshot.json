@@ -102,7 +102,7 @@
   "exploration.scorer": "vlm",
   "exploration.search_arrival_m": 1.2,
   "exploration.search_detect_prob": 0.8,
-  "exploration.search_drop_proximity_below": 0.0,
+  "exploration.search_drop_proximity_after_absence": false,
   "exploration.search_face_turns": 8,
   "exploration.search_frontier_weight": 1.0,
   "exploration.search_glance_detect_prob": 0.35,

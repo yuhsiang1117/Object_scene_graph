@@ -96,9 +96,12 @@ class ExplorationStrategy:
             dedup_m=self.cfg.frontier_dedup_m,
         )
         self.goal_prefer_free = bool(self.cfg.frontier_goal_free_cell)
-        # Below this belief in the last known pose, stop anchoring the search on
-        # it. 0.0 keeps the anchor forever, which is the shipped behaviour.
-        self.drop_proximity_below = float(self.cfg.search_drop_proximity_below)
+        # Stop anchoring the search on the last known pose once the agent has
+        # BEEN there and found nothing. False keeps the anchor forever, which is
+        # the shipped behaviour.
+        self.drop_proximity_after_absence = bool(
+            self.cfg.search_drop_proximity_after_absence
+        )
         self.cost_prefer_free = bool(self.cfg.frontier_cost_free_cell)
         # How far from a frontier goal still counts as NOT having reached it.
         #
@@ -458,8 +461,10 @@ class ExplorationStrategy:
         proximity model of the time it measured worse. The removal went one step
         too far: the premise is refuted, and the right question is WHEN.
 
-        Measured over the 114 relocations, inspections a greedy search needs to
-        reach the true destination surface:
+        Measured over the 114 relocations, with the true surface counted as one
+        whose footprint is within a metre of where the object landed -- close
+        enough that arriving at it puts the object in view -- inspections a
+        greedy search needs to reach it:
 
                               reaches it   median   within 10
             in_anchor   prox    23/57         2        23
@@ -488,12 +493,18 @@ class ExplorationStrategy:
                 best = track
         if best is None:
             return None
-        if self.drop_proximity_below > 0.0 and best.presence.p < self.drop_proximity_below:
-            # The map has stopped believing the object is there. Anchoring the
-            # search on a pose it no longer believes in is worse than not
-            # anchoring it at all -- on the cross-anchor half, proximity reaches
-            # the true surface within ten inspections 4 times in 57 against a
-            # plain nearest-first sweep's 9.
+        if self.drop_proximity_after_absence and best.absence_arrivals > 0:
+            # The agent went to that pose and the object was not there.
+            # Anchoring the search on it now is worse than not anchoring at all:
+            # on the cross-anchor half, proximity reaches the true surface within
+            # ten inspections 4 times in 57 against a nearest-first sweep's 9.
+            #
+            # The trigger is the ARRIVAL, not the belief. A first attempt used
+            # `presence.p < min_presence` and fired in 56% of in_anchor episodes
+            # against the 30% predicted, because presence also decays from
+            # ordinary missed expectations while the agent merely walks past --
+            # so it dropped the anchor on the half that needs it, and cost three
+            # episodes on the first scene before the run was stopped.
             self.stats["search_proximity_dropped"] = (
                 self.stats.get("search_proximity_dropped", 0) + 1
             )

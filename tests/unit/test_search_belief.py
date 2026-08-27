@@ -529,18 +529,18 @@ def test_an_inspection_still_passes_through_the_floor():
 # presence belief says which half it is in.
 
 
-def _strategy(drop_below):
+def _strategy(drop_after_absence):
     import types
     from osg.core.config import OSGConfig
     from osg.exploration.strategy import ExplorationStrategy
 
     cfg = OSGConfig()
-    cfg.exploration.search_drop_proximity_below = drop_below
+    cfg.exploration.search_drop_proximity_after_absence = drop_after_absence
     return ExplorationStrategy(cfg, planner=None, scorer=None, viewpoint_planner=None,
                                affinity=None, stats={}, profiler=types.SimpleNamespace())
 
 
-def _world_with(p):
+def _world_with(p, absence_arrivals=0):
     import types
 
     import numpy as np
@@ -555,6 +555,7 @@ def _world_with(p):
                                         axes=np.array([0.1, 0.1, 0.1]), R=np.eye(3)))
     t.presence.log_odds = math.log(p / (1 - p))
     t.presence.n_expected = 20
+    t.absence_arrivals = absence_arrivals
     layer._tracks[1] = t
     return types.SimpleNamespace(object_layer=layer, target="bowl")
 
@@ -562,23 +563,33 @@ def _world_with(p):
 import math  # noqa: E402
 
 
-def test_a_believed_anchor_still_drives_the_search():
-    s = _strategy(0.45)
+def test_an_anchor_the_agent_has_not_been_to_still_drives_the_search():
+    s = _strategy(True)
     where = s._last_known_target_xy(_world_with(0.90))
     assert where is not None and np.allclose(where, [2.0, 3.0])
 
 
-def test_a_disbelieved_anchor_is_dropped_and_the_search_becomes_a_sweep():
+def test_a_low_belief_alone_does_not_drop_the_anchor():
+    """The trigger that was tried first and measured wrong. Presence decays from
+    ordinary missed expectations while the agent merely walks past, so keying on
+    it fired in 56% of in_anchor episodes against the 30% predicted and cost
+    three episodes on the first scene before the run was stopped."""
+    s = _strategy(True)
+    assert s._last_known_target_xy(_world_with(0.02, absence_arrivals=0)) is not None
+    assert "search_proximity_dropped" not in s.stats
+
+
+def test_going_there_and_finding_nothing_drops_the_anchor():
     """A flat prior over prior*d/cost IS a nearest-first sweep, since a constant
     prior orders surfaces by travel cost alone."""
-    s = _strategy(0.45)
-    assert s._last_known_target_xy(_world_with(0.10)) is None
+    s = _strategy(True)
+    assert s._last_known_target_xy(_world_with(0.60, absence_arrivals=1)) is None
     assert s.stats["search_proximity_dropped"] == 1
 
 
 def test_the_anchor_is_kept_forever_by_default():
-    s = _strategy(0.0)
-    assert s._last_known_target_xy(_world_with(0.001)) is not None
+    s = _strategy(False)
+    assert s._last_known_target_xy(_world_with(0.001, absence_arrivals=3)) is not None
     assert "search_proximity_dropped" not in s.stats
 
 

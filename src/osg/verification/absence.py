@@ -117,6 +117,10 @@ class AbsenceSensor:
                 return None
 
         p = presence_filter.apply_reading(track, False, recall, q)
+        # The agent went there and the sensors said no. Whatever happens to the
+        # belief from here, the premise "it is where I left it" has been tested
+        # and failed once.
+        track.absence_arrivals += 1
         self.stats["absence_checks"] = self.stats.get("absence_checks", 0) + 1
         if asked_vlm:
             self.stats["absence_vlm"] = self.stats.get("absence_vlm", 0) + 1

@@ -88,6 +88,13 @@ class ObjectTrack:
     # Presence answers "is it still there"; this answers "is it the target".
     # Episode-scoped: `apply_map` clears it, like the blacklist.
     identity_rejections: int = 0
+    # Times the agent went to this track's pose and the sensors said the object
+    # was not there. Distinct from `identity_rejections`, which also counts
+    # unreachable verdicts and failed attempts, and from `presence.p`, which
+    # decays from ordinary missed expectations while merely walking past. This
+    # counts only "I went to look, and it was gone" -- the event that refutes
+    # the hypothesis the search prior is built on.
+    absence_arrivals: int = 0
     linked_ids: set = field(default_factory=set)
     refined_at_obs: int = 0
     first_cam_xy: Optional[np.ndarray] = None  # ground-plane pose of the first sighting
