@@ -2,6 +2,7 @@
   "agent.agent_radius": 0.18,
   "agent.approach_arrival_tol_m": 0.1,
   "agent.approach_depth_stop": true,
+  "agent.approach_false_arrival_m": 0.0,
   "agent.approach_goal_tolerance_m": 0.12,
   "agent.approach_max_steps": 12,
   "agent.approach_navigable_goal": false,

@@ -508,3 +508,61 @@ def test_an_unreachable_frontier_is_retired_for_longer_and_marks_a_giveup():
     assert 9 in agent.exploration._blocked_ids([f], agent.step_count)
     assert agent.stats.get("frontier_stub_block") == 1
     assert agent.exploration._last_giveup_pt is not None
+
+
+# ------------------------------- an arrival that is not one (condition S+1)
+#
+# On the navmesh the follower returns None for arrived AND for unreachable, and
+# the approach has treated both as an arrival: it stops. Measured on 00848, the
+# agent commits at step 1 to a track 0.81 m from the true object, is told None on
+# step 5 while still 6.4 m away, stops, and repeats it for all three attempts --
+# episode over at step 78 with 420 steps unspent. Four to six episodes per
+# condition end that way and not one of them scores.
+
+
+def _approach_agent(false_arrival_m, nav_returns=None):
+    cfg = make_cfg()
+    cfg.agent.use_habitat_navmesh = True
+    cfg.agent.approach_false_arrival_m = false_arrival_m
+    cfg.verification.absence_on_arrival = False
+    agent = NavAgent(cfg, StubDetector(), AsyncScorer(_StubScorer()), None, "chair",
+                     nav_fn=lambda goal, floor_y=None: nav_returns)
+    agent.costmap.grid[:, :] = FREE
+    from osg.objects.association import ObjectTrack
+    from osg.objects.ellipsoid import Ellipsoid
+    track = ObjectTrack(id=1, label="chair",
+                        ellipsoid=Ellipsoid(center=np.array([8.0, 0.5, 0.0]),
+                                            axes=np.array([0.2, 0.2, 0.2]), R=np.eye(3)))
+    agent.object_layer._tracks[1] = track
+    agent._candidate_id = 1
+    agent.state = State.APPROACH
+    agent._goal_xy = np.array([8.0, 0.0])     # the goal is 8 m away
+    agent.approach.steps_left = 50
+    agent._goto_deadline = 10 ** 9
+    return agent, track
+
+
+def test_stopping_eight_metres_from_the_goal_is_not_an_arrival():
+    agent, track = _approach_agent(1.0)          # follower says None immediately
+    action = agent.approach.step(_frame_at(np.zeros(2)))
+    assert agent.state == State.EXPLORE, "it must go back to exploring, not stop"
+    assert action != STOP_ACTION
+    assert agent.stats["approach_false_arrival"] == 1
+    assert track.identity_rejections == 1, "could not get there is identity evidence"
+    assert not track.blacklisted, "and evidence is not a verdict"
+
+
+def test_a_genuine_arrival_still_stops():
+    agent, _ = _approach_agent(1.0)
+    agent._goal_xy = np.array([0.2, 0.0])        # the agent is 0.2 m away
+    action = agent.approach.step(_frame_at(np.zeros(2)))
+    assert action == STOP_ACTION
+    assert agent.state == State.DONE
+    assert agent.stats.get("approach_false_arrival", 0) == 0
+
+
+def test_the_check_is_off_by_default_and_stops_as_before():
+    agent, _ = _approach_agent(0.0)
+    action = agent.approach.step(_frame_at(np.zeros(2)))
+    assert action == STOP_ACTION, "shipped behaviour: it stops eight metres out"
+    assert agent.state == State.DONE

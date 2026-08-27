@@ -176,6 +176,43 @@ class ApproachPolicy:
             turn = self.scan_at_viewpoint(det, frame)
             if turn is not None:
                 return turn
+            # ...unless it is not as close as it gets. On the navmesh the
+            # follower returns None for arrived AND for unreachable, and the
+            # approach has been treating both as an arrival: it stops, which
+            # ends the episode or burns an attempt.
+            #
+            # Measured on 00848: the agent commits at step 1 to a track 0.81 m
+            # from the true object, the follower reports None on step 5 while
+            # the agent is still 6.4 m away, and it STOPS. Three attempts go the
+            # same way and the episode is over at step 78 with 420 unspent. Four
+            # to six episodes per condition end like that, and none of them ever
+            # scores.
+            #
+            # The frontier side has had this distinction since `frontier_reach_m`
+            # -- "a pursuit that ended retires its frontier, whichever way it
+            # ended", but only an arrival within reach counts as reaching. This
+            # is the same test for the approach.
+            tol = float(self.nav.cfg.agent.approach_false_arrival_m)
+            if tol > 0.0 and self.nav._goal_xy is not None:
+                error = float(np.linalg.norm(agent_xy - self.nav._goal_xy))
+                if error > tol:
+                    self.nav.stats["approach_false_arrival"] = (
+                        self.nav.stats.get("approach_false_arrival", 0) + 1
+                    )
+                    track = (
+                        self.nav.object_layer.get(self.nav._candidate_id)
+                        if self.nav._candidate_id is not None else None
+                    )
+                    if track is not None:
+                        # Could not get there. That is evidence about this
+                        # candidate and belongs in the identity channel, which
+                        # retires it after two -- not a stop, and not a
+                        # blacklist.
+                        track.identity_rejections += 1
+                    self.nav._candidate_id = None
+                    self.nav._target_obj_xy = None
+                    self.nav.state = State.EXPLORE
+                    return TURN_ACTION
             abandon = self.nav._absence_at_arrival(frame, "path_consumed")
             if abandon is not None:
                 return abandon

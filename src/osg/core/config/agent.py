@@ -47,6 +47,20 @@ class AgentConfig:
     # need not point at the target, and one frame from one heading is a thin
     # basis for deciding an object is gone. 12 x 30 deg is a full circle.
     approach_scan_turns: int = 12
+    # Beyond this distance from its own goal, a reported arrival is not one.
+    # 0.0 disables the check, which is the shipped behaviour.
+    #
+    # On the navmesh the follower returns None for arrived AND unreachable, and
+    # the approach treats both as an arrival: it stops. Measured on 00848, the
+    # agent commits at step 1 to a track 0.81 m from the true object, is told
+    # None on step 5 while still 6.4 m away, stops, and repeats it for all three
+    # attempts -- episode over at step 78 with 420 steps unspent. Four to six
+    # episodes per condition end that way and not one of them scores.
+    #
+    # 1.0 m is generous: the goal IS a viewpoint on a 0.8-2.0 m ring, so a real
+    # arrival puts the agent on the goal itself, and the frontier side already
+    # allows 0.9 m for the planner's own stopping radius.
+    approach_false_arrival_m: float = 0.0
     approach_max_steps: int = 12  # ~3 m of travel at forward_m=0.25
     # Tighter-than-default planner/controller stopping precision for the
     # final APPROACH segment only (P1f). HM3D success is a geodesic
