@@ -268,11 +268,57 @@ not easier:
 | M2 | (M repeated, identical config) | 0.729 | **0.479** | 0.604 | 0.290 |
 | **N** | + candidates ranked by belief, not by belief x confidence | **0.812** | 0.458 | **0.635** | **0.319** |
 | Q | + the search anchor dropped once the agent has been there | 0.708 | **0.500** | 0.604 | 0.303 |
+| R | + the frontier weight back to its 1.0 default | — | — | *stopped* | — |
+| S | + absence readings refused beyond 3 m | 0.792 | 0.458 | 0.625 | 0.311 |
+| T | + S, plus a false arrival is not an arrival | 0.771 | 0.417 | 0.594 | 0.290 |
+
+**N is still the best overall and Q the best cross_anchor.** R, S and T are all
+negative, and each is a documented result rather than a dead end:
+
+  **R** tested whether cross_anchor is short of coverage. On 00848 it tripled
+  the exploration share — surface inspections 173 → 64, frontier goals 69 → 95 —
+  and `P(look)` moved 0.40 → 0.47, the same value Q reached by another route.
+  Stopped after two scenes. Coverage is not the lever.
+
+  **S** range-gated absence readings, refusing 18 of them, and was a null. The
+  reason is worth more than the result: `_absence_at_arrival` was doing two jobs,
+  applying the evidence *and* returning an action that prevented the stop.
+  Blocking the reading removed the second job, so three-attempt burnouts went
+  4 → 12. The belief got more correct and the behaviour got worse.
+
+  **T** added the missing half. The guard works exactly as designed — 88 false
+  arrivals refused, burnouts 12 → 3 — and it fixes the worst single target on
+  the benchmark: the 00848 pitcher goes 0/6 (in every prior condition) to 3/6,
+  closest approach 6.75 m → 1.43 m, episode length 78 → 414 steps, and 00848's
+  in_anchor moves off 0.600 for the first time in seven runs. But firing 88
+  times over 96 episodes means it also aborts approaches that were fine, and
+  both halves fall. The threshold, not the idea, is what is wrong.
 
 Q is the best `cross_anchor` of the campaign (0.500 against a previous best of
 0.479) and the first condition ever to move scene 00848, which had sat at
 in_anchor 0.600 for five consecutive runs. It buys that by trading, at worse
 than one for one: −5 in_anchor for +2 cross_anchor.
+
+### Two defects found by tracing one target
+
+Chasing 00848's worst target found two real defects, both fixed and both
+default-off:
+
+  **an absence reading taken from 6.4 m.** In navmesh mode `_follow_to` returns
+  None for arrived *and* unreachable, so an unreachable goal ends the approach
+  exactly as an arrival does and a reading is taken from wherever the agent
+  stands. The expectation gate would have caught it but is skipped whenever the
+  VLM answers — "a VLM that answered about the region has already looked" —
+  which holds at arm's length and not at six metres. The correct track went
+  0.82 → 0.36 and the agent never went near the object again.
+  `verification.absence_max_range_m`.
+
+  **an approach that stops without arriving.** Same root cause, worse
+  consequence: the agent commits at step 1 to a track 0.81 m from the true
+  object, is told None on step 5 while still 6.4 m away, and STOPS — burning an
+  attempt. Three attempts, episode over at step 78 with 420 steps unspent. The
+  frontier side has had this distinction since `frontier_reach_m`; the approach
+  never got it. `agent.approach_false_arrival_m`.
 
 ### Cross-anchor decomposes, and the half that moves is not the half that binds
 
