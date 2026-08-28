@@ -121,6 +121,42 @@ def test_the_best_known_configuration_still_composes():
     assert not cfg.ycb.map_in
 
 
+def test_the_cross_anchor_preset_is_one_flag_from_the_best_one():
+    """The two presets are the trade, and it must stay legible as one flag:
+    +6 cross_anchor episodes for -5 in_anchor. If they ever drift apart on
+    anything else, the comparison stops meaning what the writeup says."""
+    from hydra import compose, initialize_config_dir
+
+    from osg.core.config import register_configs
+
+    register_configs()
+    root = Path(__file__).resolve().parents[2] / "configs"
+    with initialize_config_dir(config_dir=str(root), version_base="1.3"):
+        best = compose(config_name="config", overrides=["+experiment=ycb_dynamic_best"])
+        cross = compose(config_name="config", overrides=["+experiment=ycb_dynamic_cross"])
+
+    assert best.exploration.search_drop_proximity_after_absence is False
+    assert cross.exploration.search_drop_proximity_after_absence is True
+
+    from omegaconf import OmegaConf
+
+    def flat(cfg, prefix=""):
+        out = {}
+        for k, v in OmegaConf.to_container(cfg, resolve=False).items():
+            key = f"{prefix}{k}"
+            if isinstance(v, dict):
+                out.update(flat(OmegaConf.create(v), key + "."))
+            else:
+                out[key] = v
+        return out
+
+    a, b = flat(best), flat(cross)
+    differ = {k for k in set(a) | set(b) if a.get(k) != b.get(k)}
+    assert differ == {"exploration.search_drop_proximity_after_absence"}, (
+        f"the presets differ on more than the trade: {sorted(differ)}"
+    )
+
+
 def test_the_five_flags_still_default_off():
     """If one of these ever ships ON, the A-M ladder stops being reproducible
     from the overrides recorded against it."""

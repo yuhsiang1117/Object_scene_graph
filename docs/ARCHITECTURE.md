@@ -269,8 +269,24 @@ not easier:
 | **N** | + candidates ranked by belief, not by belief x confidence | **0.812** | 0.458 | **0.635** | **0.319** |
 | Q | + the search anchor dropped once the agent has been there | 0.708 | **0.500** | 0.604 | 0.303 |
 | R | + the frontier weight back to its 1.0 default | — | — | *stopped* | — |
+| Q2 | (Q repeated, identical config) | 0.708 | **0.542** | 0.625 | 0.304 |
 | S | + absence readings refused beyond 3 m | 0.792 | 0.458 | 0.625 | 0.311 |
-| T | + S, plus a false arrival is not an arrival | 0.771 | 0.417 | 0.594 | 0.290 |
+| T | + S, plus a false arrival is not an arrival (1.0 m) | 0.771 | 0.417 | 0.594 | 0.290 |
+| U | + the same guard at 2.5 m | 0.750 | 0.458 | 0.604 | 0.299 |
+
+**Q is replicated.** Q2 is the same configuration run again: in_anchor is
+*identical* at 0.708 and cross_anchor is 0.500 → 0.542, the best of the whole
+campaign. Mean of the two runs: in 0.708, cross 0.521, overall 0.615. It is also
+the only condition that has ever moved 00848, which reached 14/30 under Q2
+against 11/30 in K, L, M, M2, N, S and U.
+
+So there are two configurations worth keeping, and they differ by exactly one
+flag — a test pins that, because the one flag IS the trade:
+
+| preset | in_anchor | cross_anchor | overall |
+|---|---|---|---|
+| `+experiment=ycb_dynamic_best` (N) | **0.812** | 0.458 | **0.635** |
+| `+experiment=ycb_dynamic_cross` (Q) | 0.708 | **0.521** | 0.615 |
 
 **N is still the best overall and Q the best cross_anchor.** R, S and T are all
 negative, and each is a documented result rather than a dead end:
@@ -286,13 +302,20 @@ negative, and each is a documented result rather than a dead end:
   Blocking the reading removed the second job, so three-attempt burnouts went
   4 → 12. The belief got more correct and the behaviour got worse.
 
-  **T** added the missing half. The guard works exactly as designed — 88 false
-  arrivals refused, burnouts 12 → 3 — and it fixes the worst single target on
-  the benchmark: the 00848 pitcher goes 0/6 (in every prior condition) to 3/6,
-  closest approach 6.75 m → 1.43 m, episode length 78 → 414 steps, and 00848's
-  in_anchor moves off 0.600 for the first time in seven runs. But firing 88
-  times over 96 episodes means it also aborts approaches that were fine, and
-  both halves fall. The threshold, not the idea, is what is wrong.
+  **T and U** added the missing half, at 1.0 m and 2.5 m. T takes the worst
+  target on the benchmark — the 00848 pitcher — from 0/6 to 3/6; U puts it back
+  to 0/6. Neither nets positive overall (0.594, 0.604).
+
+  The threshold sweep is where the mechanism gave itself away. The guard
+  measures distance to the agent's own GOAL, and `min_dist_to_goal` on the
+  failing pitcher episodes is **0.03–0.48 m**: the agent reaches its goal every
+  time. The goal is simply in the wrong place — it commits at step 1 to a track
+  0.4 m from the object, and five steps later the navmesh reports
+  arrived-or-unreachable for that approach goal. What T actually bought was
+  budget: one extra firing per episode kept the episode alive for 251–500 steps
+  instead of 288, and the pitcher was then found *incidentally*. That is not the
+  same as steering the agent to the object, and it does not survive a change of
+  threshold. The guard is aimed at the wrong quantity.
 
 Q is the best `cross_anchor` of the campaign (0.500 against a previous best of
 0.479) and the first condition ever to move scene 00848, which had sat at
