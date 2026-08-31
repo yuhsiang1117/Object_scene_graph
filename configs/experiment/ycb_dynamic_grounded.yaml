@@ -1,0 +1,35 @@
+# @package _global_
+#
+# Condition W: V3 (room saturation) plus a grounded affinity prior, one flag apart.
+#
+# The affinity ranking is asked over the container categories the MAP holds
+# instead of over all fourteen the codebase knows. This is surgical by
+# construction, and the construction is the point:
+#
+#   00829 tracks all 14 categories    -> grounded set == full set -> no change
+#   00880 tracks all 14 categories    -> grounded set == full set -> no change
+#   00848 has NO counter and NO table -> the only scene that can move
+#
+# What it fixes in 00848: the LLM ranks "blue plastic pitcher" as
+# counter > table > shelf > ..., and the scene has zero of the first two out of
+# 343 tracks -- its counter runs are labelled `cabinet`, which is unlisted and
+# so scores UNLISTED_AFFINITY, BELOW shelf. The 35 cabinets that physically are
+# the counters therefore ranked at the bottom. Re-asked over the 12 categories
+# that exist, cabinet comes back second of ten:
+#
+#   ungrounded: counter, table, shelf, nightstand, bench, desk, refrigerator
+#   grounded  : shelf, cabinet, refrigerator, desk, nightstand, bench, sofa, ...
+#
+# and the static table is filtered the same way, moving bowl from an absent
+# `table` to `desk`, and red plate to `cabinet`.
+#
+# Expectation, stated before the run: this is the CAUSE of 00848's flat prior,
+# but affinity is deliberately a weak term -- AFFINITY_POWER=0.5 squashes the
+# whole range into 0.71-1.0 -- so a correct prior may still not outrank
+# proximity/cost. Fixing the prior and fixing the stuck are separate claims and
+# this tests only the first.
+defaults:
+  - ycb_dynamic_sat
+
+exploration:
+  affinity_grounded: true

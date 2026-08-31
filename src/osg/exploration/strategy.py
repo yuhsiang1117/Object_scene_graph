@@ -27,7 +27,7 @@ strategy never writes `state`, never writes `_goal_xy`, and never moves anything
 from __future__ import annotations
 
 from dataclasses import dataclass
-from typing import List, Optional
+from typing import Dict, List, Optional
 
 import numpy as np
 
@@ -36,7 +36,7 @@ from ..mapping.costmap import PLANE, Costmap2D, nearest_free_xy
 from ..mapping.frontier import Frontier, FrontierExtractor
 from ..planning.controller import TURN_LEFT, TURN_RIGHT, _wrap, agent_heading
 from .search_belief import InspectionLog, build_container_candidates, select_candidate
-from ..core.labels import same_label
+from ..core.labels import normalize_label, same_label
 from .selector import frontier_goal_xy, select_frontier
 
 # WaypointController.act's default arrival tolerance. Named here because
@@ -139,6 +139,16 @@ class ExplorationStrategy:
         # mostly stops being -- the distinction an ignore list cannot make.
         self.search_log = InspectionLog()
         self.search_container: Optional[int] = None
+        # Which room the surface being inspected belongs to, and how many
+        # fruitless arrivals each room has absorbed. The same-room bonus is a
+        # prior; this is the likelihood that updates it (see
+        # `search_room_saturation`).
+        self.search_room_id: Optional[int] = None
+        self._room_fruitless: Dict[int, int] = {}
+        # The container categories this map holds, fixed once per episode so a
+        # set that grows mid-episode cannot change the prior under the agent
+        # (and cannot multiply the affinity cache keys).
+        self._present: Optional[set] = None
         self.search_started_step = 0
         self.surface_face_turns = 0
         self.search_log_events: List[dict] = []
@@ -244,6 +254,8 @@ class ExplorationStrategy:
         surface = self._select_surface(world, best)
         if surface is not None:
             self.search_container = int(surface.ref_id)
+            node = world.scene_graph.containers.get(int(surface.ref_id))
+            self.search_room_id = int(node.room_id) if node is not None else None
             self.search_started_step = world.step
             self.surface_face_turns = int(self.cfg.search_face_turns)
             self.current_frontier = None
@@ -256,6 +268,18 @@ class ExplorationStrategy:
                     "prior": round(float(surface.prior), 4),
                     "path_cost": round(float(surface.path_cost or 0.0), 2),
                     "utility": round(float(surface.utility or 0.0), 5),
+                    "frontier_util": (
+                        round(float(self._last_frontier_util), 5)
+                        if getattr(self, "_last_frontier_util", None) is not None
+                        else None
+                    ),
+                    "room": self.search_room_id,
+                    "room_bonus": round(
+                        self._room_bonus(
+                            float(self.cfg.search_same_room_bonus),
+                            int(self.search_room_id),
+                        ), 3,
+                    ) if self.search_room_id is not None else None,
                 }
             )
             # Returned, not driven -- but it MUST be driven. Only GOTO_FRONTIER
@@ -392,6 +416,7 @@ class ExplorationStrategy:
         if not world.scene_graph.containers:
             return None
         agent_xy = world.agent_xy
+        present = self._ground(world)
         cands = build_container_candidates(
             world.scene_graph,
             world.target,
@@ -403,6 +428,7 @@ class ExplorationStrategy:
             surface_mass=float(self.cfg.search_surface_mass),
             plane=PLANE,
             affinity_source=self.affinity,
+            present=present,
         )
         if not cands:
             return None
@@ -434,7 +460,7 @@ class ExplorationStrategy:
                 for c in cands:
                     node = world.scene_graph.containers.get(c.ref_id)
                     if node is not None and node.room_id == here.id:
-                        c.prior *= room_bonus
+                        c.prior *= self._room_bonus(room_bonus, node.room_id)
         surface = select_candidate(
             cands, self.planner, world.costmap, agent_xy,
             top_n=int(self.cfg.top_n_frontiers),
@@ -443,8 +469,13 @@ class ExplorationStrategy:
         if surface is None or surface.utility is None:
             return None
         beta = float(self.cfg.search_frontier_weight)
+        # Kept for the log: the number the winning surface had to beat. Without
+        # it a run where the search line never hands back is indistinguishable
+        # from one where there was nothing to hand back TO.
+        self._last_frontier_util = None
         if best_frontier is not None and best_frontier.path_cost:
             frontier_util = beta * (best_frontier.score or 0.0) / best_frontier.path_cost
+            self._last_frontier_util = float(frontier_util)
             if frontier_util >= surface.utility:
                 return None
         return surface
@@ -551,6 +582,59 @@ class ExplorationStrategy:
         self.stats["surface_face_turns"] = self.stats.get("surface_face_turns", 0) + 1
         return TURN_RIGHT if err > 0 else TURN_LEFT
 
+    def _ground(self, world: WorldView):
+        """The container categories this map actually contains, or None when
+        grounding is off.
+
+        Computed once per episode and cached. The LLM affinity provider is
+        re-scoped to the same set, so an unknown target is ranked over the
+        surfaces this house has rather than over the fourteen the codebase knows
+        about -- see `affinity_grounded` for why that distinction decides
+        whether scene 00848's prior is peaked or flat.
+        """
+        if not bool(self.cfg.affinity_grounded):
+            return None
+        if self._present is None:
+            # From the TRACKS, not from `scene_graph.containers`. Containers are
+            # rebuilt per keyframe from whatever geometry currently qualifies,
+            # so at the first surface selection the container set is a subset of
+            # the house -- and grounding against a subset would drop categories
+            # that do exist, changing the two scenes this is meant to leave
+            # untouched. The track set is the prior map, fixed from reset.
+            labels = {
+                normalize_label(getattr(t, "label", ""))
+                for t in world.object_layer.tracks(include_blacklisted=True)
+            }
+            self._present = {l for l in labels if l}
+            if self.affinity is not None and hasattr(self.affinity, "ground"):
+                self.affinity.ground(self._present)
+            self.stats["affinity_present_categories"] = len(self._present)
+        return self._present
+
+    def _room_bonus(self, bonus: float, room_id: int) -> float:
+        """The same-room bonus, discounted by what the room has already failed
+        to produce.
+
+        `search_same_room_bonus` asserts "the object is in the room I am in".
+        That is a reasonable prior and it was never conditioned on anything: in
+        a room with 68 containers it holds every one of them above every
+        frontier for the whole episode. Each fruitless arrival is evidence
+        against the assertion, so it decays multiplicatively -- the same form
+        the surface belief itself uses, one level up the hierarchy.
+
+        Floored, so that by default a disappointing room becomes ordinary rather
+        than actively repellent; a room the agent has searched is not worse than
+        one it has never seen.
+        """
+        rate = float(self.cfg.search_room_saturation)
+        n = int(self._room_fruitless.get(int(room_id), 0)) - int(
+            self.cfg.search_room_saturation_free
+        )
+        if rate <= 0.0 or n <= 0:
+            return bonus
+        floor = float(self.cfg.search_room_saturation_floor)
+        return max(floor, bonus * (1.0 - rate) ** n)
+
     def mark_searched(self, step: int, arrived: bool = True) -> None:
         """Arriving at a surface without the target is a look that did not find
         it -- worth (1 - d), not worth zero and not worth nothing.
@@ -565,6 +649,13 @@ class ExplorationStrategy:
         if not arrived:
             d *= float(self.cfg.search_unreached_credit)
         remaining = self.search_log.searched(self.search_container, d)
+        # Only an arrival is evidence about the ROOM. A surface the agent gave
+        # up on says nothing about its neighbours, and charging the room for it
+        # would push the agent out of rooms it never actually searched.
+        if arrived and self.search_room_id is not None:
+            rid = int(self.search_room_id)
+            self._room_fruitless[rid] = self._room_fruitless.get(rid, 0) + 1
+        self.search_room_id = None
         self.search_log_events.append(
             {
                 "step": int(step),

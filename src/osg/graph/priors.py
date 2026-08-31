@@ -171,15 +171,41 @@ UNLISTED_AFFINITY = 0.5
 AFFINITY_POWER = 0.5
 
 
-def affinity_scores(target: str, source=None) -> dict:
+def affinity_scores(target: str, source=None, present=None) -> dict:
     """{container category: weight in (0, 1]}, best first, or {} if unknown.
 
     `source` is an optional callable (an LLM affinity provider) consulted only
     when the static table has no entry -- the table stays authoritative so a
     model cannot quietly rewrite a prior someone chose deliberately.
+
+    `present` is the set of container categories this map actually contains.
+    When given, a table entry is filtered down to them: a ranking is only
+    informative about surfaces that exist, and `bowl` -> table, counter, desk...
+    carries no information in a house with neither a table nor a counter. If
+    fewer than two of an entry's options survive, the entry has nothing left to
+    say and the grounded source is asked instead -- which is the ONE case where
+    a model may speak over the static table, because the table has effectively
+    abstained.
     """
     key = normalize_label(target)
     ranked = CONTAINER_AFFINITY.get(key)
+    if ranked is not None and present is not None:
+        # Drop a category only when it is one the scene graph COULD have built
+        # and this map does not have. A name the graph never produces at all
+        # (`sink` is in two entries and in no CONTAINER_CATEGORIES) scores
+        # nothing either way, and dropping it would rescale every surviving
+        # weight -- which would make grounding a change in the scenes it is
+        # meant to leave alone.
+        from .containers import CONTAINER_CATEGORIES
+
+        here = {normalize_label(c) for c in present}
+        buildable = {normalize_label(c) for c in CONTAINER_CATEGORIES}
+        ranked = [
+            c for c in ranked
+            if normalize_label(c) not in buildable or normalize_label(c) in here
+        ]
+        if len(ranked) < 2:
+            ranked = None
     if ranked is None and source is not None:
         ranked = source(key)
     if not ranked:

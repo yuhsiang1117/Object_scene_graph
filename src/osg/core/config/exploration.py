@@ -126,6 +126,41 @@ class ExplorationConfig:
     search_glance_range_m: float = 4.0
     # Finishing the room you are in beats crossing the house and coming back.
     search_same_room_bonus: float = 4.0
+    # ...but that bonus is a PRIOR ("the object is in this room") that never got
+    # a likelihood update, and an un-updated prior in a container-dense room is
+    # an absorbing state. Scene 00848 is a kitchen holding 35 cabinets, 20
+    # shelves and 13 refrigerators; every one keeps its x4 however many come up
+    # empty, and since utility divides by path cost the nearest of the 68 always
+    # outbids a frontier discounted to 0.3. Measured over the six 00848 pitcher
+    # episodes under condition N: 11 surfaces inspected, ZERO frontier
+    # selections in 286 steps, the target never once in view, SR 0.15.
+    #
+    # Each fruitless ARRIVAL in a room multiplies its bonus by (1 - rate) --
+    # glances and give-ups on the way do not count, the same distinction
+    # InspectionLog already makes between a look and a visit. 0.0 disables it
+    # and reproduces every earlier condition exactly.
+    search_room_saturation: float = 0.0
+    # Arrivals a room gets for free before any decay starts.
+    #
+    # Without this, condition V decayed the bonus from the FIRST fruitless
+    # arrival and cost 6 episodes over 90 matched (in_anchor 0.822 -> 0.733).
+    # The reason is in the distribution: over condition N's 96 episodes NO
+    # success ever needed more than 7 surface inspections (median 0, p90 5),
+    # while the stuck 00848 failures need 11-13. Decaying from the first
+    # arrival therefore weakens the room prior precisely inside the window
+    # where successes happen, and the agent -- pushed out of a room it had not
+    # finished -- enters the next one with a fresh x4 and scatters, doing MORE
+    # inspections than before (10 against 2 on the episodes V lost).
+    #
+    # So the room keeps its full bonus until it has already given more looks
+    # than any success has ever needed. Beyond that the room is, empirically,
+    # not the room.
+    search_room_saturation_free: int = 0
+    # How far the bonus may fall. 1.0 means saturation can cancel the bonus but
+    # never invert it into a penalty: a room that has disappointed becomes
+    # ordinary, not worse than one never visited. Below 1.0 actively pushes the
+    # agent out of a room it has been failing in.
+    search_room_saturation_floor: float = 1.0
     search_arrival_m: float = 1.2
     # Turns spent looking AT a surface on arrival, before its belief is scored.
     # `_mark_surface_searched` multiplies belief by (1 - search_detect_prob) on
@@ -139,6 +174,21 @@ class ExplorationConfig:
     # very surfaces that were never inspected.
     search_unreached_credit: float = 0.25
     affinity_llm: bool = False
+    # Rank affinity over the container categories the MAP actually contains,
+    # rather than over all of CONTAINER_CATEGORIES.
+    #
+    # A prior whose top choices do not exist in this house is not a prior. The
+    # LLM ranks "blue plastic pitcher" as counter > table > shelf > ..., and
+    # scene 00848 contains ZERO counters and ZERO tables out of 343 tracks --
+    # its counter runs are labelled `cabinet`, which is unlisted and so takes
+    # UNLISTED_AFFINITY, below shelf. The 35 cabinets that ARE the counters
+    # therefore rank beneath everything, and what reaches the search posterior
+    # is a near-flat prior over 68 containers.
+    #
+    # Grounding is surgical here by construction: 00829 and 00880 contain all
+    # 14 categories, so their grounded option set IS the full set and their
+    # ranking cannot change. Only 00848 is affected.
+    affinity_grounded: bool = False
     affinity_cache: str = "outputs/affinity_cache.json"
     # Information-gain weighting: boost frontiers that expose more unknown area
     # (estimated as the count of UNKNOWN costmap cells within info_gain_radius_m

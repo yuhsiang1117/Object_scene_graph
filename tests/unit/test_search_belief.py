@@ -616,3 +616,132 @@ def test_dropping_the_anchor_leaves_travel_cost_in_charge():
     assert spread(anchored) > 100, "the anchor dominates: exp(-9/1) against exp(0)"
     assert spread(flat) < 1.3, "without it, only the affinity table's narrow range"
     assert spread(anchored) > 80 * spread(flat)
+
+
+# --------------------------------------------------------------- room saturation
+
+
+def _strategy_with_saturation(rate: float, floor: float = 1.0, bonus: float = 4.0):
+    import types
+
+    from osg.core.config import OSGConfig
+    from osg.exploration.strategy import ExplorationStrategy
+
+    cfg = OSGConfig()
+    cfg.exploration.search_same_room_bonus = bonus
+    cfg.exploration.search_room_saturation = rate
+    cfg.exploration.search_room_saturation_floor = floor
+    s = ExplorationStrategy(cfg, planner=None, scorer=None, viewpoint_planner=None,
+                            affinity=None, stats={}, profiler=types.SimpleNamespace())
+    s.reset()
+    return s
+
+
+def test_an_unsaturated_room_keeps_the_full_bonus():
+    """rate=0 is the shipped default and must reproduce every earlier condition
+    exactly -- no decay however many surfaces disappoint."""
+    s = _strategy_with_saturation(0.0)
+    for _ in range(10):
+        s.search_container, s.search_room_id = 1, 7
+        s.mark_searched(step=1, arrived=True)
+    assert s._room_bonus(4.0, 7) == pytest.approx(4.0)
+
+
+def test_each_fruitless_arrival_decays_the_room_bonus():
+    # floor=0 so this measures the decay alone; with the shipped floor of 1.0
+    # the x4 bonus is fully spent after five fruitless arrivals (4*0.75**5=0.95),
+    # which is the separate concern the floor test covers.
+    s = _strategy_with_saturation(0.25, floor=0.0)
+    assert s._room_bonus(4.0, 7) == pytest.approx(4.0)
+    for n in range(1, 6):
+        s.search_container, s.search_room_id = n, 7
+        s.mark_searched(step=n, arrived=True)
+        assert s._room_bonus(4.0, 7) == pytest.approx(4.0 * 0.75 ** n)
+
+
+def test_saturation_is_per_room():
+    """A kitchen that has disappointed says nothing about the bedroom."""
+    s = _strategy_with_saturation(0.25)
+    for n in range(4):
+        s.search_container, s.search_room_id = n, 7
+        s.mark_searched(step=n, arrived=True)
+    assert s._room_bonus(4.0, 7) < 4.0
+    assert s._room_bonus(4.0, 8) == pytest.approx(4.0)
+
+
+def test_the_floor_stops_a_disappointing_room_becoming_repellent():
+    """Default floor 1.0: a searched room becomes ordinary, never worse than a
+    room the agent has never visited."""
+    s = _strategy_with_saturation(0.5, floor=1.0)
+    for n in range(20):
+        s.search_container, s.search_room_id = n, 7
+        s.mark_searched(step=n, arrived=True)
+    assert s._room_bonus(4.0, 7) == pytest.approx(1.0)
+
+
+def test_a_surface_the_agent_never_reached_does_not_charge_the_room():
+    """Giving up on the way says nothing about the room's other containers, and
+    charging for it would push the agent out of rooms it never searched."""
+    s = _strategy_with_saturation(0.25)
+    for n in range(5):
+        s.search_container, s.search_room_id = n, 7
+        s.mark_searched(step=n, arrived=False)
+    assert s._room_bonus(4.0, 7) == pytest.approx(4.0)
+
+
+def test_a_room_keeps_its_full_bonus_for_the_free_arrivals():
+    """No success in condition N's 96 episodes needed more than 7 surface
+    inspections (median 0, p90 5); the stuck 00848 failures need 11-13. The
+    allowance is what keeps saturation out of the window where successes
+    happen -- condition V, decaying from the first arrival, cost 6 episodes."""
+    s = _strategy_with_saturation(0.5, floor=0.0)
+    s.cfg.search_room_saturation_free = 7
+    for n in range(1, 8):
+        s.search_container, s.search_room_id = n, 7
+        s.mark_searched(step=n, arrived=True)
+        assert s._room_bonus(4.0, 7) == pytest.approx(4.0), f"decayed at arrival {n}"
+    s.search_container, s.search_room_id = 8, 7
+    s.mark_searched(step=8, arrived=True)
+    assert s._room_bonus(4.0, 7) == pytest.approx(2.0)
+
+
+def test_the_allowance_defaults_to_zero_so_it_changes_nothing_on_its_own():
+    s = _strategy_with_saturation(0.5, floor=0.0)
+    assert s.cfg.search_room_saturation_free == 0
+    s.search_container, s.search_room_id = 1, 7
+    s.mark_searched(step=1, arrived=True)
+    assert s._room_bonus(4.0, 7) == pytest.approx(2.0)
+
+
+def test_grounding_reads_the_track_set_not_the_rebuilt_containers():
+    """`scene_graph.containers` is rebuilt per keyframe from whatever geometry
+    currently qualifies, so early in an episode it is a subset of the house.
+    Grounding against that subset would drop categories that DO exist and
+    change the two scenes grounding is meant to leave untouched."""
+    import types
+
+    from osg.core.config import OSGConfig
+    from osg.exploration.strategy import ExplorationStrategy
+    from osg.objects.association import ObjectTrack
+    from osg.objects.ellipsoid import Ellipsoid
+    from osg.objects.object_layer import ObjectLayer
+
+    cfg = OSGConfig()
+    cfg.exploration.affinity_grounded = True
+    s = ExplorationStrategy(cfg, planner=None, scorer=None, viewpoint_planner=None,
+                            affinity=None, stats={}, profiler=types.SimpleNamespace())
+    s.reset()
+
+    layer = ObjectLayer()
+    for i, label in enumerate(("counter", "table", "cabinet")):
+        layer._tracks[i] = ObjectTrack(
+            id=i, label=label,
+            ellipsoid=Ellipsoid(center=np.array([float(i), 0.0, 0.0]),
+                                axes=np.array([0.3, 0.3, 0.3]),
+                                R=np.eye(3)),
+        )
+    world = types.SimpleNamespace(
+        object_layer=layer,
+        scene_graph=types.SimpleNamespace(containers={}),  # not yet rebuilt
+    )
+    assert s._ground(world) == {"counter", "table", "cabinet"}

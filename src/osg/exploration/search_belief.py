@@ -98,6 +98,7 @@ def container_prior(
     proximity_len_m: float = 1.0,
     proximity_floor: float = 0.0,
     affinity_source=None,
+    present=None,
 ) -> float:
     """b(x) for a mapped surface: affordance x affinity x proximity.
 
@@ -110,7 +111,7 @@ def container_prior(
     """
     if not affords(target, top_h, area_m2):
         return 0.0
-    scores = affinity_scores(target, source=affinity_source)
+    scores = affinity_scores(target, source=affinity_source, present=present)
     key = normalize_label(label)
     if not scores:
         # No prior at all for this class: every surface is equally plausible.
@@ -194,6 +195,7 @@ def build_container_candidates(
     plane=(0, 2),
     affinity_source=None,
     surface_mass: float = 0.5,
+    present=None,
 ) -> List[SearchCandidate]:
     raw: List[tuple] = []
     for node in getattr(scene_graph, "containers", {}).values():
@@ -202,6 +204,7 @@ def build_container_candidates(
             target, node.label, node.top_h, node.area_m2, centre_xy,
             last_known_xy=last_known_xy, proximity_len_m=proximity_len_m,
             proximity_floor=proximity_floor, affinity_source=affinity_source,
+            present=present,
         )
         if prior <= 0.0:
             continue

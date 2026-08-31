@@ -157,6 +157,85 @@ def test_the_cross_anchor_preset_is_one_flag_from_the_best_one():
     )
 
 
+def test_the_saturation_preset_is_one_flag_from_the_best_one():
+    """Condition V is N plus room saturation and nothing else. The whole claim
+    is that ONE change moved the container-dense scenes, so the presets drifting
+    apart on anything else would destroy the comparison."""
+    from hydra import compose, initialize_config_dir
+    from omegaconf import OmegaConf
+
+    from osg.core.config import register_configs
+
+    register_configs()
+    root = Path(__file__).resolve().parents[2] / "configs"
+    with initialize_config_dir(config_dir=str(root), version_base="1.3"):
+        best = compose(config_name="config", overrides=["+experiment=ycb_dynamic_best"])
+        sat = compose(config_name="config", overrides=["+experiment=ycb_dynamic_sat"])
+
+    assert best.exploration.search_room_saturation == 0.0
+    assert sat.exploration.search_room_saturation > 0.0
+    # The floor DOES move, and deliberately. Cancelling the bonus (floor 1.0,
+    # condition V3) cost nothing and fixed nothing: a room at bonus 1.0 still
+    # produced surface utilities of 0.098 against the best frontier's 0.023, so
+    # exploration never got a turn. Only a floor below 1.0 makes an exhausted
+    # room lose to a frontier. The allowance is what keeps that off the 91% of
+    # successes that never reach it.
+    assert best.exploration.search_room_saturation_floor == 1.0
+    assert sat.exploration.search_room_saturation_floor == 1.0
+    assert sat.exploration.search_room_saturation_free > 0
+
+    def flat(cfg, prefix=""):
+        out = {}
+        for k, v in OmegaConf.to_container(cfg, resolve=False).items():
+            key = f"{prefix}{k}"
+            if isinstance(v, dict):
+                out.update(flat(OmegaConf.create(v), key + "."))
+            else:
+                out[key] = v
+        return out
+
+    a, b = flat(best), flat(sat)
+    differ = {k for k in set(a) | set(b) if a.get(k) != b.get(k)}
+    assert differ == {
+        "exploration.search_room_saturation",
+        "exploration.search_room_saturation_free",
+    }, f"V is meant to be room saturation and nothing else, but differs on: {sorted(differ)}"
+
+
+def test_the_grounded_preset_is_one_flag_from_the_saturation_one():
+    """W = V3 + grounded affinity, nothing else. The claim under test is that
+    grounding alone moves 00848, so any other drift would confound it."""
+    from hydra import compose, initialize_config_dir
+    from omegaconf import OmegaConf
+
+    from osg.core.config import register_configs
+
+    register_configs()
+    root = Path(__file__).resolve().parents[2] / "configs"
+    with initialize_config_dir(config_dir=str(root), version_base="1.3"):
+        sat = compose(config_name="config", overrides=["+experiment=ycb_dynamic_sat"])
+        gnd = compose(config_name="config", overrides=["+experiment=ycb_dynamic_grounded"])
+
+    assert sat.exploration.affinity_grounded is False
+    assert gnd.exploration.affinity_grounded is True
+
+    def flat(cfg, prefix=""):
+        out = {}
+        for k, v in OmegaConf.to_container(cfg, resolve=False).items():
+            key = f"{prefix}{k}"
+            if isinstance(v, dict):
+                out.update(flat(OmegaConf.create(v), key + "."))
+            else:
+                out[key] = v
+        return out
+
+    a, b = flat(sat), flat(gnd)
+    differ = {k for k in set(a) | set(b) if a.get(k) != b.get(k)}
+    assert differ == {"exploration.affinity_grounded"}, (
+        f"W is meant to be grounding and nothing else, but differs on: {sorted(differ)}"
+    )
+
+
 def test_the_five_flags_still_default_off():
     """If one of these ever ships ON, the A-M ladder stops being reproducible
     from the overrides recorded against it."""

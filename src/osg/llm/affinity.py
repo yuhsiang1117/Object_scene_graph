@@ -46,6 +46,10 @@ class AffinityProvider:
     ) -> None:
         self.client = client
         self.surfaces = [str(s) for s in surfaces]
+        # The full option list, kept so `ground` can intersect against it and so
+        # a complete scene is recognised as needing no scoping at all.
+        self._all_surfaces = list(self.surfaces)
+        self._scope = ""
         self.cache_path = Path(cache_path) if cache_path else None
         self.n_calls = 0
         self.n_errors = 0
@@ -56,8 +60,31 @@ class AffinityProvider:
             except (OSError, json.JSONDecodeError):
                 self._cache = {}
 
+    def ground(self, present) -> None:
+        """Restrict the option list to the categories the map actually holds.
+
+        Asking a model to rank surfaces that do not exist in this house yields a
+        prior the search posterior cannot act on: the answer's top entries are
+        simply absent, and the categories that ARE present fall through to
+        UNLISTED_AFFINITY, which is flat. Re-asking over the present set is what
+        makes the answer a ranking OF this house.
+
+        The cache key carries the option set, so a grounded answer never
+        overwrites the ungrounded one and a scene whose set is complete keeps
+        using -- byte for byte -- the entry it already had.
+        """
+        allowed = [s for s in self._all_surfaces if str(s).lower() in
+                   {str(p).lower() for p in present}]
+        if not allowed:
+            return
+        self.surfaces = allowed
+        self._scope = (
+            "" if len(allowed) == len(self._all_surfaces)
+            else "@" + ",".join(sorted(str(a).lower() for a in allowed))
+        )
+
     def __call__(self, target: str) -> Optional[List[str]]:
-        key = str(target).lower().strip()
+        key = str(target).lower().strip() + self._scope
         if key in self._cache:
             return self._cache[key]
         if self.client is None or not self.surfaces:
@@ -66,7 +93,10 @@ class AffinityProvider:
         try:
             reply = self.client.chat(
                 AFFINITY_SYSTEM,
-                AFFINITY_USER.format(target=key, surfaces=", ".join(self.surfaces)),
+                AFFINITY_USER.format(
+                    target=str(target).lower().strip(),
+                    surfaces=", ".join(self.surfaces),
+                ),
                 json_response=True,
             )
         except Exception as exc:  # a missing prior is not worth failing a run over

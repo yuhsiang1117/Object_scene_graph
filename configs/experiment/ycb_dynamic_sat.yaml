@@ -1,0 +1,74 @@
+# @package _global_
+#
+# Condition V: condition N plus room saturation, one flag apart.
+#
+# N's failure mode on container-dense scenes is not navigation. `search_same_room_bonus`
+# asserts "the object is in the room I am in" at x4 and never conditions that
+# assertion on anything, so in scene 00848 -- a kitchen holding 35 cabinets, 20
+# shelves and 13 refrigerators -- all 68 stay above every frontier, which is
+# discounted to 0.3. Measured over the six 00848 pitcher episodes under N: 11
+# surfaces inspected, ZERO frontier selections in 286 steps, the target never
+# once in view (gt_in_view_frames = 0), SR 0.15 against 0.55 for the same
+# scene's bleach bottle.
+#
+# `search_room_saturation` supplies the missing likelihood: each fruitless
+# ARRIVAL multiplies the room's bonus by (1 - rate), the same multiplicative
+# form InspectionLog already uses for a single surface, one level up. At 0.25
+# the x4 is fully spent after five disappointing containers.
+#
+# The floor is 1.0 on purpose. Saturation may cancel the bonus but not invert
+# it: a room that has disappointed becomes ordinary, never worse than one the
+# agent has never visited. Dropping below 1.0 is a stronger push out of the
+# starting room and is the next thing to try if V moves cross_anchor but not
+# far enough -- it is a separate experiment, not a tweak to this one.
+#
+#   python scripts/run_eval.py +experiment=ycb_dynamic_sat \
+#     'ycb.scenes=[00848-ziup5kvtCCR]' \
+#     'ycb.targets=[bowl,tin can,cracker box,red plate,blue plastic pitcher,bleach bottle]' \
+#     ycb.map_in=outputs/maps_v5/00848-ziup5kvtCCR
+defaults:
+  - ycb_dynamic_best
+
+exploration:
+  # The allowance is PER ROOM, so it must be set from a per-room distribution.
+  # Measured over V2's 102 episodes, the most arrivals any single room absorbs
+  # in one episode:
+  #
+  #                    median   p90   max   >=6 arrivals
+  #     successes         2       4     7        9%
+  #     failures          9      10    13       66%
+  #
+  # and the stuck 00848 pitcher episodes put exactly 9 into one room (room 4)
+  # every single time. 5 free arrivals therefore splits them: decay begins on
+  # the 6th, which 91% of successes never reach, and at rate 0.5 the x4 bonus
+  # is spent by the 7th -- two arrivals before the kitchen loop would have run
+  # out its budget.
+  #
+  # Both earlier settings are on record because both failed, in opposite
+  # directions. free=0 rate=0.25 decayed from the first arrival, hit every
+  # success, and cost 6 episodes over 90 matched (0.644 -> 0.578). free=7
+  # rate=0.5 was set from a per-EPISODE inspection count instead of a per-room
+  # one, was never reached in the room that mattered, and was completely inert
+  # (00848 pitcher frontier/ep 0.00 -> 0.00, SR unchanged at 0.633).
+  search_room_saturation: 0.5
+  search_room_saturation_free: 5   # V3: 0 lost, 1 won, overall 0.644 -> 0.656
+  # Floor stays at 1.0: saturation may cancel the room bonus, never invert it.
+  #
+  # V4 tried 0.25 and it is NOT the missing piece. Measured over V4's 335
+  # surface selections that had a live frontier alternative, recomputing each
+  # utility with the room bonus removed entirely:
+  #
+  #                median surface/frontier ratio at ZERO bonus   surface wins
+  #     00829                    0.78                                37%
+  #     00848                    1.52                                66%
+  #     00880                    1.16                                55%
+  #
+  # In 00848 the surface line beats exploration two thirds of the time with no
+  # room preference at all, so no amount of room saturation can hand control
+  # back there -- the binding constraint is `search_frontier_weight` (0.3 would
+  # have to rise to ~0.46), not the room bonus. In 00829 the ratio is 0.78: the
+  # bonus is what KEEPS that scene searching surfaces, and it is load-bearing
+  # for its 32/36. That asymmetry is the whole story of condition V, which
+  # removed the bonus early and lost 6 episodes in 00829 while gaining 1 in
+  # 00848.
+  search_room_saturation_floor: 1.0
