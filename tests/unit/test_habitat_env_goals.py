@@ -110,3 +110,69 @@ def test_unnavigable_goal_is_not_reachable():
     env = make_env()
     env.env.sim.pathfinder.snap_point = lambda p: np.array([np.nan] * 3, dtype=np.float32)
     assert env.is_reachable([1.0, 2.0]) is False
+
+
+# --------------------------------------------- why the follower stopped (S+2)
+#
+# action_to_goal returns None for four different situations and every caller has
+# treated them alike: the snap failed, the follower raised, the follower stopped
+# because the agent arrived, or the follower stopped because it will not go.
+# Guessing between them was wrong twice -- once as "the goal snaps through a
+# wall", once as "the object is on a disconnected navmesh island" -- and neither
+# survived measurement.
+#
+# The counter is a PROPERTY rather than an __init__ field because
+# YCBAuthoredNavEnv defines its own __init__ and never runs the parent's. The
+# first version set it in __init__ and crashed a diagnostic run on
+# AttributeError; this test is that bug.
+
+
+class _StopFollower:
+    """A follower that always says stop, like one refusing an unreachable goal."""
+
+    def __init__(self, stop_action):
+        self._stop = stop_action
+
+    def get_next_action(self, goal):
+        return self._stop
+
+
+def _env_without_running_parent_init(cfg, agent_y=GROUND_Y):
+    """Exactly what YCBAuthoredNavEnv does: build the object without the
+    parent's __init__ ever running."""
+    env = HabitatObjectNavEnv.__new__(HabitatObjectNavEnv)
+    env.env = type("E", (), {"sim": _StubSim(agent_y)})()
+    env._navmesh_goal_radius = float(cfg.agent.navmesh_goal_radius)
+    env._follower = None
+    return env
+
+
+def test_the_counter_exists_even_when_the_parent_init_never_ran():
+    from osg.core.config import OSGConfig
+
+    env = _env_without_running_parent_init(OSGConfig())
+    env.nav_reasons["probe"] += 1          # must not raise AttributeError
+    assert env.nav_reasons["probe"] == 1
+
+
+def test_a_stop_issued_from_across_the_room_is_recorded_as_a_refusal():
+    from osg.core.config import OSGConfig
+
+    cfg = OSGConfig()
+    env = _env_without_running_parent_init(cfg)
+    env._follower = _StopFollower(HabitatObjectNavEnv.ACTIONS["stop"])
+    # a goal eight metres away, and the follower says stop
+    assert env.action_to_goal(np.array([8.0, 0.0])) is None
+    assert env.nav_reasons["nav_refused"] == 1
+    assert env.nav_reasons["nav_arrived"] == 0
+
+
+def test_a_stop_issued_at_the_goal_is_recorded_as_an_arrival():
+    from osg.core.config import OSGConfig
+
+    cfg = OSGConfig()
+    env = _env_without_running_parent_init(cfg)
+    env._follower = _StopFollower(HabitatObjectNavEnv.ACTIONS["stop"])
+    assert env.action_to_goal(np.array([0.05, 0.0])) is None
+    assert env.nav_reasons["nav_arrived"] == 1
+    assert env.nav_reasons["nav_refused"] == 0

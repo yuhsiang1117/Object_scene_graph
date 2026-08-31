@@ -168,6 +168,9 @@ def build_episode_record(
         "llm_errors": scorer.n_errors - scorer_before[1],
         "llm_last_error": scorer.last_error if scorer.last_error != scorer_before[2] else None,
         "agent_stats": {
+            # Why the navmesh follower stopped, from the env -- the agent cannot
+            # see the difference and has been guessing at it.
+            **dict(getattr(env, "nav_reasons", {}) or {}),
             **agent.stats,
             **agent.exploration.survival_report(),
             **agent.object_layer.funnel,

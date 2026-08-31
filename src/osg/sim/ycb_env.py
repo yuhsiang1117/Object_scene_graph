@@ -636,6 +636,7 @@ class YCBAuthoredNavEnv(HabitatObjectNavEnv):
         self._active_objects: List[Any] = []
 
     def reset(self):
+        self.nav_reasons.clear()
         self.env.reset()
         info = (getattr(self.current_episode, "info", None) or {}).get("ycb", {})
         key = (str(info.get("scene")), str(info.get("layout_id")))

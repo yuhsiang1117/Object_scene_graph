@@ -99,8 +99,18 @@ class HabitatObjectNavEnv:
     def _ensure_follower(self):
         if self._follower is None:
             from habitat.tasks.nav.shortest_path_follower import ShortestPathFollower
+            # stop_on_error=False so a GreedyFollowerError reaches us instead of
+            # being silently converted to a `stop` action inside habitat. The
+            # value returned to the caller is None either way -- what changes is
+            # that `nav_reasons` can tell a real arrival from a follower that
+            # gave up. With habitat's default of True, every greedy failure was
+            # indistinguishable from an arrival, which is how the 00848 kitchen
+            # loop stayed invisible for four conditions.
             self._follower = ShortestPathFollower(
-                self.env.sim, goal_radius=self._navmesh_goal_radius, return_one_hot=False
+                self.env.sim,
+                goal_radius=self._navmesh_goal_radius,
+                return_one_hot=False,
+                stop_on_error=False,
             )
         return self._follower
 
@@ -119,23 +129,84 @@ class HabitatObjectNavEnv:
         y = float(self.env.sim.get_agent_state().position[1]) if floor_y is None else float(floor_y)
         return np.array([float(g[0]), y, float(g[1])], dtype=np.float32)
 
+    @property
+    def nav_reasons(self):
+        """Why `action_to_goal` returned None, counted per episode.
+
+        Lazily created rather than set in __init__, because YCBAuthoredNavEnv
+        defines its own __init__ and does not run this one -- which is exactly
+        how the first version of this counter crashed a diagnostic run.
+        """
+        counter = getattr(self, "_nav_reasons", None)
+        if counter is None:
+            import collections
+
+            counter = collections.Counter()
+            self._nav_reasons = counter
+        return counter
+
+    def _path_exists(self, snapped) -> bool:
+        """Whether the pathfinder finds a route from the agent to an already
+        snapped goal. Separate from `is_reachable`, which snaps its own goal --
+        here the snap has already happened and re-snapping would query a
+        different point than the follower was given."""
+        import habitat_sim
+
+        pf = self.env.sim.pathfinder
+        path = habitat_sim.ShortestPath()
+        path.requested_start = pf.snap_point(self.env.sim.get_agent_state().position)
+        path.requested_end = np.asarray(snapped, dtype=np.float32)
+        return bool(pf.find_path(path))
+
     def action_to_goal(self, goal_xy, floor_y=None) -> Optional[str]:
         """Next discrete action to drive toward a goal on Habitat's navmesh, or
         None if arrived (within goal_radius) or the goal is not navigable.
 
         `goal_xy` is a ground-plane (x, z) pair or a full 3D point; a 2D goal is
-        snapped at `floor_y`, defaulting to the agent's current height."""
+        snapped at `floor_y`, defaulting to the agent's current height.
+
+        None means four different things and every caller has had to treat them
+        alike: the snap failed, the follower raised, the follower said stop
+        because the agent is there, or the follower said stop because it cannot
+        get there. `nav_reasons` counts which, per episode, because guessing
+        between them has now been wrong twice -- once as "the goal snaps through
+        a wall" and once as "the object is on a disconnected navmesh island".
+        Neither survived measurement.
+        """
         follower = self._ensure_follower()
         goal3d = self._goal3d(goal_xy, floor_y)
         snapped = self.env.sim.pathfinder.snap_point(goal3d)
         if snapped is None or bool(np.isnan(np.asarray(snapped)).any()):
+            self.nav_reasons["nav_snap_failed"] += 1
             return None  # unreachable -> caller treats as "arrived" and re-decides
         try:
             a = follower.get_next_action(np.asarray(snapped, dtype=np.float32))
         except Exception:
+            # The greedy follower could not produce an action sequence. That is
+            # not the same as "there is no route": ask the pathfinder directly,
+            # because a goal that IS geodesically reachable but that the greedy
+            # follower refuses is a recoverable failure, not an arrival.
+            self.nav_reasons["nav_follower_raised"] += 1
+            here = np.asarray(self.env.sim.get_agent_state().position, dtype=float)
+            gap = float(np.linalg.norm(here[[0, 2]] - np.asarray(snapped, dtype=float)[[0, 2]]))
+            self.nav_reasons["nav_raised_m_x10"] += int(round(gap * 10))
+            if self._path_exists(snapped):
+                self.nav_reasons["nav_greedy_failed_but_reachable"] += 1
+            else:
+                self.nav_reasons["nav_greedy_failed_unreachable"] += 1
             return None
         if a is None or int(a) == self.ACTIONS["stop"]:
-            return None  # arrived at goal
+            # Arrived, or refused. The distance separates them: the follower
+            # stops within goal_radius (0.1 m), so a "stop" issued from metres
+            # away is a refusal wearing an arrival's clothes.
+            here = np.asarray(self.env.sim.get_agent_state().position, dtype=float)
+            gap = float(np.linalg.norm(here[[0, 2]] - np.asarray(snapped, dtype=float)[[0, 2]]))
+            if gap <= max(2.0 * self._navmesh_goal_radius, 0.25):
+                self.nav_reasons["nav_arrived"] += 1
+            else:
+                self.nav_reasons["nav_refused"] += 1
+                self.nav_reasons["nav_refused_m_x10"] += int(round(gap * 10))
+            return None
         return self._action_name.get(int(a))
 
     def is_reachable(self, goal_xy, floor_y=None) -> bool:
@@ -164,6 +235,7 @@ class HabitatObjectNavEnv:
 
     def reset(self) -> FrameData:
         obs = self.env.reset()
+        self.nav_reasons.clear()
         self._frame_id = 0
         return self._to_frame(obs)
 
