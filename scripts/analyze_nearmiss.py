@@ -71,6 +71,18 @@ def report(eps: list, title: str) -> None:
     nrt = sum(1 for e in eps if e.get("approach_retarget_log"))
     print(f"  approach_retargeted: {rt} over {nrt} episodes"
           + ("   <-- the knob never fired" if rt == 0 else ""))
+    # Foveation reports three numbers because they fail in three different
+    # ways: no regions is a gating bug, regions with no additions is a
+    # detector-scale null, and additions with no TARGET additions is the arm
+    # working perfectly on furniture nobody asked about.
+    st = lambda k: sum(e.get("agent_stats", {}).get(k, 0) or 0 for e in eps)
+    reg, add, tgt = st("foveate_regions"), st("foveate_added"), st("foveate_added_target")
+    if reg or add:
+        ntgt = sum(1 for e in eps
+                   if (e.get("agent_stats", {}).get("foveate_added_target", 0) or 0))
+        print(f"  foveate: {reg} regions -> {add} new detections -> {tgt} of the TARGET"
+              f" in {ntgt} episodes"
+              + ("   <-- fired and found nothing asked for" if not tgt else ""))
     print(f"\n  {'episode':<26}{'ok':>3}{'gt_min':>8}{'commit':>8}{'same_tr':>9}"
           f"{'unspent':>9}{'retgt':>6}")
     print("  (same_tr = the COMMITTED track's error at episode end; blank means"
