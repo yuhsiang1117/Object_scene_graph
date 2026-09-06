@@ -67,14 +67,17 @@ def _frames(dump: Path):
     return out
 
 
+def _covers(det, u: float, v: float, pad: float = 8.0) -> bool:
+    """Does this detection's box sit over the object's projected pixel?"""
+    x1, y1, x2, y2 = [float(c) for c in det.bbox_xyxy]
+    return x1 - pad <= u <= x2 + pad and y1 - pad <= v <= y2 + pad
+
+
 def _hit(dets, want: str, u: float, v: float, pad: float = 8.0) -> float:
     """Best score for `want` on a box covering the object's projected pixel."""
     best = 0.0
     for det in dets:
-        if normalize_label(det.label) != normalize_label(want):
-            continue
-        x1, y1, x2, y2 = [float(c) for c in det.bbox_xyxy]
-        if x1 - pad <= u <= x2 + pad and y1 - pad <= v <= y2 + pad:
+        if normalize_label(det.label) == normalize_label(want) and _covers(det, u, v, pad):
             best = max(best, float(det.score))
     return best
 
@@ -107,46 +110,61 @@ def main(cfg: DictConfig) -> None:
     detector = build_detector(cfg)
     imgsz = int(cfg.detector.imgsz)
 
-    frames = [f for f in _frames(dump) if target.replace(" ", "") in
-              str(f[0]).replace(" ", "").lower() or True]
-    print(f"# {len(frames)} raw keyframes under {dump}")
+    # Which episodes' frames to probe. The dump is keyed by episode id, and an
+    # episode's target is not written into the path, so the caller names the
+    # substring -- `probe.match=__17__` for the tin can's episodes. Without it
+    # every frame in the dump is probed for this target, which measures the
+    # detector on episodes whose object is something else entirely.
+    match = str(probe.get("match", "") or "")
+    frames = [f for f in _frames(dump) if match in str(f[0])]
+    print(f"# {len(frames)} raw keyframes under {dump}"
+          + (f" matching {match!r}" if match else " (ALL episodes)"))
 
-    rows = []
-    for path, u, v in frames:
-        rgb = cv2.imread(str(path))[..., ::-1]
-        rec = {"frame": path.parent.parent.name + "/" + path.name, "u": u, "v": v}
+    # Condition OUTER, frames inner. `set_vocabulary` re-runs the text encoder
+    # over the whole class list, and swapping it per frame made the probe spend
+    # all its time encoding the same thirteen vocabularies 139 times each --
+    # slower than the episodes it exists to avoid re-running.
+    rows = [{"frame": p.parent.parent.name + "/" + p.name, "u": u, "v": v}
+            for p, u, v in frames]
+    images = [cv2.imread(str(p))[..., ::-1] for p, _, _ in frames]
+    detector.imgsz = imgsz
 
-        detector.set_vocabulary(base_vocab)
-        detector.imgsz = imgsz
-        dets = detector.detect(rgb)
-        rec["base"] = _hit(dets, target, u, v)
-        rec["base_top"] = ",".join(
-            f"{d.label}:{d.score:.2f}" for d in sorted(
-                (d for d in dets if _hit([d], d.label, u, v) > 0),
-                key=lambda d: -d.score)[:3]) or "-"
+    def sweep(vocab, key: str, name: str, transform=None) -> None:
+        detector.set_vocabulary(vocab)
+        for rec, rgb, (_, u, v) in zip(rows, images, frames):
+            img, uu, vv = (rgb, float(u), float(v)) if transform is None \
+                else transform(rgb, u, v)
+            rec[key] = 0.0 if img is None else _hit(detector.detect(img), name, uu, vv)
+        print(f"#   {key} done")
 
-        detector.set_vocabulary([c for c in base_vocab
-                                 if normalize_label(c) not in
-                                 {normalize_label(x) for x in COMPETITORS}])
-        rec["nocompete"] = _hit(detector.detect(rgb), target, u, v)
+    sweep(base_vocab, "base", target)
+    # What the detector DID say where the object is: the near-miss labels are
+    # the whole diagnosis when the target's own label scores zero.
+    detector.set_vocabulary(base_vocab)
+    for rec, rgb, (_, u, v) in zip(rows, images, frames):
+        near = sorted((d for d in detector.detect(rgb) if _covers(d, u, v)),
+                      key=lambda d: -float(d.score))[:3]
+        rec["base_top"] = ",".join(f"{d.label}:{d.score:.2f}" for d in near) or "-"
 
-        best_label, best_score = target, 0.0
-        for name in CANDIDATES.get(target, [target]):
-            swapped = [name if normalize_label(c) == normalize_label(target) else c
-                       for c in base_vocab]
-            detector.set_vocabulary(swapped)
-            s = _hit(detector.detect(rgb), name, u, v)
-            rec[f"label:{name}"] = s
-            if s > best_score:
-                best_label, best_score = name, s
-        rec["best_label"], rec["best_label_score"] = best_label, best_score
+    sweep([c for c in base_vocab
+           if normalize_label(c) not in {normalize_label(x) for x in COMPETITORS}],
+          "nocompete", target)
 
-        detector.set_vocabulary(base_vocab)
-        for half in halves:
-            big, uu, vv, scale = _zoom(rgb, u, v, half, imgsz)
-            rec[f"zoom{half}"] = (0.0 if big is None
-                                  else _hit(detector.detect(big), target, uu, vv))
-        rows.append(rec)
+    for name in CANDIDATES.get(target, [target]):
+        sweep([name if normalize_label(c) == normalize_label(target) else c
+               for c in base_vocab], f"label:{name}", name)
+    for rec in rows:
+        best = max(CANDIDATES.get(target, [target]),
+                   key=lambda n: rec.get(f"label:{n}", 0.0))
+        rec["best_label"], rec["best_label_score"] = best, rec.get(f"label:{best}", 0.0)
+
+    for half in halves:
+        def _t(rgb, u, v, half=half):
+            big, uu, vv, _ = _zoom(rgb, int(u), int(v), half, imgsz)
+            return big, uu, vv
+        sweep(base_vocab, f"zoom{half}", target, transform=_t)
+
+    for rec in rows:
         print(json.dumps(rec))
 
     (out_dir / f"{target.replace(' ', '_')}.json").write_text(json.dumps(rows, indent=1))

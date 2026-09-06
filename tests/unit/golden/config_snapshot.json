@@ -189,6 +189,11 @@
     0.2,
     1.4
   ],
+  "scene_graph.foveate_containers": false,
+  "scene_graph.foveate_max_range_m": 4.0,
+  "scene_graph.foveate_max_regions": 1,
+  "scene_graph.foveate_min_bbox_px": 20000.0,
+  "scene_graph.foveate_pad": 0.15,
   "scene_graph.keyframe_rot_deg": 30.0,
   "scene_graph.keyframe_trans_m": 0.25,
   "scene_graph.link_dist_m": 1.0,

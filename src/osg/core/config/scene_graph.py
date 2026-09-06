@@ -139,6 +139,29 @@ class SceneGraphConfig:
     # Admission is not candidacy: evidence, observation count, presence and the
     # identity channel all still decide whether a track may become a goal.
     target_bypasses_gates: bool = False
+    # Foveated second look at container surfaces (perception/foveate.py). One
+    # extra detector call per keyframe per region, off by default.
+    #
+    # The whole-frame pass is budgeted for furniture and misses the objects this
+    # benchmark asks for. Measured on 00848's tin can over the 21 keyframes the
+    # GT instrument calls in-view and unoccluded: the run's own settings name it
+    # 0/21, removing every furniture class that outscored it names it 0/21, and
+    # ten alternative names name it at most 1/21 -- while a 320 px window around
+    # it, upscaled, names it 5/21. Not the name, not class competition, scale.
+    foveate_containers: bool = False
+    # Beyond this the crop is mostly background and the object is a few pixels
+    # in it either way. The probe's recoveries all sit at 2.6-3.4 m.
+    foveate_max_range_m: float = 4.0
+    # A surface projecting smaller than this is too far or too oblique to be
+    # worth a second inference.
+    foveate_min_bbox_px: float = 20_000.0
+    # Regions per keyframe. Each one is a full detector call, and the control
+    # loop runs at ~3 Hz with one.
+    foveate_max_regions: int = 1
+    # Fraction of the surface's own size to pad the window by. The probe's 192 px
+    # window scored 0/21 -- WORSE than no crop -- because an object that fills
+    # its crop has lost the context the detector needs to call it an object.
+    foveate_pad: float = 0.15
     # Evidence-score corroboration (P1i, FUS3DMaps-inspired 2026-07-19): a
     # detection that only re-matches an existing track from nearly the same
     # camera position adds little real corroborating evidence (no parallax)

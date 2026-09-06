@@ -54,6 +54,7 @@ from .approach import ApproachPolicy
 from .candidate import CandidatePolicy
 from .floor_policy import FloorPolicy
 from ..core.labels import normalize_label
+from ..graph.containers import CONTAINER_CATEGORIES
 from .state import STOP_ACTION, TURN_ACTION, State
 
 class NavAgent:
@@ -423,10 +424,47 @@ class NavAgent:
 
     # -------------------------------------------------------------- keyframes
 
+    def _foveate(self, frame: FrameData, dets: list) -> list:
+        """A second detector pass over the container surfaces in view.
+
+        Reported as the DECISION, not the state: `foveate_added` counts only
+        detections the whole-frame pass did not already have, and
+        `foveate_added_target` only those of the episode's target -- the arm's
+        entire claim. An arm that fires constantly and adds no target is a null,
+        and has to be legible as one.
+        """
+        from ..perception.foveate import container_regions, foveated_detect, merge
+
+        sg = self.cfg.scene_graph
+        regions = container_regions(
+            self.object_layer, frame, CONTAINER_CATEGORIES,
+            max_range_m=float(sg.foveate_max_range_m),
+            min_px=float(sg.foveate_min_bbox_px),
+            max_regions=int(sg.foveate_max_regions),
+        )
+        if not regions:
+            return dets
+        self.stats["foveate_regions"] = self.stats.get("foveate_regions", 0) + len(regions)
+        extra = foveated_detect(self.detector, frame.rgb, regions,
+                                pad=float(sg.foveate_pad))
+        merged, n_added = merge(dets, extra)
+        if n_added:
+            self.stats["foveate_added"] = self.stats.get("foveate_added", 0) + n_added
+            want = normalize_label(self.target)
+            hits = sum(1 for d in merged[len(dets):]
+                       if normalize_label(d.label) == want)
+            if hits:
+                self.stats["foveate_added_target"] = (
+                    self.stats.get("foveate_added_target", 0) + hits
+                )
+        return merged
+
     def _on_keyframe(self, frame: FrameData) -> None:
         self._kf_count += 1
         with self.profiler.timeit("detector"):
             dets = self.detector.detect(frame.rgb)
+            if self.cfg.scene_graph.foveate_containers:
+                dets = self._foveate(frame, dets)
         if self.on_keyframe_detections is not None:
             self.on_keyframe_detections(frame, dets)
         with self.profiler.timeit("object_layer"):
