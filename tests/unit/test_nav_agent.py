@@ -688,3 +688,78 @@ def test_a_struck_off_candidate_is_recorded_with_the_belief_it_carried():
     assert rec["p"] > 0.95, "the belief at the moment of the strike is the point"
     assert rec["rejections"] == 1
     assert rec["center"][:3] == [2.0, 0.5, 3.0]
+
+
+def _stub_observation(frame_id: int = 0):
+    """One entry in `track.observations`; the candidate gates read only how
+    many there are, so the geometry here is a placeholder."""
+    from osg.objects.association import Observation
+
+    return Observation(frame_id=frame_id, mu=np.zeros(2), cov=np.eye(2),
+                       K=np.eye(3), T_cw=np.eye(4), mean_depth=2.0)
+
+
+def _unreachable_agent(**agent_overrides):
+    """An agent whose pathfinder refuses every pose, holding one target track."""
+    from osg.objects.association import ObjectTrack
+    from osg.objects.ellipsoid import Ellipsoid
+
+    cfg = make_cfg(**agent_overrides)
+    cfg.verification.min_obs = 1
+    cfg.verification.min_score = 0.0
+    cfg.verification.min_bbox_px = 0.0
+    # The campaign line: an unreachable candidate is evidence for the identity
+    # channel, not a permanent blacklist (condition M). With the shipped default
+    # the first strike blacklists and there is no second one to guard against.
+    cfg.verification.unreachable_is_absorbing = False
+    agent = make_agent(cfg, target="chair")
+    agent._use_navmesh = True
+    agent._reachable_fn = lambda xy, floor_y=None: False
+    track = ObjectTrack(
+        id=1, label="chair",
+        ellipsoid=Ellipsoid(center=np.array([2.0, 0.5, 3.0]),
+                            axes=np.array([0.2, 0.2, 0.2]), R=np.eye(3)),
+    )
+    track.best_score, track.best_bbox_px, track.evidence = 0.9, 5000.0, 5.0
+    # n_obs is len(observations); the candidate gates read it, so the track
+    # needs real ones rather than a patched attribute.
+    track.observations.extend(_stub_observation(i) for i in range(3))
+    agent.object_layer._tracks[1] = track
+    return agent, track
+
+
+def test_one_unreachable_verdict_is_not_two_strikes():
+    """Reachability is a fact about a (track, pose) pair, and `check()` asks it
+    every step. On 00848's cross_anchor_02 the agent built the REAL plate at
+    0.04 m with p=0.818, struck it at step 150 and again at 151, spent the
+    identity channel's whole budget on one verdict and left 350 steps unused."""
+    agent, track = _unreachable_agent(unreachable_restrike_m=0.5)
+
+    for _ in range(4):
+        agent.candidates.check(np.array([0.0, 0.0]))  # never moves
+
+    assert track.identity_rejections == 1, "one verdict, one strike"
+    assert agent.stats["unreachable_restrike"] == 3
+    assert len(agent.candidate_reject_log) == 1
+
+
+def test_a_verdict_from_somewhere_else_is_new_evidence():
+    """A genuine second failure, from a different vantage, still counts --
+    that is what the identity channel is for."""
+    agent, track = _unreachable_agent(unreachable_restrike_m=0.5)
+
+    agent.candidates.check(np.array([0.0, 0.0]))
+    agent.candidates.check(np.array([5.0, 5.0]))
+
+    assert track.identity_rejections == 2
+    assert len(agent.candidate_reject_log) == 2
+
+
+def test_the_restrike_guard_is_off_unless_asked_for():
+    agent, track = _unreachable_agent()
+
+    agent.candidates.check(np.array([0.0, 0.0]))
+    agent.candidates.check(np.array([0.0, 0.0]))
+
+    assert track.identity_rejections == 2
+    assert agent.stats.get("unreachable_restrike", 0) == 0

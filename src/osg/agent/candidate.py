@@ -63,8 +63,17 @@ class CandidatePolicy:
         # is 2, `max_identity_rejections` is 2, and the aggregate counter cannot
         # tell you whether those are the same track. Name the decision.
         self.reject_log: list = []
+        # Where the agent was standing when a track was last struck off as
+        # unreachable, per track id. `check()` runs every step, re-picks the
+        # same top candidate, and asks the pathfinder the same question from the
+        # same pose -- so on 00848's cross_anchor_02 the REAL plate (0.04 m from
+        # truth, p=0.818) took two strikes at steps 150 and 151 and hit
+        # `max_identity_rejections`, which is meant to mean two separate
+        # failures to find it. One verdict counted twice retires a correct track
+        # in two steps and leaves 350 unspent.
+        self._unreachable_from: dict = {}
 
-    def check(self) -> None:
+    def check(self, agent_xy=None) -> None:
         candidates = self.nav.object_layer.candidates(
             self.nav.target,
             min_obs=self.nav.cfg.verification.min_obs,
@@ -96,6 +105,12 @@ class CandidatePolicy:
                 self.nav.stats["unreachable_skip"] = (
                     self.nav.stats.get("unreachable_skip", 0) + 1
                 )
+                if self._restrike_is_the_same_verdict(track, agent_xy):
+                    self.nav.stats["unreachable_restrike"] = (
+                        self.nav.stats.get("unreachable_restrike", 0) + 1
+                    )
+                    self.nav._candidate_id = None
+                    return
                 self._log_reject(track, "unreachable")
                 if self.nav.cfg.verification.unreachable_is_absorbing:
                     self.nav.object_layer.blacklist(track.id)
@@ -148,6 +163,22 @@ class CandidatePolicy:
         self.nav.state = State.GOTO_VERIFY_VIEW
         self.nav._current_path = None
         self.nav._goto_deadline = self.nav.step_count + 80
+
+    def _restrike_is_the_same_verdict(self, track, agent_xy) -> bool:
+        """Has this track already been ruled unreachable from where we stand?
+
+        Reachability is a fact about a (track, pose) pair. `check()` asks it
+        every step, and while nothing has moved the answer cannot change -- so
+        counting each answer as fresh evidence spends the identity channel's
+        whole budget on one verdict. A genuine second failure, from somewhere
+        else in the house, still counts; that is what the channel is for.
+        """
+        tol = float(getattr(self.nav.cfg.agent, "unreachable_restrike_m", 0.0) or 0.0)
+        if tol <= 0.0 or agent_xy is None:
+            return False
+        was = self._unreachable_from.get(track.id)
+        self._unreachable_from[track.id] = np.asarray(agent_xy, dtype=float).copy()
+        return was is not None and float(np.linalg.norm(np.asarray(agent_xy) - was)) < tol
 
     def _log_reject(self, track, reason: str) -> None:
         """One line per candidate struck off, with the belief it was carrying.

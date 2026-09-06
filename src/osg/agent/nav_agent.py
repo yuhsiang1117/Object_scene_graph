@@ -346,7 +346,7 @@ class NavAgent:
 
         # Candidate target check happens in every state except terminal ones
         if self.state in (State.INIT, State.EXPLORE, State.GOTO_FRONTIER):
-            self.candidates.check()
+            self.candidates.check(frame.camera_position[list(PLANE)])
 
         if self.state == State.INIT:
             if self._scan_steps_left > 0:

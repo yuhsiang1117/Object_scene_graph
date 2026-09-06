@@ -78,6 +78,21 @@ class AgentConfig:
     #
     # 0.15 m is half the error that lost that episode and comfortably above the
     # refiner's own step-to-step jitter, so a settled track never retargets.
+    # A track already ruled unreachable from where the agent stands is not
+    # ruled unreachable twice. 0.0 disables the check, which is the shipped
+    # behaviour.
+    #
+    # `candidates.check()` runs every step, re-picks the same top candidate and
+    # asks the pathfinder the same question from the same pose. Measured on
+    # 00848's cross_anchor_02 red plate: the agent builds the REAL plate at
+    # 0.04 m from truth with p=0.818, strikes it at step 150 and again at step
+    # 151, hits `max_identity_rejections` (2) and spends the remaining 350 steps
+    # not going to an object it had correctly mapped. Two strikes are meant to
+    # be two separate failures to find it, not one verdict counted twice.
+    #
+    # 0.5 m is a real change of vantage and half the agent's own turning circle,
+    # so a second strike means the pathfinder was asked from somewhere new.
+    unreachable_restrike_m: float = 0.0
     approach_retarget_m: float = 0.0
     # Retargets allowed per approach. A cap, not a budget: a track that moves
     # this many times is not converging and the walk should end on the estimate

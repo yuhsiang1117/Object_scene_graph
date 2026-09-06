@@ -23,6 +23,7 @@
   "agent.reachable_via_viewpoint": false,
   "agent.success_distance": 0.1,
   "agent.turn_deg": 30.0,
+  "agent.unreachable_restrike_m": 0.0,
   "agent.use_habitat_navmesh": false,
   "detector.class_conf": {},
   "detector.conf": 0.3,
