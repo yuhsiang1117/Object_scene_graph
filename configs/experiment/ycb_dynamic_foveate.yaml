@@ -1,0 +1,67 @@
+# @package _global_
+#
+# Condition F: condition N plus a foveated second detector pass over the
+# container surfaces in view (perception/foveate.py).
+#
+# The whole-frame pass is budgeted for furniture and misses the objects this
+# benchmark asks for. On 00848 the tomato soup can is detected ZERO times in
+# every one of six episodes while the ground-truth instrument records it in
+# view and unoccluded on 3 to 28 keyframes each.
+#
+# scripts/probe_nearmiss.py, over the 21 in-view unoccluded keyframes, at this
+# run's own imgsz 1280 and the 0.20 gate `tin can` already gets:
+#
+#     the run's own vocabulary                              0 / 21
+#     minus sofa, pillow, cushion, bed, chair, ...           0 / 21
+#     "soup can", "food can", "red can", "cylinder", +6   <= 1 / 21
+#     a 320 px window around it, upscaled to 1280            5 / 21
+#
+# That kills the two hypotheses worth having. Removing every furniture class
+# that was outscoring the can changes nothing, so it is not class-competitive
+# NMS; ten alternative names change nothing, so it is not the label -- which is
+# where the pitcher's history (`pitcher` 0.00, `blue plastic pitcher` 0.71) says
+# to look first. It is scale. The can subtends about 40 px at 2 m.
+#
+# The window matters as much as the magnification: a 192 px window scores 0/21,
+# WORSE than not cropping, and the 320 px window works at 2.6-3.4 m and fails at
+# 1.9-2.4 m. Both are the same failure -- an object that fills its crop has lost
+# the context the detector needs to call it an object. So the region cropped is
+# the SURFACE, which the map already holds as a container track and whose
+# projection shrinks as the agent backs away exactly as the window needs to,
+# never a box around a target the agent cannot yet locate.
+#
+# Measured, 12 episodes on 00848 (tin can and red plate, all six layouts),
+# against condition N reproduced episode-for-episode on the same maps:
+#
+#                              N        F
+#     SR                    2/12     6/12
+#     SPL                  0.102    0.226
+#     control loop fps      2.71     2.23
+#
+# and the mechanism, in-situ target recall (GT detected / GT in view):
+#
+#     in_anchor_02   tin can      0/3  ->  13/23     0 -> 1
+#     cross_anchor_01 tin can     0/0  ->  15/22     0 -> 0
+#     cross_anchor_03 tin can     0/0  ->   6/12     0 -> 1
+#     in_anchor_01   tin can     0/14  ->   2/10     0 -> 0
+#
+# The two red plate wins are upstream of the plate itself: better observations
+# make the estimate good BEFORE the commit. in_anchor_02 commits at 0.049 m
+# instead of 0.328 m, and cross_anchor_01 at 0.005 m instead of 8.300 m -- it
+# picks the real plate over the stale prior it used to chase.
+#
+# Isolated: an otherwise identical run with `agent.approach_retarget_m=0.15`
+# scores the same 6/12 and wins the same four episodes, with the retarget firing
+# in two of them and flipping neither. The +4 is this flag alone.
+#
+#   python scripts/run_eval.py +experiment=ycb_dynamic_foveate \
+#     'ycb.scenes=[00848-ziup5kvtCCR]' \
+#     ycb.map_in=outputs/maps_v5/00848-ziup5kvtCCR +run_tag=F
+#
+# NOT yet run at 96 episodes, and the 18% control-loop cost lands directly on
+# the paper's real-time claim -- both belong in any comparison that uses this.
+defaults:
+  - ycb_dynamic_best
+
+scene_graph:
+  foveate_containers: true
