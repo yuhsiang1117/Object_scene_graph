@@ -61,6 +61,28 @@ class AgentConfig:
     # arrival puts the agent on the goal itself, and the frontier side already
     # allows 0.9 m for the planner's own stopping radius.
     approach_false_arrival_m: float = 0.0
+    # Re-derive the approach goal when the candidate's ellipsoid refines under
+    # it. 0.0 disables the check, which is the shipped behaviour.
+    #
+    # `start()` computes a viewpoint on the ring around the object's centre AS
+    # ESTIMATED AT COMMIT TIME, and never looks at it again -- but the estimate
+    # is at its worst exactly then, and improves fastest during the approach,
+    # when the agent is walking toward the object and every new keyframe is
+    # closer and better framed than the last. Measured on 00848's red plate,
+    # in_anchor_02: committed to a centre 0.328 m from truth, drove to a
+    # viewpoint on THAT ring, stopped, and scored nothing -- while the same
+    # track ended the episode at 0.059 m, a 5.6x refinement that arrived after
+    # the only decision it could have changed. Success is scored at 0.18 m from
+    # an authored viewpoint, so 0.328 m of centre error cannot score and 0.059 m
+    # comfortably can.
+    #
+    # 0.15 m is half the error that lost that episode and comfortably above the
+    # refiner's own step-to-step jitter, so a settled track never retargets.
+    approach_retarget_m: float = 0.0
+    # Retargets allowed per approach. A cap, not a budget: a track that moves
+    # this many times is not converging and the walk should end on the estimate
+    # it has rather than chase one.
+    approach_retarget_max: int = 3
     approach_max_steps: int = 12  # ~3 m of travel at forward_m=0.25
     # Tighter-than-default planner/controller stopping precision for the
     # final APPROACH segment only (P1f). HM3D success is a geodesic

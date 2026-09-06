@@ -43,6 +43,13 @@ class EvalConfig:
     # does not feed the object layer -- keyframe detection is unchanged), so SR
     # is unaffected; it roughly doubles detector load, hence off by default.
     debug_frames: bool = False
+    # Ground-truth keyframe dump: for every keyframe where the instrument says
+    # the target was in view and unoccluded, write the RGB with the projected
+    # object marked and the RAW detections drawn beside it. This is the picture
+    # `gt_kf_in_view=14, gt_kf_detected=0` refuses to give you -- whether the
+    # object was a legible object at that range or four grey pixels behind a
+    # chair. Off by default; it writes one JPEG per in-view keyframe.
+    gt_dump_dir: str = ""
     rgb_width: int = 640
     rgb_height: int = 480
     hfov_deg: float = 79.0

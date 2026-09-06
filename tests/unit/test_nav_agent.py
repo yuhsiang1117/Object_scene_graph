@@ -566,3 +566,99 @@ def test_the_check_is_off_by_default_and_stops_as_before():
     action = agent.approach.step(_frame_at(np.zeros(2)))
     assert action == STOP_ACTION, "shipped behaviour: it stops eight metres out"
     assert agent.state == State.DONE
+
+
+# --------------------------------------------------------------------------
+# Re-aiming the approach at a refined centre (agent.approach_retarget_m).
+
+
+def _approach_agent_with_track(centre, **agent_overrides):
+    """An agent mid-APPROACH, committed to track 1 at `centre`."""
+    from osg.objects.association import ObjectTrack
+    from osg.objects.ellipsoid import Ellipsoid
+
+    cfg = make_cfg(approach_to_viewpoint=False, approach_navigable_goal=False,
+                   **agent_overrides)
+    agent = make_agent(cfg, target="chair")
+    track = ObjectTrack(
+        id=1, label="chair",
+        ellipsoid=Ellipsoid(center=np.asarray(centre, dtype=float),
+                            axes=np.array([0.2, 0.2, 0.2]), R=np.eye(3)),
+    )
+    agent.object_layer._tracks[1] = track
+    agent._candidate_id = 1
+    agent.approach.start(np.asarray([centre[0], centre[2]], dtype=float),
+                         agent_xy=np.zeros(2))
+    agent.approach.steps_left = 50
+    agent._goto_deadline = 10_000
+    return agent, track
+
+
+def test_a_refined_centre_moves_the_approach_goal():
+    """The estimate improves most DURING the walk, which is the one time the
+    shipped approach refuses to look at it again.
+
+    Measured on 00848's red plate (in_anchor_02): committed to a centre 0.328 m
+    from truth, drove to a viewpoint on that ring, stopped, scored nothing --
+    and the same track ended the episode at 0.059 m. Success is scored at
+    0.18 m from an authored viewpoint, so that refinement was the episode.
+    """
+    agent, track = _approach_agent_with_track([3.0, 0.5, 0.0],
+                                              approach_retarget_m=0.15)
+    before = agent._goal_xy.copy()
+
+    # The ellipsoid refines 0.4 m -- what a few close keyframes buy.
+    track.ellipsoid.center = np.array([3.4, 0.5, 0.0])
+    agent.approach.step(_frame([0.0, 0.0]))
+
+    assert agent.approach.retargets == 1
+    assert not np.allclose(agent._goal_xy, before), "the goal must follow the object"
+    assert np.allclose(agent._target_obj_xy, np.array([3.4, 0.0]))
+    step, moved, goal_moved = agent.approach.retarget_log[0]
+    assert moved == 0.4 and goal_moved > 0.0
+    # The path in hand must lead to the NEW goal: `step()` replans within the
+    # same call, so the check is where the path goes, not that it is empty.
+    assert np.allclose(agent.approach.path_goal, agent._goal_xy)
+    assert not np.allclose(agent.approach.path_goal, before)
+
+
+def test_a_settled_track_never_retargets():
+    """Jitter under the tolerance must not re-aim the walk; a goal that moves
+    every step is a goal the follower never reaches."""
+    agent, track = _approach_agent_with_track([3.0, 0.5, 0.0],
+                                              approach_retarget_m=0.15)
+    before = agent._goal_xy.copy()
+
+    track.ellipsoid.center = np.array([3.05, 0.5, 0.02])  # 0.054 m of jitter
+    agent.approach.step(_frame([0.0, 0.0]))
+
+    assert agent.approach.retargets == 0
+    assert np.allclose(agent._goal_xy, before)
+    assert agent.stats.get("approach_retargeted", 0) == 0
+
+
+def test_retargeting_is_off_unless_asked_for():
+    """The shipped default is 0.0, and it has to stay a no-op: every earlier
+    condition of the campaign ladder is reproducible only if it does."""
+    agent, track = _approach_agent_with_track([3.0, 0.5, 0.0])
+    before = agent._goal_xy.copy()
+
+    track.ellipsoid.center = np.array([9.0, 0.5, 9.0])  # a huge move
+    agent.approach.step(_frame([0.0, 0.0]))
+
+    assert agent.approach.retargets == 0
+    assert np.allclose(agent._goal_xy, before)
+
+
+def test_a_track_that_will_not_settle_stops_being_chased():
+    """The cap is a cap, not a budget: a centre that keeps moving is not
+    converging, and the walk should end on the estimate it has."""
+    agent, track = _approach_agent_with_track([3.0, 0.5, 0.0],
+                                              approach_retarget_m=0.15,
+                                              approach_retarget_max=2)
+    for i in range(5):
+        track.ellipsoid.center = np.array([3.0 + 0.5 * (i + 1), 0.5, 0.0])
+        agent.approach.step(_frame([0.0, 0.0]))
+
+    assert agent.approach.retargets == 2
+    assert agent.stats["approach_retargeted"] == 2

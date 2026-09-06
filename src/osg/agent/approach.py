@@ -69,6 +69,12 @@ class ApproachPolicy:
         # path_consumed into planner-no-path vs controller-arrived and records
         # the approach geometry. See scripts/analyze_approach.py.
         self.diag: dict = {}
+        # Retargeting: how many times this approach re-derived its goal from a
+        # refined centre, and what each one moved. The log records the DECISION
+        # (the goal actually moved) rather than the state, so a run where the
+        # knob fired but changed nothing is legible as exactly that.
+        self.retargets = 0
+        self.retarget_log: list = []
 
     def step(self, frame: FrameData) -> str:
         """Walk toward the verified object while it stays visible.
@@ -94,6 +100,7 @@ class ApproachPolicy:
             cur = self.diag.get("min_dist_to_goal_m")
             if cur is None or dg < cur:
                 self.diag["min_dist_to_goal_m"] = dg
+        self.retarget(agent_xy)
         det = self.nav._best_target_detection(frame)
 
         if det is not None:
@@ -292,15 +299,69 @@ class ApproachPolicy:
         self.nav.stats["approach_scan_turns"] = self.nav.stats.get("approach_scan_turns", 0) + 1
         return TURN_ACTION
 
-    def start(
-        self,
-        obj_xy: np.ndarray,
-        agent_xy: Optional[np.ndarray] = None,
-        floor_y: Optional[float] = None,
-    ) -> None:
-        # Height to snap the navmesh goal at for the rest of this approach.
-        # None keeps the legacy "use the agent's own height" behaviour.
-        self.nav._goal_floor_y_cache = floor_y
+    def retarget(self, agent_xy: Optional[np.ndarray]) -> None:
+        """Move the goal if the object did.
+
+        The centre `start()` aimed at is the ellipsoid's estimate at commit
+        time, which is the worst one this approach will ever hold: the track is
+        refined from every keyframe (`min_obs_for_refine`/`refine_every`), and
+        the keyframes that arrive during the walk are the closest and best
+        framed of the episode. Leaving the goal where it was throws that away at
+        the one moment it is worth the most -- success is scored at 0.18 m from
+        an authored viewpoint, so a viewpoint computed on a ring 0.33 m off
+        centre cannot score however well the object was found.
+
+        Only the goal moves. The deadline, the step budget and `last_good_xy`
+        are all left alone: this is the same approach, re-aimed, not a new one.
+        """
+        tol = float(getattr(self.nav.cfg.agent, "approach_retarget_m", 0.0) or 0.0)
+        if tol <= 0.0 or self.nav._target_obj_xy is None:
+            return
+        if self.retargets >= int(getattr(self.nav.cfg.agent,
+                                         "approach_retarget_max", 3)):
+            return
+        if self.nav._candidate_id is None:
+            return
+        track = self.nav.object_layer.get(self.nav._candidate_id)
+        if track is None:
+            return
+        centre = np.asarray(
+            self.nav.object_layer.center_of(track), dtype=float)[list(PLANE)]
+        moved = float(np.linalg.norm(centre - self.nav._target_obj_xy))
+        if moved < tol:
+            return
+        before = None if self.nav._goal_xy is None else self.nav._goal_xy.copy()
+        self._aim(centre, agent_xy)
+        if before is None or self.nav._goal_xy is None:
+            return
+        goal_moved = float(np.linalg.norm(self.nav._goal_xy - before))
+        self.retargets += 1
+        self.nav.stats["approach_retargeted"] = (
+            self.nav.stats.get("approach_retargeted", 0) + 1
+        )
+        self.retarget_log.append(
+            (self.nav.step_count, round(moved, 3), round(goal_moved, 3))
+        )
+        # The path was planned to the old goal; drop it so the next follow_to
+        # replans, or the agent walks the rest of the way to a stale pose.
+        self.nav._current_path = None
+        self.path_goal = None
+        if self.diag is not None:
+            self.diag["retargets"] = self.retargets
+            self.diag["obj_xy"] = [float(x) for x in centre]
+            self.diag["goal_xy"] = [float(x) for x in self.nav._goal_xy]
+            self.diag["goal_to_obj_m"] = float(
+                np.linalg.norm(self.nav._goal_xy - centre))
+
+    def _aim(self, obj_xy: np.ndarray,
+             agent_xy: Optional[np.ndarray] = None) -> None:
+        """Where to stand to see `obj_xy`, and the goal that gets there.
+
+        Split out of `start()` so an approach already under way can be
+        re-aimed at a refined centre through exactly the same viewpoint
+        logic -- a second copy of this ring search would be a second thing
+        to keep in step with `ViewpointPlanner`.
+        """
         self.at_viewpoint = False
         if self.nav._use_navmesh and self.nav.cfg.agent.approach_to_viewpoint:
             # HM3D scores success as the distance from the final pose to the
@@ -363,6 +424,19 @@ class ApproachPolicy:
         else:
             self.nav._goal_xy = nearest_free_xy(self.nav.costmap, obj_xy)
         self.nav._target_obj_xy = obj_xy.copy()
+
+    def start(
+        self,
+        obj_xy: np.ndarray,
+        agent_xy: Optional[np.ndarray] = None,
+        floor_y: Optional[float] = None,
+    ) -> None:
+        # Height to snap the navmesh goal at for the rest of this approach.
+        # None keeps the legacy "use the agent's own height" behaviour.
+        self.nav._goal_floor_y_cache = floor_y
+        self._aim(obj_xy, agent_xy)
+        self.retargets = 0
+        self.retarget_log = []
         self.scan_turns_left = int(self.nav.cfg.agent.approach_scan_turns)
         self.scan_expected = 0
         self.nav.state = State.APPROACH

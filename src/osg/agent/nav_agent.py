@@ -235,6 +235,10 @@ class NavAgent:
         return self.approach.diag
 
     @property
+    def approach_retarget_log(self) -> list:
+        return self.approach.retarget_log
+
+    @property
     def goal_commit_log(self) -> list:
         return self.candidates.goal_commit_log
 

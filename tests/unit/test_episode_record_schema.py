@@ -21,7 +21,8 @@ import types
 
 # From a real 96-episode campaign run. Sorted, so a diff reads alphabetically.
 EXPECTED_KEYS = {
-    "agent_stats", "approach_bbox_log", "approach_diag", "approach_stop_reason",
+    "agent_stats", "approach_bbox_log", "approach_diag",
+    "approach_retarget_log", "approach_stop_reason",
     "attempt_log", "attempts_used", "authored_layout", "cand_best_cam_xy",
     "cand_best_score", "cand_n_obs", "control_fps", "detector",
     "distance_to_goal", "episode_id", "final_xy", "final_y", "floor_changes",

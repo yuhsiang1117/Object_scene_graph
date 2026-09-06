@@ -57,8 +57,13 @@ class GroundTruthVisibility:
         target_xyz: Optional[Sequence[float]],
         min_det_score: float = 0.0,
         min_det_bbox_px: float = 0.0,
+        dump: Any = None,
     ) -> None:
         self.target = None if target_xyz is None else np.asarray(target_xyz, dtype=float)
+        # Optional image dump (eval.gt_dump_dir). One-way: it receives the
+        # projection this class already computed and writes JPEGs. Nothing it
+        # returns is read, so a dump can never influence what is measured.
+        self.dump = dump
         # The ADMISSION gates, so the instrument can separate two failures the
         # rest of the record conflates: the detector never named the object, and
         # the detector named it but the object layer refused the detection.
@@ -166,6 +171,9 @@ class GroundTruthVisibility:
             self.best_det_bbox_px = max(self.best_det_bbox_px, best_px)
         if admitted:
             self.kf_admitted += 1
+        if self.dump is not None:
+            self.dump.write(frame, dets, u, v, z, fraction, offaxis,
+                            best, best_px, admitted)
         # Recall conditioned on framing, which is the thing H could not see.
         centred = offaxis <= 0.6
         if z <= 3.0:

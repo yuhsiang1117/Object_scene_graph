@@ -23,7 +23,7 @@ from ..mapping.costmap import HEIGHT_AXIS, PLANE
 from .attempts import attempt_succeeded, rearm_after_failed_attempt
 from .instruments import GroundTruthVisibility
 from .prior_map import load_prior_map
-from .record import authored_episode_metadata
+from .record import authored_episode_metadata, episode_tag
 
 
 @dataclass
@@ -56,10 +56,16 @@ def run_episode(cfg, env, agent, episode, target, frame, detector, debug=None) -
     outcome.trajectory_y = [float(frame.camera_position[HEIGHT_AXIS]) - cam_h]
 
     attempts_allowed = max(1, int(cfg.eval.attempts))
+    dump = None
+    if str(getattr(cfg.eval, "gt_dump_dir", "") or ""):
+        from .gt_dump import KeyframeDump
+        dump = KeyframeDump(str(cfg.eval.gt_dump_dir),
+                            episode_tag(episode), target)
     outcome.gt_view = GroundTruthVisibility(
         authored_episode_metadata(episode).get("target_position"),
         min_det_score=cfg.scene_graph.min_det_score,
         min_det_bbox_px=cfg.scene_graph.min_det_bbox_px,
+        dump=dump,
     )
     # Read-only: the agent hands over what it saw, and is given nothing.
     agent.on_keyframe_detections = (
