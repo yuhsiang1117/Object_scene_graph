@@ -763,3 +763,20 @@ def test_the_restrike_guard_is_off_unless_asked_for():
 
     assert track.identity_rejections == 2
     assert agent.stats.get("unreachable_restrike", 0) == 0
+
+
+def test_the_restrike_guard_measures_from_the_last_verdict_not_the_last_step():
+    """Updating the reference pose on every attempt compares against the
+    previous STEP, and the agent moves 0.05-0.25 m per step -- so the guard
+    suppresses for ever and the identity channel stops working entirely.
+    Measured before this fix: 350 suppressions in one episode, one strike
+    counted, and a candidate re-tested every step to the end."""
+    agent, track = _unreachable_agent(unreachable_restrike_m=0.5)
+
+    # A slow walk: every step is under the tolerance, the whole walk is not.
+    for i in range(12):
+        agent.candidates.check(np.array([0.2 * i, 0.0]))
+
+    assert track.identity_rejections >= 2, (
+        "a track re-tested from 2.2 m away has been ruled out from somewhere new"
+    )

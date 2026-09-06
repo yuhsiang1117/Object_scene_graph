@@ -177,8 +177,17 @@ class CandidatePolicy:
         if tol <= 0.0 or agent_xy is None:
             return False
         was = self._unreachable_from.get(track.id)
-        self._unreachable_from[track.id] = np.asarray(agent_xy, dtype=float).copy()
-        return was is not None and float(np.linalg.norm(np.asarray(agent_xy) - was)) < tol
+        here = np.asarray(agent_xy, dtype=float)
+        if was is not None and float(np.linalg.norm(here - was)) < tol:
+            return True
+        # Only a COUNTED strike moves the reference pose. Updating it on every
+        # attempt compares against the previous STEP instead of the previous
+        # verdict, and the agent moves 0.05-0.25 m per step -- so the guard
+        # suppresses for ever and the identity channel stops working at all.
+        # Measured: 350 suppressions in one episode, one strike counted, outcome
+        # unchanged.
+        self._unreachable_from[track.id] = here.copy()
+        return False
 
     def _log_reject(self, track, reason: str) -> None:
         """One line per candidate struck off, with the belief it was carrying.
