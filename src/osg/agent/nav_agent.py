@@ -242,6 +242,10 @@ class NavAgent:
     def goal_commit_log(self) -> list:
         return self.candidates.goal_commit_log
 
+    @property
+    def candidate_reject_log(self) -> list:
+        return self.candidates.reject_log
+
     # ------------------------------------------------------------------ reset
 
     def reset(self, target_category: str) -> None:

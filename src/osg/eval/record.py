@@ -209,6 +209,7 @@ def build_episode_record(
         "approach_stop_reason": agent.approach_stop_reason,
         "approach_diag": agent.approach_diag,
         "approach_retarget_log": agent.approach_retarget_log,
+        "candidate_reject_log": agent.candidate_reject_log,
         "final_xy": [float(x) for x in outcome.trajectory[-1]],
         "verify_calls": (verifier.n_calls - verifier_before[0]) if verifier is not None else 0,
         "verify_errors": (verifier.n_errors - verifier_before[1]) if verifier is not None else 0,

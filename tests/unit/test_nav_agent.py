@@ -662,3 +662,29 @@ def test_a_track_that_will_not_settle_stops_being_chased():
 
     assert agent.approach.retargets == 2
     assert agent.stats["approach_retargeted"] == 2
+
+
+def test_a_struck_off_candidate_is_recorded_with_the_belief_it_carried():
+    """`unreachable_skip` counts events and names no track, and that ambiguity
+    hides a real failure: on 00848's cross_anchor red plate the episode ends
+    holding the true plate at 0.01 m with p=0.953 and never goes to it, while
+    the counter reads 2 against a `max_identity_rejections` of 2. Whether those
+    are the same track is the whole question, and the aggregate cannot say."""
+    from osg.objects.association import ObjectTrack
+    from osg.objects.ellipsoid import Ellipsoid
+
+    agent = make_agent(target="chair")
+    track = ObjectTrack(
+        id=3, label="chair",
+        ellipsoid=Ellipsoid(center=np.array([2.0, 0.5, 3.0]),
+                            axes=np.array([0.2, 0.2, 0.2]), R=np.eye(3)),
+    )
+    track.presence.log_odds = 3.0  # p ~ 0.95: believed, and struck off anyway
+
+    agent.candidates._log_reject(track, "unreachable")
+
+    (rec,) = agent.candidate_reject_log
+    assert rec["track_id"] == 3 and rec["reason"] == "unreachable"
+    assert rec["p"] > 0.95, "the belief at the moment of the strike is the point"
+    assert rec["rejections"] == 1
+    assert rec["center"][:3] == [2.0, 0.5, 3.0]

@@ -54,6 +54,15 @@ class CandidatePolicy:
         # the agent has already looked for and failed to find is a stale goal --
         # the failure DualMap's ignore list exists to paper over.
         self.goal_commit_log: list = []
+        # Which track was struck off, and why. `unreachable_skip` counts the
+        # event and cannot say WHICH candidate it happened to, so a run where
+        # the agent found the object and then retired it for unreachability is
+        # indistinguishable from one where it retired a stale prior. Measured on
+        # 00848's cross_anchor red plate: the episode ends holding the real
+        # plate at 0.01 m with p=0.953 and never goes to it, `unreachable_skip`
+        # is 2, `max_identity_rejections` is 2, and the aggregate counter cannot
+        # tell you whether those are the same track. Name the decision.
+        self.reject_log: list = []
 
     def check(self) -> None:
         candidates = self.nav.object_layer.candidates(
@@ -87,6 +96,7 @@ class CandidatePolicy:
                 self.nav.stats["unreachable_skip"] = (
                     self.nav.stats.get("unreachable_skip", 0) + 1
                 )
+                self._log_reject(track, "unreachable")
                 if self.nav.cfg.verification.unreachable_is_absorbing:
                     self.nav.object_layer.blacklist(track.id)
                 else:
@@ -138,6 +148,24 @@ class CandidatePolicy:
         self.nav.state = State.GOTO_VERIFY_VIEW
         self.nav._current_path = None
         self.nav._goto_deadline = self.nav.step_count + 80
+
+    def _log_reject(self, track, reason: str) -> None:
+        """One line per candidate struck off, with the belief it was carrying.
+
+        `presence` and `rejections` are the two channels that decide whether the
+        strike is recoverable, so both belong in the record: a track retired at
+        p=0.95 is a different bug from one retired at p=0.10.
+        """
+        centre = self.nav.object_layer.center_of(track)
+        self.reject_log.append({
+            "step": self.nav.step_count,
+            "track_id": int(track.id),
+            "reason": reason,
+            "p": round(float(track.presence.p), 4),
+            "n_obs": int(track.n_obs),
+            "rejections": int(track.identity_rejections) + 1,
+            "center": [round(float(x), 3) for x in centre],
+        })
 
     def _log_goal_commit(self, track) -> None:
         """What the map believed at the moment it committed. A commit to a
