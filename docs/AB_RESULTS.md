@@ -3235,6 +3235,70 @@ untouched by any of this: it stops after 35 steps on a false-positive commit
 n=5 measures nothing on its own; the mechanism counters (148/0 -> 73/67) are
 what this run establishes, not the SR.
 
+### S45 — the down-stair region was placed by what is visible THROUGH the hole
+
+S43 fixed the up-stair range. The down-stair region was still displaced, and for
+a completely different reason: it is not written by the fused detector at all but
+by the vendored inverted-depth trick (`obstacle_map.py:561-573`), which mirrors
+depth about `(max+min)/2`, keeps rays whose true range exceeds 3.5 m, and paints
+whatever lands below the floor plane **at the mirrored range**.
+
+Synthetic geometry -- a floor that stops at a known distance, with the lower
+floor visible 3.8 m away through the hole:
+
+| true lip | painted at (old) |
+|---|---|
+| 1.0 m | 1.70 m |
+| 1.5 m | 1.70 m |
+| 2.0 m | nothing |
+| 2.5 m | nothing |
+| 3.0 m | nothing |
+
+1.70 m is `5.5 - 3.8`: the position was set by the range of the surface seen
+THROUGH the hole, not by where the hole is. Two different lips landed in the same
+cell, and anything at 2 m or beyond was invisible -- the below-ground test can
+only fire in a narrow band of ray angles (true range 3.5-4.1 m, bottom rows of
+the frame). ASCENT's own comment concedes the trick is weak for short flights.
+
+**Replaced with the geometric test.** Every pixel is a ray with a known
+direction; a downward ray must meet the floor plane at a known forward distance;
+if the measured depth runs half a metre past that, the floor is missing along
+that ray, and the lip is where it should have been. Measured on the same
+geometry, the marked region now begins at the lip:
+
+| true lip | marked from | on an unbroken floor | tilted 30 deg down |
+|---|---|---|---|
+| 1.5 m | 1.50 m | nothing | — |
+| 2.0 m | 2.00 m | nothing | 2.00 m |
+| 2.5 m | 2.50 m | nothing | — |
+| 3.0 m | 3.00 m | nothing | — |
+
+One guard is load-bearing: a return at the sensor's far clip is "nothing came
+back", not "the floor is missing". Without it every near-horizon ray in a room
+wider than `max_depth` reads as a drop-off -- the first cut of this change grew
+the down-stair map from ~1.2k cells to ~21k, i.e. the whole room, and the agent
+chased it (`qyAac8rV8Zk:62` regressed from success to a 6 m miss). With the
+guard the map stays at hundreds to a few thousand cells.
+
+**Measured on the strict descent split** (5 episodes; n=5 measures nothing on
+its own, the mechanism counters do):
+
+| | SR | UP / DOWN climb steps | total steps |
+|---|---|---|---|
+| S44 baseline | 1/5 | 148 / 0 | 1249 |
+| + direction preference (S44) | 2/5 | 73 / 67 | 930 |
+| **+ lip fix** | **2/5** | 73 / 53 | **682** |
+
+SR does not move beyond what the direction preference already bought, but the
+split finishes in **45% fewer steps** than the baseline, and the two episodes
+that were merely slow get much faster: `XB4GS9ShBRE:43` 249 -> 123 steps,
+`q3zU7Yy5E5s:96` 392 -> 338. Against S44's own numbers `q3zU7Yy5E5s:96` ends
+farther out (11.00 -> 15.98 m) while taking fewer steps, so this is not a
+uniform win either.
+
+Known limitation, unchanged: a stairwell whose visible return is beyond
+`max_depth` still cannot be detected by this path.
+
 ### S26 — ASCENT's dense approach re-check
 
 S23/S25 closed the mover, the aim point and the commit gate as explanations for

@@ -130,6 +130,10 @@ class ObstacleMap(BaseMap):
         # self._temp_stair_traj = np.array([])
         # self._search_down_stair = False
         self._climb_stair_paused_step = 0
+        # How far a downward ray must run PAST the floor before the floor counts
+        # as missing. Depth noise on a flat floor is centimetres; half a metre
+        # is a step and a half.
+        self._drop_off_margin_m = 0.5
         self._disable_end = False
         # self._look_for_downstair = True
         self._look_for_downstair_flag = False
@@ -558,20 +562,63 @@ class ObstacleMap(BaseMap):
                                 self._down_stair_map[y, x] = 1 
                         self._map[self._down_stair_map == 1] = 1 # 不可通行范围大一点，减少探索
 
-            ## normal to look for downstair
-            ## 反转深度，但发现对短楼梯不好使 
-            if agent_pitch_angle <= 0 and reach_stair == False: # 靠近楼梯的时候也要找，不然楼梯间的时候下楼误以为上楼了
+            ## normal to look for downstair -- the missing-floor test
+            #
+            # DEVIATION from the vendored file, which mirrors depth about
+            # (max+min)/2, keeps rays whose true range exceeds 3.5 m, and paints
+            # whatever lands below the floor plane AT THE MIRRORED RANGE. Its own
+            # comment concedes the trick is weak ("对短楼梯不好使"), and measured
+            # on synthetic geometry it is worse than weak: the painted position
+            # is set by what is visible THROUGH the hole rather than by where
+            # the hole is. A lip at 1.0 m and a lip at 1.5 m were both painted at
+            # 1.70 m -- which is 5.5 minus the 3.8 m range of the lower floor --
+            # and lips at 2.0 m or beyond produced nothing at all, because the
+            # below-ground test can only fire for a narrow band of ray angles.
+            #
+            # What a navigator needs marked is the LIP: the place where the floor
+            # stops. That is computable exactly. Every pixel is a ray with a
+            # known direction; a downward ray must meet the floor plane at a
+            # known forward distance; if the measured depth runs well past that,
+            # the floor is missing along that ray and the lip is where it should
+            # have been.
+            if agent_pitch_angle <= 0 and reach_stair == False:
                 filled_depth_for_stair = fill_small_holes(depth, self._hole_area_thresh)
-                inverted_depth_for_stair = max_depth - filled_depth_for_stair * (max_depth - min_depth)
-                inverted_mask = inverted_depth_for_stair < 2 # inverted_depth_for_stair < 2 # 3 <= true depth value < max_depth 
-                inverted_point_cloud_camera_frame = get_point_cloud(inverted_depth_for_stair, inverted_mask, fx, fy)
-                inverted_point_cloud_episodic_frame = transform_points(tf_camera_to_episodic, inverted_point_cloud_camera_frame)
-                # below_ground_obstacle_cloud = filter_points_by_height_below_ground(inverted_point_cloud_episodic_frame)
-                below_ground_obstacle_cloud_0 = filter_points_by_height_below_ground_0(inverted_point_cloud_episodic_frame)
-                below_ground_xy_points = below_ground_obstacle_cloud_0[:, :2] # below_ground_obstacle_cloud[:, :2]
-                # 获取需要赋值的点的像素坐标
-                below_ground_pixel_points = self._xy_to_px(below_ground_xy_points)
-                self._down_stair_map[below_ground_pixel_points[:, 1], below_ground_pixel_points[:, 0]] = 1
+                measured_fwd = filled_depth_for_stair * (max_depth - min_depth) + min_depth
+
+                vv, uu = np.mgrid[0:depth.shape[0], 0:depth.shape[1]]
+                # `get_point_cloud`'s convention: the depth value is the FORWARD
+                # component, so a direction with forward component 1 scales by it.
+                dirs_cam = np.stack([
+                    np.ones_like(measured_fwd),
+                    -(uu - depth.shape[1] // 2) / fx,
+                    -(vv - depth.shape[0] // 2) / fy,
+                ], axis=-1)
+                R = tf_camera_to_episodic[:3, :3]
+                C = tf_camera_to_episodic[:3, 3]
+                dirs = dirs_cam @ R.T
+                dz = dirs[..., 2]
+                # At least ~9 degrees below horizontal: near the horizon the
+                # floor intersection runs to infinity and the test is meaningless.
+                looking_down = dz < -0.15
+                t_floor = np.where(looking_down, C[2] / np.where(looking_down, -dz, 1.0), np.inf)
+                missing_floor = (
+                    looking_down
+                    & (t_floor < max_depth)
+                    & (measured_fwd > t_floor + self._drop_off_margin_m)
+                    # A return AT the sensor's far clip is "nothing came back",
+                    # not "the floor is missing". Without this every near-horizon
+                    # ray in a room wider than max_depth reads as a drop-off:
+                    # the down-stair map went from ~1.2k cells to ~21k, i.e. the
+                    # whole room, and the agent chased it.
+                    & (measured_fwd < max_depth - 0.05)
+                    & (filled_depth_for_stair > 0.0)
+                )
+                if np.any(missing_floor):
+                    lip = C + t_floor[missing_floor][:, None] * dirs[missing_floor]
+                    lip_px = self._xy_to_px(lip[:, :2])
+                    ok = ((lip_px[:, 0] >= 0) & (lip_px[:, 0] < self._down_stair_map.shape[1])
+                          & (lip_px[:, 1] >= 0) & (lip_px[:, 1] < self._down_stair_map.shape[0]))
+                    self._down_stair_map[lip_px[ok, 1], lip_px[ok, 0]] = 1
                 
             # 不爬楼梯的时候标注
             if search_stair_over == True: # reach_stair == False:

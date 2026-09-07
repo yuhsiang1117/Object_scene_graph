@@ -541,3 +541,76 @@ def test_levelling_never_fights_the_climb_or_the_probe():
     a.climb.reset()
     a.obstacle_map._look_for_downstair_flag = True
     assert a._level_camera(-60.0) is None
+
+
+# ================================================ where the DROP-OFF is marked
+#
+# The vendored code mirrored depth about (max+min)/2 and painted the drop-off at
+# the mirrored range, so its position was set by whatever was visible THROUGH
+# the hole: a lip at 1.0 m and one at 1.5 m both landed at 1.70 m, and a lip at
+# 2 m or beyond produced nothing at all. These pin the replacement, which marks
+# the place the floor should have been.
+
+def _drop_off(edge_m, look_at=None, hole_range=3.8, size=800):
+    """Render the depth image a camera really would see of a floor that stops at
+    `edge_m`, run it through the map, and return the painted down-stair xy."""
+    from osg.core.types import CameraIntrinsics, FrameData
+    from ascentnav.geometry import camera_pitch, normalise_depth, tf_camera_to_episodic
+    from ascentnav.mapping.obstacle_map import ObstacleMap
+    from .conftest import make_camera
+
+    W, H, cam_h = 640, 480, 0.88
+    fx = fy = W / (2 * np.tan(np.radians(79.0) / 2))
+    intr = CameraIntrinsics.from_hfov(79.0, W, H)
+    T = make_camera([0, cam_h, 0], look_at or [1, cam_h, 0])
+    blank = FrameData(frame_id=0, rgb=np.zeros((H, W, 3), np.uint8),
+                      depth=np.zeros((H, W), np.float32), T_wc=T, intrinsics=intr)
+    tf = tf_camera_to_episodic(blank, cam_h)
+
+    v, u = np.meshgrid(np.arange(H) - H // 2, np.arange(W) - W // 2, indexing="ij")
+    dirs = np.stack([np.ones_like(u, float), -u / fx, -v / fy], -1) @ tf[:3, :3].T
+    C, dz = tf[:3, 3], dirs[..., 2]
+    down = dz < -1e-9
+    t = np.where(down, C[2] / np.where(down, -dz, 1.0), 1e9)
+    on_floor = down & ((C + t[..., None] * dirs)[..., 0] <= edge_m) & (t < 5.0)
+    depth = np.full((H, W), 5.0, np.float32)
+    depth[on_floor] = np.clip(t[on_floor], 0.5, 5.0)
+    depth[down & ~on_floor] = hole_range
+
+    f = FrameData(frame_id=0, rgb=np.zeros((H, W, 3), np.uint8), depth=depth,
+                  T_wc=T, intrinsics=intr)
+    om = ObstacleMap(min_height=0.61, max_height=0.88, agent_radius=0.18, size=size)
+    om.update_map(normalise_depth(depth, 0.5, 5.0), tf, 0.5, 5.0, fx, fy,
+                  np.radians(79.0), {}, np.zeros((H, W), np.uint8),
+                  np.zeros((H, W), np.uint8), np.zeros((H, W), np.uint8),
+                  float(np.degrees(-camera_pitch(f))), True, False, 0)
+    px = np.argwhere(om._down_stair_map)
+    return om._px_to_xy(px[:, ::-1].astype(float)) if len(px) else np.zeros((0, 2))
+
+
+@pytest.mark.parametrize("edge", [1.5, 2.0, 2.5, 3.0])
+def test_the_drop_off_is_marked_from_the_lip_outward(edge):
+    xy = _drop_off(edge)
+    assert len(xy) > 0, f"a hole starting at {edge} m was not detected at all"
+    assert xy[:, 0].min() == pytest.approx(edge, abs=0.1), (
+        f"marking starts at {xy[:, 0].min():.2f} m, the floor stops at {edge} m")
+
+
+def test_the_marking_tracks_the_lip_rather_than_the_far_surface():
+    """The signature of the old bug: two different lips painted in the SAME
+    place, because the position came from the range of the lower floor."""
+    near, far = _drop_off(1.5)[:, 0].min(), _drop_off(3.0)[:, 0].min()
+    assert far - near == pytest.approx(1.5, abs=0.2)
+
+
+def test_an_unbroken_floor_marks_nothing():
+    assert len(_drop_off(99.0)) == 0
+
+
+def test_the_test_is_pitch_invariant():
+    """A tilted camera sees a different image of the same hole and must reach
+    the same conclusion -- the old below-ground test did not."""
+    level = _drop_off(2.0)[:, 0].min()
+    tilted = _drop_off(2.0, look_at=[1, 0.88 - np.tan(np.radians(30)), 0])[:, 0].min()
+    assert level == pytest.approx(2.0, abs=0.1)
+    assert tilted == pytest.approx(2.0, abs=0.1)
