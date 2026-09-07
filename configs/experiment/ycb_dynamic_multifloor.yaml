@@ -13,11 +13,18 @@ agent:
   use_habitat_navmesh: true
   navmesh_3d_goals: true
 
+mapping:
+  # The floor stack alone keeps per-storey grids, while this switch also
+  # enables the accumulated stair evidence used to discover and traverse
+  # portals between them.
+  multi_floor: true
+
 floor:
   enabled: true
   estimate_only: false
   per_floor_costmap: true
   cross_floor: true
+  stairs: true
 
 exploration:
   frontier_cost_free_cell: true
