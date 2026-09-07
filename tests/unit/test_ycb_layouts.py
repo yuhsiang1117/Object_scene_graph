@@ -311,12 +311,12 @@ def test_manifest_cache_reuse_and_layout_hash_invalidation(tmp_path, monkeypatch
     cfg = _benchmark_cfg(data_root, layout_root, tmp_path / "cache")
     calls = []
 
-    def fake_manifest(layout, generator_cfg):
+    def fake_manifest(layout, generator_cfg, source_layout=None):
         calls.append(layout.layout_sha256)
         return {
-            "schema_version": 1,
-            "generator_version": 1,
-            "cache_key": manifest_cache_key(layout, generator_cfg),
+            "schema_version": 2,
+            "generator_version": 2,
+            "cache_key": manifest_cache_key(layout, generator_cfg, source_layout),
             "layout": {"scene": layout.scene_name, "layout_id": layout.layout_id},
             "episodes": [],
         }

@@ -1,4 +1,6 @@
 """Floor classification for episodes and trajectories (osg.eval.floors)."""
+import types
+
 import pytest
 
 from osg.eval.floors import (
@@ -8,8 +10,9 @@ from osg.eval.floors import (
     count_floor_changes,
     episode_floor_fields,
     goal_view_heights,
+    runtime_floor_fields,
 )
-from osg.eval.metrics import per_floor_class
+from osg.eval.metrics import per_floor_class, per_relocation
 
 
 # --------------------------------------------------------------- fake episode
@@ -121,6 +124,34 @@ def test_episode_floor_fields_without_trajectory():
     assert fields["floor_changes"] == 0
 
 
+def test_runtime_fields_use_stable_keys_and_report_downward_relocation():
+    ep = _Episode(2.8, [_Goal([0.0])])
+    stack = types.SimpleNamespace(stair_edges=[object()])
+    floors = types.SimpleNamespace(levels={4: 0.0, 9: 2.8}, stack=stack)
+    exploration = types.SimpleNamespace(selected_search_floor=4)
+    agent = types.SimpleNamespace(
+        floors=floors, exploration=exploration,
+        stats={"floor_switch_attempts": 1},
+    )
+    authored = {"relocation": {
+        "origin_position": [0.0, 2.8, 0.0],
+        "destination_position": [0.0, 0.0, 0.0],
+    }}
+
+    fields = runtime_floor_fields(ep, [2.8, 1.4, 0.0], agent, authored)
+
+    assert fields == {
+        "start_floor": 9,
+        "goal_floor": 4,
+        "prior_floor": 9,
+        "relocation_direction": "downward",
+        "selected_search_floor": 4,
+        "floor_switches": 1,
+        "climb_attempts": 1,
+        "goal_floor_reached": True,
+    }
+
+
 # ------------------------------------------------------------------- metrics
 
 
@@ -138,3 +169,17 @@ def test_per_floor_class_splits_sr():
 
 def test_per_floor_class_defaults_missing_field_to_unknown():
     assert "unknown" in per_floor_class([{"success": 1.0, "spl": 1.0}])
+
+
+def test_relocation_metrics_include_cross_floor_and_direction_groups():
+    results = [
+        {"relocation_direction": "same_floor", "success": 1.0, "spl": 0.5},
+        {"relocation_direction": "upward", "success": 1.0, "spl": 0.25},
+        {"relocation_direction": "downward", "success": 0.0, "spl": 0.0},
+    ]
+    out = per_relocation(results)
+    assert out["same_floor"]["num_episodes"] == 1
+    assert out["cross_floor"]["num_episodes"] == 2
+    assert out["cross_floor"]["success_rate"] == 0.5
+    assert out["upward"]["success_rate"] == 1.0
+    assert out["downward"]["success_rate"] == 0.0

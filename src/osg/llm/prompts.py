@@ -119,3 +119,61 @@ ABSENCE_SYSTEM = (
 ABSENCE_USER = """Look only inside the red box. First list what you see there, then for each of
 these categories say whether it is present inside the red box: {categories}.
 Respond as JSON: {{"visible": "<short list of what you see>", "present": [<categories that ARE there>]}}"""
+
+
+# ASCENT's forced-choice prompts.  These intentionally coexist with OSG's
+# dynamic-scene absence prompts above: they serve different decisions.
+ASCENT_RANK_SYSTEM = (
+    "You are an AI assistant with advanced spatial reasoning capabilities. "
+    "Your task is to choose the optimal option to find the target object."
+)
+ASCENT_RANK_EXAMPLE = """Example Input:
+{
+    "Goal": "toilet",
+    "Prior Probabilities between Room Type and Goal Object": [
+        "Bathroom": 90.0%,
+        "Bedroom": 10.0%
+    ],
+    "Area Descriptions": [
+        "Area 1": "a bathroom containing objects: shower, towel",
+        "Area 2": "a bedroom containing objects: bed, nightstand",
+        "Area 3": "a garage containing objects: car"
+    ]
+}
+Example Response:
+{"Index": "1", "Reason": "Shower and towel in Bathroom indicate toilet location, with high probability (90.0%)."}"""
+ASCENT_RANK_USER = """You need to select the optimal area based on prior probabilistic data and environmental context.
+You need to answer the question in the following JSON format:
+{example}
+Now answer question:
+Input:
+{{
+    "Goal": "{target}",
+    "Prior Probabilities between Room Type and Goal Object": [
+{priors}
+    ],
+    "Area Descriptions": [
+{areas}
+    ]
+}}"""
+
+FLOOR_DECISION_SYSTEM = ASCENT_RANK_SYSTEM
+FLOOR_DECISION_EXAMPLE = """Example Input: {"Goal": "bed", "Floor Descriptions": ["Floor 1", "Floor 2"]}
+Example Response: {"Index": "2", "Reason": "The bedroom is most likely upstairs."}"""
+FLOOR_DECISION_USER = """You need to select the optimal floor based on prior probabilistic data and environmental context.
+You need to answer the question in the following JSON format:
+{example}
+Now answer question:
+Input:
+{{
+    "Goal": "{target}",
+    "Prior Probabilities between Floor and Goal Object": [
+{floor_priors}
+    ],
+    "Prior Probabilities between Room Type and Goal Object": [
+{room_priors}
+    ],
+    "Floor Descriptions": [
+{floors}
+    ]
+}}"""

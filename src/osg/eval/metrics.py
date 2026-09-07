@@ -48,6 +48,21 @@ def per_floor_class(episode_results: List[dict]) -> Dict[str, Dict[str, float]]:
     return {fc: aggregate(rs) for fc, rs in sorted(by_fc.items())}
 
 
+def per_relocation(episode_results: List[dict]) -> Dict[str, Dict[str, float]]:
+    """Overlapping SR/SPL groups for dynamic relocation across storeys."""
+    relocated = [r for r in episode_results if r.get("relocation_direction")]
+    same = [r for r in relocated if r.get("relocation_direction") == "same_floor"]
+    upward = [r for r in relocated if r.get("relocation_direction") == "upward"]
+    downward = [r for r in relocated if r.get("relocation_direction") == "downward"]
+    groups = {
+        "same_floor": same,
+        "cross_floor": upward + downward,
+        "upward": upward,
+        "downward": downward,
+    }
+    return {name: aggregate(rows) for name, rows in groups.items() if rows}
+
+
 def per_scene(episode_results: List[dict]) -> Dict[str, Dict[str, float]]:
     by_scene: Dict[str, List[dict]] = {}
     for r in episode_results:

@@ -44,15 +44,21 @@ class _Planner:
 
 
 class _Node:
-    def __init__(self, cid, label, center, top_h=0.75, area=0.6):
+    def __init__(self, cid, label, center, top_h=0.75, area=0.6, floor=0):
         self.id, self.label = cid, label
         self.center = np.asarray(center, float)
         self.top_h, self.area_m2 = top_h, area
+        self.floor = floor
+
+    @property
+    def floor_id(self):
+        return self.floor
 
 
 class _Graph:
     def __init__(self, nodes):
         self.containers = {n.id: n for n in nodes}
+        self.floors = {}
 
 
 # ------------------------------------------------------------------- priors
@@ -169,6 +175,23 @@ def test_surfaces_that_cannot_hold_the_target_are_not_offered_at_all():
                     _Node(2, "table", [1.0, 0.8, 0.0])])
     ids = {c.ref_id for c in build_container_candidates(graph, "bowl", InspectionLog())}
     assert ids == {2}
+
+
+def test_container_candidates_carry_stable_floor_keys_and_use_relative_height():
+    from types import SimpleNamespace
+
+    graph = _Graph([
+        _Node(1, "table", [0.0, 0.75, 0.0], floor=4),
+        # Its world top is 3.45 m, but it is an ordinary 0.75 m table on the
+        # upper floor and must not be rejected as a head-height shelf.
+        _Node(2, "table", [0.0, 3.45, 0.0], top_h=3.45, floor=9),
+    ])
+    graph.floors = {
+        4: SimpleNamespace(height_y=0.0),
+        9: SimpleNamespace(height_y=2.7),
+    }
+    candidates = build_container_candidates(graph, "bowl", InspectionLog())
+    assert {candidate.floor_key for candidate in candidates} == {4, 9}
 
 
 def test_the_far_field_stays_ordered_by_distance():

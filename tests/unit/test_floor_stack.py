@@ -14,6 +14,7 @@ import pytest
 
 from osg.mapping.costmap import FREE, OCCUPIED, UNKNOWN, Costmap2D
 from osg.mapping.floor_stack import FloorStack
+from osg.mapping.value_map import ValueMap2D
 from osg.mapping.frontier import Frontier, FrontierExtractor
 from osg.mapping.room_seg import RoomIdCounter, VoronoiRoomSegmenter
 from osg.planning.voronoi_planner import HybridVoronoiPlanner
@@ -44,6 +45,16 @@ def test_existing_consumers_accept_a_layer_unmodified():
 def test_floor_zero_exists_immediately():
     st = FloorStack()
     assert len(st) == 1 and st.current_id == 0
+
+
+def test_optional_value_maps_are_scoped_to_each_floor():
+    st = FloorStack(value_map_factory=lambda cm: ValueMap2D(cm))
+    lower = st.current.value_map
+    st.set_current(1)
+    upper = st.current.value_map
+    assert lower is not None and upper is not None and lower is not upper
+    lower.value[2, 3] = 0.9
+    assert upper.value[2, 3] == 0.0
 
 
 # ------------------------------------------------------------- layer isolation
@@ -259,3 +270,31 @@ def test_a_switch_is_a_decision_the_caller_applies():
         target="chair", reachable_fn=None,
     ) is None
     assert policy.pursuing is False
+
+
+def test_a_directed_switch_uses_the_portal_toward_the_requested_stable_floor():
+    """A cross-floor search posterior names a stable key, not merely "leave".
+    With openings in both directions, that key must determine up versus down."""
+    policy = _policy(enabled=True, estimate_only=False, per_floor_costmap=True,
+                     cross_floor=True)
+    policy.stack._layers = {}
+    for key, height in ((4, 0.0), (9, 2.8), (12, 5.6)):
+        policy.stack.set_height(key, height)
+    policy.stack.current_id = 9
+    policy.estimator._levels = {4: 0.0, 9: 2.8, 12: 5.6}
+    policy.estimator.current = 9
+    cm = policy.costmap
+    cm.grid[:] = 0
+    cm.height[100:200, 100:200] = 2.8
+    cm.height[120:140, 120:140] = 5.6
+    cm.height[160:180, 160:180] = 0.0
+
+    goal = policy.try_switch(
+        _frame_at(3.68), step=1, best_path_cost=1.0,
+        scene_graph=types.SimpleNamespace(objects=[], rooms={}),
+        target="chair", reachable_fn=None, target_floor=4,
+    )
+
+    assert goal is not None
+    assert goal.target_y == pytest.approx(0.0, abs=0.05)
+    assert policy.stats["directed_floor_switch_attempts"] == 1

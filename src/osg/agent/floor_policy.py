@@ -32,6 +32,7 @@ from ..mapping.floor_stack import FloorStack
 from ..mapping.floors import FloorEstimator
 from ..mapping.portals import FloorSwitchPolicy, find_portals
 from ..mapping.stairs import apply_stair_mask, detect_stairs, stair_tracks
+from ..planning.voronoi_planner import HybridVoronoiPlanner
 
 
 @dataclass
@@ -51,7 +52,7 @@ class PortalGoal:
 class FloorPolicy:
     """Owns the per-storey maps, the height estimate, and the switch decision."""
 
-    def __init__(self, cfg, stats: dict) -> None:
+    def __init__(self, cfg, stats: dict, value_map_factory=None) -> None:
         self.cfg = cfg
         self.stats = stats
         fcfg = cfg.floor
@@ -67,6 +68,12 @@ class FloorPolicy:
             # stair detector will actually read it. Cross-floor exploration
             # needs it to see portals, so it implies track_height too.
             track_height=self._stairs_on or self._cross_floor_on,
+            planner_factory=lambda: HybridVoronoiPlanner(
+                collision_m=cfg.agent.agent_radius + cfg.mapping.inflate_margin_m,
+                goal_near_m=cfg.exploration.voronoi_goal_near_m,
+                inflate_radius_m=cfg.agent.agent_radius + cfg.mapping.inflate_margin_m,
+            ),
+            value_map_factory=value_map_factory,
         )
         # Which storey the agent is on (docs/MULTI_FLOOR.md). Constructed
         # unconditionally so the estimate is always logged; whether it FEEDS
@@ -125,6 +132,10 @@ class FloorPolicy:
     def layer(self):
         return self.stack.current
 
+    def current(self):
+        """Compatibility accessor used by the ASCENT policy facade."""
+        return self.stack.current
+
     @property
     def current_id(self) -> int:
         return self.stack.current_id
@@ -171,6 +182,11 @@ class FloorPolicy:
             float(frame.camera_position[1]), step,
             xy=frame.camera_position[list(PLANE)],
         )
+        # Key is persistent; order is derived from these heights on demand.
+        # Discovering a basement therefore changes order without renumbering
+        # any track, room, cache entry, or portal edge.
+        for key, height in self.estimator.levels.items():
+            self.stack.set_height(key, height)
         if floor_id != prev_floor:
             self.end_pursuit("arrived")
         if floor_id != prev_floor or not self.floor_log:
@@ -191,6 +207,7 @@ class FloorPolicy:
                     floor_id, step=step,
                     agent_xy=frame.camera_position[list(PLANE)],
                 )
+        self.stack.current.steps_on_floor += 1
         # How far the estimated floor height ever strays from the value the old
         # code latched on frame 1. On a single storey this should be ~0; larger
         # means the obstacle band is silently shifting and perturbing
@@ -265,7 +282,8 @@ class FloorPolicy:
         self.stats[f"portal_end_{reason}"] = self.stats.get(f"portal_end_{reason}", 0) + 1
 
     def try_switch(
-        self, frame, step: int, best_path_cost, scene_graph, target: str, reachable_fn
+        self, frame, step: int, best_path_cost, scene_graph, target: str, reachable_fn,
+        target_floor: Optional[int] = None,
     ) -> Optional[PortalGoal]:
         """Head for another storey when this one has nothing near left.
 
@@ -275,10 +293,13 @@ class FloorPolicy:
         """
         if self.switch_policy is None:
             return None
+        if target_floor is not None and int(target_floor) == self.stack.current_id:
+            return None
         evidence, n_objects = floor_target_evidence(
             scene_graph, self.stack.current_id, target
         )
-        if not self.switch_policy.may_switch(
+        directed = target_floor is not None
+        if not directed and not self.switch_policy.may_switch(
             step, best_path_cost, evidence=evidence, n_objects=n_objects,
             steps_on_floor=step - self.stack.current.first_step,
         ):
@@ -301,13 +322,32 @@ class FloorPolicy:
         # 4-5 transitions in some episodes, paying the travel cost each time.
         levels = self.estimator.levels
 
+        if directed:
+            target_layer = self.stack.by_key(int(target_floor))
+            if target_layer is None:
+                return None
+            delta = float(target_layer.floor_y - floor_y)
+            if abs(delta) <= self.cfg.floor.level_tol_m:
+                return None
+            direction = 1.0 if delta > 0.0 else -1.0
+            portals = [p for p in portals if float(p.delta_y) * direction > 0.0]
+            if not portals:
+                return None
+
         def unvisited(p):
             return not any(
                 abs(h - p.target_y) <= self.cfg.floor.level_tol_m for h in levels.values()
             )
 
-        portals.sort(key=lambda p: (not unvisited(p),
-                                    float(np.linalg.norm(p.centroid_xy - agent_xy))))
+        if directed:
+            target_y = float(self.stack.by_key(int(target_floor)).floor_y)
+            portals.sort(key=lambda p: (
+                abs(float(p.target_y) - target_y),
+                float(np.linalg.norm(p.centroid_xy - agent_xy)),
+            ))
+        else:
+            portals.sort(key=lambda p: (not unvisited(p),
+                                        float(np.linalg.norm(p.centroid_xy - agent_xy))))
         portal = portals[0]
         if reachable_fn is not None and not reachable_fn(
             portal.centroid_xy, portal.target_y
@@ -324,6 +364,10 @@ class FloorPolicy:
         self._portal_step = step
         self.switch_policy.note_switch(step)
         self.stats["floor_switch_attempts"] = self.stats.get("floor_switch_attempts", 0) + 1
+        if directed:
+            self.stats["directed_floor_switch_attempts"] = (
+                self.stats.get("directed_floor_switch_attempts", 0) + 1
+            )
         self.portal_log.append((
             step,
             [round(float(x), 2) for x in portal.centroid_xy],
@@ -358,4 +402,3 @@ class FloorPolicy:
         return self.estimator.height_of(
             self.estimator.floor_of_height(float(center[1]))
         )
-

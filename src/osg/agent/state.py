@@ -21,6 +21,7 @@ from enum import Enum
 
 STOP_ACTION = "stop"
 TURN_ACTION = "turn_left"
+FORWARD_ACTION = "move_forward"
 
 
 class State(Enum):
@@ -30,4 +31,5 @@ class State(Enum):
     GOTO_VERIFY_VIEW = "goto_verify_view"
     VERIFYING = "verifying"
     APPROACH = "approach"
+    CLIMB = "climb"
     DONE = "done"

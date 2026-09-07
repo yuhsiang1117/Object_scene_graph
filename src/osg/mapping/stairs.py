@@ -30,7 +30,9 @@ from typing import List, Optional, Sequence, Tuple
 import numpy as np
 
 from ..core.labels import normalize_label
-from .costmap import FREE, PLANE, Costmap2D, block_min
+from .costmap import FREE, HEIGHT_AXIS, PLANE, Costmap2D, block_min, grow_aligned
+from ..core.geometry import backproject
+from ..core.types import Detection, FrameData
 
 STAIR_LABELS = ("stairs", "staircase", "stair")
 
@@ -187,3 +189,136 @@ def _expand_to_fine(coarse_rc: np.ndarray, block: int, shape: Tuple[int, int]) -
     h, w = shape
     keep = (fine[:, 0] >= 0) & (fine[:, 0] < h) & (fine[:, 1] >= 0) & (fine[:, 1] < w)
     return fine[keep]
+
+
+@dataclass
+class StairDetection:
+    kind: str
+    centroid_xy: np.ndarray
+    cells: np.ndarray
+    n_cells: int
+    support: int
+
+
+class StairDetector:
+    """Accumulated per-floor up/down stair evidence used by ASCENT policies."""
+
+    def __init__(
+        self,
+        resolution_m: float = 0.05,
+        min_hits: int = 3,
+        min_cells: int = 25,
+        max_range_m: float = 5.0,
+        up_mode: str = "detector",
+        close_iters: int = 2,
+        disable_margin_m: float = 0.5,
+        **_kwargs,
+    ) -> None:
+        self.resolution_m = float(resolution_m)
+        self.min_hits = int(min_hits)
+        self.min_cells = int(min_cells)
+        self.max_range_m = float(max_range_m)
+        self.up_mode = str(up_mode)
+        self.close_iters = int(close_iters)
+        self.disable_margin_m = float(disable_margin_m)
+
+    @staticmethod
+    def _ensure_grids(layer) -> None:
+        if layer.up_stair_hits is not None:
+            return
+        shape = layer.costmap.grid.shape
+        layer.up_stair_hits = np.zeros(shape, dtype=np.int16)
+        layer.down_stair_hits = np.zeros(shape, dtype=np.int16)
+        layer.disabled_stair = np.zeros(shape, dtype=bool)
+
+        def on_grow(h, w, off_r, off_c, current=layer):
+            current.up_stair_hits = grow_aligned(
+                current.up_stair_hits, h, w, off_r, off_c
+            )
+            current.down_stair_hits = grow_aligned(
+                current.down_stair_hits, h, w, off_r, off_c
+            )
+            current.disabled_stair = grow_aligned(
+                current.disabled_stair, h, w, off_r, off_c, fill=False
+            )
+
+        layer.costmap.add_grow_listener(on_grow)
+
+    @staticmethod
+    def _stamp(hits: np.ndarray, costmap: Costmap2D, pts: np.ndarray) -> None:
+        if pts.shape[0] == 0:
+            return
+        rc = costmap.world_to_grid(pts[:, list(PLANE)])
+        h, w = hits.shape
+        ok = (rc[:, 0] >= 0) & (rc[:, 0] < h) & (rc[:, 1] >= 0) & (rc[:, 1] < w)
+        rc = np.unique(rc[ok], axis=0)
+        if len(rc):
+            hits[rc[:, 0], rc[:, 1]] += 1
+
+    def accumulate(
+        self,
+        frame: FrameData,
+        layer,
+        dets: Optional[List[Detection]] = None,
+        seg_stair_mask: Optional[np.ndarray] = None,
+    ) -> None:
+        self._ensure_grids(layer)
+        pts = backproject(
+            frame.depth, frame.intrinsics, frame.T_wc,
+            stride=2, max_depth=self.max_range_m,
+        )
+        if len(pts):
+            drop = layer.floor_y - pts[:, HEIGHT_AXIS]
+            self._stamp(layer.down_stair_hits, layer.costmap, pts[(drop > 0.35) & (drop < 4.0)])
+        masks = []
+        if self.up_mode == "rednet" and seg_stair_mask is not None:
+            masks = [seg_stair_mask]
+        else:
+            masks = [d.mask for d in (dets or []) if normalize_label(d.label) in STAIR_LABELS]
+        for mask in masks:
+            up = backproject(
+                frame.depth, frame.intrinsics, frame.T_wc,
+                mask=mask, stride=2, max_depth=self.max_range_m,
+            )
+            self._stamp(layer.up_stair_hits, layer.costmap, up)
+
+    def disable(self, layer, cells: np.ndarray) -> None:
+        from scipy import ndimage
+
+        self._ensure_grids(layer)
+        if not len(cells):
+            return
+        mask = np.zeros(layer.disabled_stair.shape, dtype=bool)
+        mask[cells[:, 0], cells[:, 1]] = True
+        radius = max(1, int(round(self.disable_margin_m / self.resolution_m)))
+        mask = ndimage.binary_dilation(mask, structure=np.ones((3, 3)), iterations=radius)
+        layer.disabled_stair |= mask
+        layer.up_stair_hits[mask] = 0
+        layer.down_stair_hits[mask] = 0
+
+    def extract(self, layer) -> List[StairDetection]:
+        from scipy import ndimage
+
+        out = []
+        for kind, hits in (("up", layer.up_stair_hits), ("down", layer.down_stair_hits)):
+            if hits is None:
+                continue
+            mask = hits >= self.min_hits
+            if layer.disabled_stair is not None:
+                mask &= ~layer.disabled_stair
+            labels, count = ndimage.label(mask, structure=np.ones((3, 3)))
+            free = layer.costmap.grid == FREE
+            if not free.any():
+                continue
+            _, (fr, fc) = ndimage.distance_transform_edt(~free, return_indices=True)
+            for label in range(1, count + 1):
+                cells = np.argwhere(labels == label)
+                if len(cells) < self.min_cells:
+                    continue
+                r, c = np.rint(cells.mean(axis=0)).astype(int)
+                r, c = int(fr[r, c]), int(fc[r, c])
+                out.append(StairDetection(
+                    kind, layer.costmap.grid_to_world(np.array([r, c], float)),
+                    cells, len(cells), int(hits[cells[:, 0], cells[:, 1]].sum()),
+                ))
+        return out

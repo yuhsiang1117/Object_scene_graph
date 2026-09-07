@@ -448,6 +448,7 @@ def discover_authored_layouts(
     layout_types: Sequence[str],
     layout_indices: Sequence[int],
     target_labels: Mapping[str, str],
+    allow_incomplete: bool = False,
 ) -> LayoutDiscovery:
     if not layout_root.is_dir():
         raise YCBLayoutError(f"layout root does not exist: {layout_root}")
@@ -468,7 +469,7 @@ def discover_authored_layouts(
         static_path = scene_root / "static_scene_config.json"
         if not static_path.is_file():
             message = "missing static_scene_config.json"
-            if wildcard:
+            if wildcard or allow_incomplete:
                 skipped.append({"scene": scene_name, "reason": message})
                 continue
             raise YCBLayoutError(f"{scene_name}: {message}")
@@ -480,7 +481,7 @@ def discover_authored_layouts(
                 target_labels=target_labels,
             )
         except YCBLayoutError as exc:
-            if wildcard:
+            if wildcard or allow_incomplete:
                 skipped.append({"scene": scene_name, "reason": str(exc)})
                 continue
             raise
@@ -498,7 +499,7 @@ def discover_authored_layouts(
                 )
                 if dynamic_path is None:
                     message = f"missing {layout_type} layout index {layout_index}"
-                    if wildcard:
+                    if wildcard or allow_incomplete:
                         skipped.append({"scene": scene_name, "reason": message})
                         continue
                     raise YCBLayoutError(f"{scene_name}: {message}")

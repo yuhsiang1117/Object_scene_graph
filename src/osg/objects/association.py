@@ -95,6 +95,12 @@ class ObjectTrack:
     # counts only "I went to look, and it was gone" -- the event that refutes
     # the hypothesis the search prior is built on.
     absence_arrivals: int = 0
+    # Persistent floor identity.  Keys never change when height order changes.
+    floor_key: int = 0
+    suppressed_until: int = 0
+    out_of_range: bool = False
+    disabled: bool = False
+    points_w: Optional[np.ndarray] = None
     linked_ids: set = field(default_factory=set)
     refined_at_obs: int = 0
     first_cam_xy: Optional[np.ndarray] = None  # ground-plane pose of the first sighting

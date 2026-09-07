@@ -5,7 +5,7 @@ component's centers.
 """
 from __future__ import annotations
 
-from typing import Dict, List, Optional
+from typing import Dict, List, Optional, Tuple
 
 import numpy as np
 
@@ -49,15 +49,17 @@ def relink(
     neither observation can ever contradict. Requiring co-observation separates
     "two halves of a sofa" from "an object and its ghost".
     """
-    by_label: Dict[str, List[ObjectTrack]] = {}
+    by_label: Dict[Tuple[str, int], List[ObjectTrack]] = {}
     for tr in tracks:
         if not tr.blacklisted:
-            by_label.setdefault(tr.label, []).append(tr)
+            by_label.setdefault(
+                (tr.label, int(getattr(tr, "floor_key", 0))), []
+            ).append(tr)
 
     for tr in tracks:
         tr.linked_ids = set()
 
-    for label, group in by_label.items():
+    for _label_floor, group in by_label.items():
         if len(group) < 2:
             continue
         uf = _UnionFind([t.id for t in group])
@@ -87,6 +89,9 @@ def object_center(track: ObjectTrack, all_tracks: Dict[int, ObjectTrack]) -> np.
     centers = [track.ellipsoid.center]
     for lid in track.linked_ids:
         other = all_tracks.get(lid)
-        if other is not None and not other.blacklisted:
+        if (
+            other is not None and not other.blacklisted
+            and getattr(other, "floor_key", 0) == getattr(track, "floor_key", 0)
+        ):
             centers.append(other.ellipsoid.center)
     return np.mean(np.stack(centers), axis=0)

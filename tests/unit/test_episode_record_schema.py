@@ -40,7 +40,9 @@ EXPECTED_KEYS = {
     "presence_events", "prior_map", "scene", "search_log_events", "spl",
     "stair_tracks", "start_y", "state_log", "steps", "success", "target",
     "target_obj_xy", "target_tracks", "traj_y_range", "verify_calls",
-    "verify_errors", "wall_time_s",
+    "verify_errors", "wall_time_s", "start_floor", "goal_floor", "prior_floor",
+    "relocation_direction", "selected_search_floor", "floor_switches",
+    "climb_attempts", "goal_floor_reached",
 }
 
 # The four blocks spliced in with `**`, and the analyses that would go quiet
@@ -49,6 +51,9 @@ CONTRIBUTED_BY_HELPERS = {
     "target_obj_xy", "cand_best_cam_xy", "cand_best_score", "cand_n_obs",
     "floor_class", "start_y", "final_y", "traj_y_range", "floor_changes",
     "goal_y_span", "n_stair_tracks", "stair_tracks",
+    "start_floor", "goal_floor", "prior_floor", "relocation_direction",
+    "selected_search_floor", "floor_switches", "climb_attempts",
+    "goal_floor_reached",
 }
 
 
@@ -90,15 +95,16 @@ def _literal_keys() -> set:
 def _helper_keys() -> set:
     """The `**` blocks, actually called. Each takes stub inputs happily: the
     point is the key set, not the values."""
-    from osg.eval.floors import episode_floor_fields
+    from osg.eval.floors import episode_floor_fields, runtime_floor_fields
     from osg.eval.instruments import GroundTruthVisibility
     from osg.eval.record import stair_track_fields, target_track_fields
     from osg.objects.object_layer import ObjectLayer
 
-    agent = types.SimpleNamespace(object_layer=ObjectLayer())
+    agent = types.SimpleNamespace(object_layer=ObjectLayer(), floors=None, stats={})
     return (
         set(target_track_fields(agent))
         | set(episode_floor_fields(types.SimpleNamespace(), [0.0]))
+        | set(runtime_floor_fields(types.SimpleNamespace(), [0.0], agent, {}))
         | set(stair_track_fields(agent))
         | set(GroundTruthVisibility(None).fields())
     )
@@ -131,15 +137,16 @@ def test_every_spliced_value_survives_json_dumps():
     import json
     import types
 
-    from osg.eval.floors import episode_floor_fields
+    from osg.eval.floors import episode_floor_fields, runtime_floor_fields
     from osg.eval.instruments import GroundTruthVisibility
     from osg.eval.record import stair_track_fields, target_track_fields
     from osg.objects.object_layer import ObjectLayer
 
-    agent = types.SimpleNamespace(object_layer=ObjectLayer())
+    agent = types.SimpleNamespace(object_layer=ObjectLayer(), floors=None, stats={})
     for block in (
         target_track_fields(agent),
         episode_floor_fields(types.SimpleNamespace(), [0.0]),
+        runtime_floor_fields(types.SimpleNamespace(), [0.0], agent, {}),
         stair_track_fields(agent),
         GroundTruthVisibility(None).fields(),
     ):

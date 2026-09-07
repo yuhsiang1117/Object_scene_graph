@@ -84,6 +84,8 @@ class CandidatePolicy:
             max_identity_rejections=int(self.nav.cfg.scene_graph.presence.max_identity_rejections),
             target_bypasses_bbox=self.nav.cfg.verification.target_bypasses_bbox_gate,
             rank_by_presence=self.nav.cfg.verification.rank_candidates_by_presence,
+            floor_key=self.nav.floors.current_id,
+            step=self.nav.step_count,
         )
         if not candidates:
             return
@@ -149,7 +151,9 @@ class CandidatePolicy:
                     self.nav.stats["verify_reject"] = self.nav.stats.get("verify_reject", 0) + 1
                     return
             self._log_goal_commit(track)
-            self.nav.approach.start(obj_xy, floor_y=self.nav.floors.goal_floor_y(obj_center))
+            self.nav._start_approach(
+                obj_xy, floor_y=self.nav.floors.goal_floor_y(obj_center)
+            )
             return
 
         # Always pre-position at a viewpoint from which the object is visible
@@ -284,7 +288,9 @@ class CandidatePolicy:
                     )
                 if accepted:
                     obj_xy = self.nav.object_layer.center_of(track)[list(PLANE)]
-                    self.nav.approach.start(obj_xy, agent_xy=frame.camera_position[list(PLANE)])
+                    self.nav._start_approach(
+                        obj_xy, agent_xy=frame.camera_position[list(PLANE)]
+                    )
                     return self.nav.approach.step(frame)
                 self.nav.object_layer.blacklist(track.id)
                 self.nav._candidate_id = None
@@ -330,7 +336,9 @@ class CandidatePolicy:
             )
         if accepted:
             obj_xy = self.nav.object_layer.center_of(track)[list(PLANE)]
-            self.nav.approach.start(obj_xy, agent_xy=frame.camera_position[list(PLANE)])
+            self.nav._start_approach(
+                obj_xy, agent_xy=frame.camera_position[list(PLANE)]
+            )
             return self.nav.approach.step(frame)
         self.nav.object_layer.blacklist(track.id)
         self.nav._candidate_id = None

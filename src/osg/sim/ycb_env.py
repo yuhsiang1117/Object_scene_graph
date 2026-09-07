@@ -25,8 +25,8 @@ from .ycb_layouts import (
 # colliding semantic id rather than a tabletop object. See _viewpoints_for_object.
 SEMANTIC_COLLISION_FRAC = 0.2
 
-MANIFEST_SCHEMA_VERSION = 1
-MANIFEST_GENERATOR_VERSION = 1
+MANIFEST_SCHEMA_VERSION = 2
+MANIFEST_GENERATOR_VERSION = 2
 
 
 @dataclass(frozen=True)
@@ -47,7 +47,9 @@ def _plain(value: Any) -> Any:
     return value
 
 
-def manifest_cache_payload(layout: AuthoredLayout, cfg) -> Dict[str, Any]:
+def manifest_cache_payload(
+    layout: AuthoredLayout, cfg, source_layout: Optional[AuthoredLayout] = None
+) -> Dict[str, Any]:
     return {
         "schema_version": MANIFEST_SCHEMA_VERSION,
         "generator_version": MANIFEST_GENERATOR_VERSION,
@@ -64,6 +66,24 @@ def manifest_cache_payload(layout: AuthoredLayout, cfg) -> Dict[str, Any]:
         "viewpoint_min_visible_pixels": int(cfg.ycb.viewpoint_min_visible_pixels),
         "start_min_geodesic_m": float(cfg.ycb.start_min_geodesic_m),
         "start_sample_attempts": int(cfg.ycb.start_sample_attempts),
+        "cross_floor_relocations_only": bool(
+            getattr(cfg.ycb, "cross_floor_relocations_only", False)
+        ),
+        "relocation_directions": [
+            str(x) for x in getattr(
+                cfg.ycb, "relocation_directions", ["upward", "downward"]
+            )
+        ],
+        "start_on_prior_floor": bool(getattr(cfg.ycb, "start_on_prior_floor", False)),
+        "relocation_floor_tolerance_m": float(
+            getattr(cfg.ycb, "relocation_floor_tolerance_m", 0.5)
+        ),
+        "skip_incomplete_layouts": bool(
+            getattr(cfg.ycb, "skip_incomplete_layouts", False)
+        ),
+        "source_layout_sha256": (
+            str(source_layout.layout_sha256) if source_layout is not None else None
+        ),
         "camera": {
             "width": int(cfg.eval.rgb_width),
             "height": int(cfg.eval.rgb_height),
@@ -74,15 +94,20 @@ def manifest_cache_payload(layout: AuthoredLayout, cfg) -> Dict[str, Any]:
     }
 
 
-def manifest_cache_key(layout: AuthoredLayout, cfg) -> str:
+def manifest_cache_key(
+    layout: AuthoredLayout, cfg, source_layout: Optional[AuthoredLayout] = None
+) -> str:
     encoded = json.dumps(
-        manifest_cache_payload(layout, cfg), sort_keys=True, separators=(",", ":")
+        manifest_cache_payload(layout, cfg, source_layout),
+        sort_keys=True, separators=(",", ":")
     ).encode("utf-8")
     return hashlib.sha256(encoded).hexdigest()
 
 
-def manifest_cache_path(layout: AuthoredLayout, cfg) -> Path:
-    key = manifest_cache_key(layout, cfg)
+def manifest_cache_path(
+    layout: AuthoredLayout, cfg, source_layout: Optional[AuthoredLayout] = None
+) -> Path:
+    key = manifest_cache_key(layout, cfg, source_layout)
     return (
         Path(str(cfg.ycb.manifest_cache_dir))
         / layout.scene_name
@@ -364,7 +389,8 @@ def _viewpoints_for_object(simulator: _ManifestSimulator, authored, cfg) -> List
 
 
 def _starts_for_object(
-    pathfinder, viewpoints: Sequence[Mapping[str, Any]], authored, cfg
+    pathfinder, viewpoints: Sequence[Mapping[str, Any]], authored, cfg,
+    required_floor_y: Optional[float] = None,
 ) -> List[Dict[str, Any]]:
     goals = [item["position"] for item in viewpoints]
     starts: List[Dict[str, Any]] = []
@@ -375,6 +401,10 @@ def _starts_for_object(
         for _ in range(int(cfg.ycb.start_sample_attempts)):
             point = _finite_point(pathfinder.get_random_navigable_point())
             if point is None:
+                continue
+            if required_floor_y is not None and abs(
+                float(point[1]) - float(required_floor_y)
+            ) > float(getattr(cfg.ycb, "relocation_floor_tolerance_m", 0.5)):
                 continue
             distance = _geodesic_distance(pathfinder, point, goals)
             if math.isfinite(distance) and distance >= float(cfg.ycb.start_min_geodesic_m):
@@ -394,14 +424,75 @@ def _starts_for_object(
     return starts
 
 
-def generate_manifest(layout: AuthoredLayout, cfg) -> Dict[str, Any]:
-    cache_key = manifest_cache_key(layout, cfg)
+def generate_manifest(
+    layout: AuthoredLayout, cfg, source_layout: Optional[AuthoredLayout] = None
+) -> Dict[str, Any]:
+    cache_key = manifest_cache_key(layout, cfg, source_layout)
     simulator = _ManifestSimulator(layout, cfg)
     try:
         episodes: List[Dict[str, Any]] = []
+        skipped_targets: List[Dict[str, Any]] = []
+        source_by_id = {
+            int(obj.semantic_id): obj for obj in getattr(source_layout, "objects", ())
+        }
         for authored in layout.objects:
-            viewpoints = _viewpoints_for_object(simulator, authored, cfg)
-            starts = _starts_for_object(simulator.sim.pathfinder, viewpoints, authored, cfg)
+            try:
+                viewpoints = _viewpoints_for_object(simulator, authored, cfg)
+            except YCBLayoutError as exc:
+                if not bool(getattr(cfg.ycb, "cross_floor_relocations_only", False)):
+                    raise
+                skipped_targets.append({
+                    "semantic_id": int(authored.semantic_id),
+                    "handle": str(authored.handle),
+                    "reason": str(exc),
+                })
+                continue
+            prior = source_by_id.get(int(authored.semantic_id))
+            prior_floor_y = None
+            destination_floor_y = float(viewpoints[0]["position"][1])
+            direction = None
+            if prior is not None:
+                snapped = _finite_point(
+                    simulator.sim.pathfinder.snap_point(
+                        np.asarray(prior.translation, dtype=np.float32)
+                    )
+                )
+                if snapped is not None:
+                    prior_floor_y = float(snapped[1])
+                    delta = destination_floor_y - prior_floor_y
+                    tolerance = float(getattr(cfg.ycb, "relocation_floor_tolerance_m", 0.5))
+                    direction = (
+                        "same_floor" if abs(delta) <= tolerance
+                        else "upward" if delta > 0.0 else "downward"
+                    )
+            if bool(getattr(cfg.ycb, "cross_floor_relocations_only", False)):
+                allowed = {
+                    str(value) for value in getattr(
+                        cfg.ycb, "relocation_directions", ["upward", "downward"]
+                    )
+                }
+                if direction not in {"upward", "downward"} or direction not in allowed:
+                    continue
+            required_y = (
+                prior_floor_y
+                if bool(getattr(cfg.ycb, "start_on_prior_floor", False))
+                and prior_floor_y is not None
+                else None
+            )
+            try:
+                starts = _starts_for_object(
+                    simulator.sim.pathfinder, viewpoints, authored, cfg,
+                    required_floor_y=required_y,
+                )
+            except YCBLayoutError as exc:
+                if not bool(getattr(cfg.ycb, "cross_floor_relocations_only", False)):
+                    raise
+                skipped_targets.append({
+                    "semantic_id": int(authored.semantic_id),
+                    "handle": str(authored.handle),
+                    "reason": str(exc),
+                })
+                continue
             for start_index, start in enumerate(starts):
                 episodes.append(
                     {
@@ -414,6 +505,12 @@ def generate_manifest(layout: AuthoredLayout, cfg) -> Dict[str, Any]:
                             "handle": authored.handle,
                             "label": authored.label,
                             "position": list(authored.translation),
+                            "prior_position": (
+                                list(prior.translation) if prior is not None else None
+                            ),
+                            "prior_floor_y": prior_floor_y,
+                            "destination_floor_y": destination_floor_y,
+                            "relocation_direction": direction,
                         },
                         "start": start,
                         "viewpoints": viewpoints,
@@ -425,7 +522,7 @@ def generate_manifest(layout: AuthoredLayout, cfg) -> Dict[str, Any]:
         "schema_version": MANIFEST_SCHEMA_VERSION,
         "generator_version": MANIFEST_GENERATOR_VERSION,
         "cache_key": cache_key,
-        "cache_parameters": manifest_cache_payload(layout, cfg),
+        "cache_parameters": manifest_cache_payload(layout, cfg, source_layout),
         "layout": {
             "scene": layout.scene_name,
             "layout_type": layout.layout_type,
@@ -437,6 +534,7 @@ def generate_manifest(layout: AuthoredLayout, cfg) -> Dict[str, Any]:
             "scene_dataset_config": layout.scene_dataset_config_relative_path,
         },
         "episodes": episodes,
+        "skipped_targets": skipped_targets,
     }
 
 
@@ -448,15 +546,42 @@ def prepare_ycb_benchmark(cfg, *, force: bool = False) -> PreparedYCB:
         layout_types=[str(value) for value in cfg.ycb.layout_types],
         layout_indices=[int(value) for value in cfg.ycb.layout_indices],
         target_labels={str(key): str(value) for key, value in cfg.ycb.target_labels.items()},
+        allow_incomplete=bool(getattr(cfg.ycb, "skip_incomplete_layouts", False)),
     )
     manifests: List[Dict[str, Any]] = []
     cache_files: List[Path] = []
+    static_by_scene = {
+        layout.scene_name: layout
+        for layout in discovery.layouts
+        if layout.layout_type == "static"
+    }
+    if bool(getattr(cfg.ycb, "cross_floor_relocations_only", False)):
+        missing = sorted({
+            layout.scene_name for layout in discovery.layouts
+            if layout.layout_type != "static" and layout.scene_name not in static_by_scene
+        })
+        if missing:
+            raise YCBLayoutError(
+                "cross-floor relocation manifests require the static source layout for: "
+                + ", ".join(missing)
+            )
     for layout in discovery.layouts:
-        cache_path = manifest_cache_path(layout, cfg)
-        cache_key = manifest_cache_key(layout, cfg)
+        if (
+            bool(getattr(cfg.ycb, "cross_floor_relocations_only", False))
+            and layout.layout_type == "static"
+        ):
+            # The static layout is the relocation source and snapshot pass, not
+            # an episode in the cross-floor destination suite.
+            continue
+        source_layout = (
+            static_by_scene.get(layout.scene_name)
+            if layout.layout_type != "static" else None
+        )
+        cache_path = manifest_cache_path(layout, cfg, source_layout)
+        cache_key = manifest_cache_key(layout, cfg, source_layout)
         manifest = None if force else _load_cached_manifest(cache_path, cache_key)
         if manifest is None:
-            manifest = generate_manifest(layout, cfg)
+            manifest = generate_manifest(layout, cfg, source_layout)
             _atomic_write_json(cache_path, manifest)
         manifests.append(manifest)
         cache_files.append(cache_path)
@@ -490,6 +615,7 @@ def select_targets(episodes: Sequence[Mapping[str, Any]], wanted: Sequence[str])
 def _make_dataset(
     prepared: PreparedYCB,
     layout_by_key: Mapping[Tuple[str, str], AuthoredLayout],
+    cfg,
     targets: Sequence[str] = (),
 ):
     from habitat.core.simulator import AgentState
@@ -502,14 +628,21 @@ def _make_dataset(
 
     dataset = ObjectNavDatasetV1()
     dataset.episodes = []
+    active_manifests = [
+        manifest for manifest in prepared.manifests
+        if not (
+            bool(getattr(cfg.ycb, "cross_floor_relocations_only", False))
+            and str(manifest["layout"].get("layout_type")) == "static"
+        )
+    ]
     selected = {
         id(manifest): select_targets(manifest["episodes"], targets)
-        for manifest in prepared.manifests
+        for manifest in active_manifests
     }
     labels = sorted(
         {
             str(episode["target"]["label"])
-            for manifest in prepared.manifests
+            for manifest in active_manifests
             for episode in selected[id(manifest)]
         }
     )
@@ -522,7 +655,7 @@ def _make_dataset(
     dataset.category_to_scene_annotation_category_id = dict(dataset.category_to_task_category_id)
     dataset.goals_by_category = {}
 
-    for manifest in prepared.manifests:
+    for manifest in active_manifests:
         layout_meta = manifest["layout"]
         layout_key = (str(layout_meta["scene"]), str(layout_meta["layout_id"]))
         layout = layout_by_key[layout_key]
@@ -552,6 +685,10 @@ def _make_dataset(
                     "target_handle": str(target["handle"]),
                     "target_semantic_id": int(target["semantic_id"]),
                     "target_position": [float(x) for x in target["position"]],
+                    "prior_position": target.get("prior_position"),
+                    "prior_floor_y": target.get("prior_floor_y"),
+                    "destination_floor_y": target.get("destination_floor_y"),
+                    "relocation_direction": target.get("relocation_direction"),
                     "start": _plain(item["start"]),
                     "viewpoints": _plain(item["viewpoints"]),
                     "manifest_cache_key": str(manifest["cache_key"]),
@@ -619,7 +756,7 @@ class YCBAuthoredNavEnv(HabitatObjectNavEnv):
         }
         self._relocation = _RelocationPolicy(cfg, self.prepared.discovery.layouts)
         dataset = _make_dataset(
-            self.prepared, self._layout_by_key,
+            self.prepared, self._layout_by_key, cfg,
             targets=[str(t) for t in cfg.ycb.targets or []],
         )
         self._hab_cfg = make_objectnav_config(cfg)

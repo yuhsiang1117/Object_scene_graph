@@ -33,6 +33,7 @@ class Frontier:
     # ground-plane point: without it, a frontier upstairs and one directly
     # below are indistinguishable to the blacklist's distance test.
     floor: int = 0
+    kind: str = "explore"
 
 
 class FrontierExtractor:

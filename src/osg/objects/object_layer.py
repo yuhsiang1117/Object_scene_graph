@@ -7,10 +7,10 @@ from typing import Dict, List, Optional
 
 import numpy as np
 
-from ..core.geometry import ellipse_from_mask
+from ..core.geometry import backproject, ellipse_from_mask
 from ..core.labels import normalize_label
 from ..core.types import Detection, FrameData
-from ..mapping.costmap import PLANE
+from ..mapping.costmap import HEIGHT_AXIS, PLANE
 from .association import DataAssociator, Observation, ObjectTrack
 from .ellipsoid import Ellipsoid
 from .linking import object_center, relink
@@ -35,6 +35,10 @@ class ObjectLayer:
         confirm_baseline_m: float = 0.0,
         repeat_view_discount: float = 0.2,
         presence_filter: Optional[PresenceFilter] = None,
+        max_range_m: float = 5.0,
+        fp_disable_radius_m: float = 0.5,
+        cloud_stride: int = 4,
+        cloud_cap: int = 2000,
         rng_seed: int = 0,
     ) -> None:
         self._tracks: Dict[int, ObjectTrack] = {}
@@ -63,6 +67,12 @@ class ObjectLayer:
         self.confirm_baseline_m = confirm_baseline_m
         self.repeat_view_discount = repeat_view_discount
         self.presence_filter = presence_filter
+        self.max_range_m = float(max_range_m)
+        self.fp_disable_radius_m = float(fp_disable_radius_m)
+        self.cloud_stride = int(cloud_stride)
+        self.cloud_cap = int(cloud_cap)
+        self.keep_cloud_labels: set = set()
+        self._disabled_pts: List[tuple] = []
         self._rng = np.random.default_rng(rng_seed)
         # Track-creation funnel. Instrumentation only: nine failures of the last
         # campaign named the target 4-36 times at its new pose and ended with
@@ -121,7 +131,9 @@ class ObjectLayer:
             and self._bbox_px(det) >= self.min_det_bbox_px
         )
 
-    def update(self, frame: FrameData, dets: List[Detection]) -> None:
+    def update(
+        self, frame: FrameData, dets: List[Detection], floor_key: int = 0
+    ) -> None:
         # Node-creation quality gate: a low-confidence or sliver detection
         # shouldn't seed a new track, or even lend support to an existing
         # one -- association still runs against every current track (a
@@ -144,12 +156,16 @@ class ObjectLayer:
         # looking at the surface and the detector produced nothing -- and a
         # detection too small to seed a track is still proof that something is
         # there, so it must not be counted as a miss.
+        same_floor = [
+            t for t in self._tracks.values()
+            if int(getattr(t, "floor_key", 0)) == int(floor_key)
+        ]
         if self.presence_filter is not None:
-            self.presence_filter.update(list(self._tracks.values()), frame, dets)
+            self.presence_filter.update(same_floor, frame, dets)
         dets = admitted
         if not dets:
             return
-        matches = self._associator.associate(dets, frame, list(self._tracks.values()))
+        matches = self._associator.associate(dets, frame, same_floor)
         K = frame.intrinsics.K()
         T_cw = frame.T_cw
         cam_xy = frame.camera_position[list(PLANE)]
@@ -169,14 +185,19 @@ class ObjectLayer:
                 self.funnel["tracks_created"] += 1
                 track = ObjectTrack(
                     id=self._next_id, label=det.label, ellipsoid=ell, first_cam_xy=cam_xy.copy(),
+                    floor_key=int(floor_key), out_of_range=self._marginal(det, frame),
                 )
                 track.evidence += det.score  # first sighting: full weight
                 self._next_id += 1
                 self._tracks[track.id] = track
+                if self._in_disabled_region(track):
+                    track.blacklisted = track.disabled = True
                 relink_needed = True  # visible immediately -- join the scene graph now
             else:
                 track = self._tracks[track_id]
                 track.evidence += det.score * self._view_diversity_weight(track, cam_xy)
+                if not self._marginal(det, frame):
+                    track.out_of_range = False
             track.observations.append(obs)
             if det.score > track.best_score:
                 track.best_score = det.score
@@ -188,6 +209,8 @@ class ObjectLayer:
                 # The pose this detection was made from is a proven
                 # "object visible from here" pose — the terminal stop target.
                 track.best_cam_xy = cam_xy.copy()
+
+            self._accumulate_cloud(track, det, frame)
 
             due = (
                 track.n_obs >= self.min_obs_for_refine
@@ -203,6 +226,125 @@ class ObjectLayer:
         if relink_needed:
             relink(list(self._tracks.values()), self.link_dist_m,
                    max_frame_gap=self.link_max_frame_gap)
+
+    # --------------------------------------------------------- surface clouds
+
+    def _accumulate_cloud(
+        self, track: ObjectTrack, det: Detection, frame: FrameData
+    ) -> None:
+        if track.label not in self.keep_cloud_labels:
+            return
+        pts = backproject(
+            frame.depth, frame.intrinsics, frame.T_wc, mask=det.mask,
+            stride=self.cloud_stride, max_depth=self.max_range_m,
+        )
+        if not len(pts):
+            return
+        centre_h = float(track.ellipsoid.center[HEIGHT_AXIS])
+        pts = pts[np.abs(pts[:, HEIGHT_AXIS] - centre_h) < 2.5]
+        if not len(pts):
+            return
+        if len(pts) > self.cloud_cap:
+            pts = pts[self._rng.choice(len(pts), self.cloud_cap, replace=False)]
+        track.points_w = (
+            pts if track.points_w is None
+            else np.vstack([track.points_w, pts])[-self.cloud_cap:]
+        )
+
+    def _track_cloud(self, track: ObjectTrack) -> Optional[np.ndarray]:
+        clouds = [track.points_w]
+        for linked_id in track.linked_ids:
+            other = self._tracks.get(linked_id)
+            if (
+                other is not None and not other.blacklisted
+                and other.floor_key == track.floor_key
+                and other.points_w is not None
+            ):
+                clouds.append(other.points_w)
+        clouds = [cloud for cloud in clouds if cloud is not None and len(cloud)]
+        return np.vstack(clouds) if clouds else None
+
+    def nearest_point_xy(
+        self, track: ObjectTrack, agent_xy: np.ndarray
+    ) -> Optional[np.ndarray]:
+        cloud = self._track_cloud(track)
+        if cloud is None:
+            return None
+        pts = cloud[:, list(PLANE)]
+        return pts[int(np.argmin(np.linalg.norm(pts - np.asarray(agent_xy), axis=1)))]
+
+    def nearest_point_dist_xy(
+        self, track: ObjectTrack, agent_xy: np.ndarray, percentile: float = 0.0
+    ) -> Optional[float]:
+        cloud = self._track_cloud(track)
+        if cloud is None:
+            return None
+        distances = np.linalg.norm(
+            cloud[:, list(PLANE)] - np.asarray(agent_xy), axis=1
+        )
+        return float(
+            distances.min()
+            if percentile <= 0.0 else np.percentile(distances, percentile)
+        )
+
+    # ------------------------------------------------- false-positive handling
+
+    def _marginal(self, det: Detection, frame: FrameData) -> bool:
+        x1, _, x2, _ = det.bbox_xyxy
+        width = float(frame.rgb.shape[1])
+        if (x2 <= width / 3.0 and x1 <= 0.05 * width) or (
+            x1 >= 2.0 * width / 3.0 and x2 >= 0.95 * width
+        ):
+            return True
+        ys, xs = np.nonzero(det.mask)
+        if not len(ys):
+            return False
+        depth = frame.depth[ys, xs]
+        valid = depth > 1e-3
+        return bool(
+            valid.any() and np.median(depth[valid]) > 0.95 * self.max_range_m
+        )
+
+    def _in_disabled_region(self, track: ObjectTrack) -> bool:
+        center = track.ellipsoid.center[list(PLANE)]
+        return any(
+            label == track.label
+            and float(np.linalg.norm(center - xy)) < self.fp_disable_radius_m
+            for xy, label in self._disabled_pts
+        )
+
+    def retract_unconfirmed(
+        self, frame: FrameData, dets: List[Detection], half_range_m: float,
+        fov_rad: float, floor_key: Optional[int] = None,
+    ) -> int:
+        cam_xy = frame.camera_position[list(PLANE)]
+        forward = frame.T_wc[:3, :3] @ np.array([0.0, 0.0, 1.0])
+        heading = forward[list(PLANE)]
+        norm = float(np.linalg.norm(heading))
+        if norm < 1e-6:
+            return 0
+        heading /= norm
+        seen = {d.label for d in dets}
+        retracted = 0
+        for track in self._tracks.values():
+            if (
+                track.blacklisted or not track.out_of_range
+                or (floor_key is not None and track.floor_key != floor_key)
+                or track.label in seen
+            ):
+                continue
+            vector = self.center_of(track)[list(PLANE)] - cam_xy
+            distance = float(np.linalg.norm(vector))
+            if distance > half_range_m or distance < 1e-3:
+                continue
+            if float(np.dot(vector / distance, heading)) < np.cos(fov_rad / 2.0):
+                continue
+            track.blacklisted = track.disabled = True
+            self._disabled_pts.append(
+                (self.center_of(track)[list(PLANE)].copy(), track.label)
+            )
+            retracted += 1
+        return retracted
 
     def _view_diversity_weight(self, track: ObjectTrack, cam_xy: np.ndarray) -> float:
         """Full weight for a re-observation from a meaningfully different
@@ -235,6 +377,8 @@ class ObjectLayer:
         max_identity_rejections: int = 0,
         target_bypasses_bbox: bool = False,
         rank_by_presence: bool = False,
+        floor_key: Optional[int] = None,
+        step: Optional[int] = None,
     ) -> List[ObjectTrack]:
         """Non-blacklisted tracks matching the target with enough support,
         detection quality, accumulated evidence (fragment detections and
@@ -279,6 +423,10 @@ class ObjectLayer:
         for t in self._tracks.values():
             if t.blacklisted or t.n_obs < min_obs or t.evidence < min_evidence:
                 continue
+            if floor_key is not None and t.floor_key != floor_key:
+                continue
+            if step is not None and t.suppressed_until > step:
+                continue
             if t.best_score < min_score:
                 continue
             # The size gate rejects slivers of furniture. For the target it
@@ -311,6 +459,24 @@ class ObjectLayer:
         tr = self._tracks.get(track_id)
         if tr is not None:
             tr.blacklisted = True
+
+    def suppress(self, track_id: int, until_step: int) -> None:
+        track = self._tracks.get(track_id)
+        if track is not None:
+            track.suppressed_until = max(track.suppressed_until, int(until_step))
+
+    def disable_target(self, track_id: int) -> bool:
+        track = self._tracks.get(track_id)
+        if track is None:
+            return False
+        track.blacklisted = track.disabled = True
+        self._disabled_pts.append(
+            (self.center_of(track)[list(PLANE)].copy(), track.label)
+        )
+        return True
+
+    def disable_place(self, xy: np.ndarray, label: str) -> None:
+        self._disabled_pts.append((np.asarray(xy, dtype=float)[:2].copy(), label))
 
     # ------------------------------------------------------------- internals
 

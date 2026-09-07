@@ -23,7 +23,7 @@ is an index into a dict, never a change to the coordinate convention.
 """
 from __future__ import annotations
 
-from dataclasses import dataclass
+from dataclasses import dataclass, field
 from typing import Dict, Iterator, List, Optional, Tuple
 
 import numpy as np
@@ -44,6 +44,25 @@ class FloorLayer:
     room_labels: Optional[np.ndarray] = None
     entry_xy: Optional[np.ndarray] = None  # where the agent first arrived
     first_step: int = 0
+    floor_y: float = 0.0
+    planner: object = None
+    value_map: object = None
+    up_stair_hits: Optional[np.ndarray] = None
+    down_stair_hits: Optional[np.ndarray] = None
+    disabled_stair: Optional[np.ndarray] = None
+    track_ids: set = field(default_factory=set)
+    steps_on_floor: int = 0
+    visits: int = 1
+    explored: bool = False
+
+    @property
+    def key(self) -> int:
+        """Stable identity; never infer vertical order from this value."""
+        return self.floor_id
+
+    def __call__(self):
+        """Compatibility with the teammate stack's ``current()`` spelling."""
+        return self
 
 
 @dataclass
@@ -66,11 +85,15 @@ class FloorStack:
         room_seg_kwargs: Optional[dict] = None,
         current: int = 0,
         track_height: bool = False,
+        planner_factory=None,
+        value_map_factory=None,
     ) -> None:
         self.resolution_m = float(resolution_m)
         self._track_height = bool(track_height)
         self._room_seg_kwargs = dict(room_seg_kwargs or {})
         self._room_ids = RoomIdCounter()
+        self._planner_factory = planner_factory
+        self._value_map_factory = value_map_factory
         self._layers: Dict[int, FloorLayer] = {}
         self.current_id = int(current)
         self.stair_edges: List[StairEdge] = []
@@ -82,11 +105,12 @@ class FloorStack:
         """The layer for a storey, created on first visit."""
         fid = int(floor_id)
         if fid not in self._layers:
+            costmap = Costmap2D(
+                resolution=self.resolution_m, track_height=self._track_height
+            )
             self._layers[fid] = FloorLayer(
                 floor_id=fid,
-                costmap=Costmap2D(
-                    resolution=self.resolution_m, track_height=self._track_height
-                ),
+                costmap=costmap,
                 # One segmenter PER FLOOR: VoronoiRoomSegmenter._stabilize_ids
                 # matches rooms to the previous call by 2D overlap, so a shared
                 # segmenter would hand a room its predecessor's id -- and the
@@ -97,6 +121,12 @@ class FloorStack:
                     id_counter=self._room_ids, **self._room_seg_kwargs
                 ),
                 first_step=step,
+                planner=(self._planner_factory() if self._planner_factory else None),
+                value_map=(
+                    self._value_map_factory(costmap)
+                    if self._value_map_factory is not None
+                    else None
+                ),
             )
         return self._layers[fid]
 
@@ -132,7 +162,37 @@ class FloorStack:
             )
         )
         self.current_id = fid
+        layer.visits += 1
         return True
+
+    def set_height(self, floor_key: int, floor_y: float) -> None:
+        self.layer(floor_key).floor_y = float(floor_y)
+
+    def order_of(self, floor_key: int) -> int:
+        for order, layer in enumerate(self.layers()):
+            if layer.key == int(floor_key):
+                return order
+        raise KeyError(f"unknown floor key {floor_key}")
+
+    def by_key(self, floor_key: int) -> Optional[FloorLayer]:
+        return self._layers.get(int(floor_key))
+
+    def by_order(self, order: int) -> Optional[FloorLayer]:
+        ordered = self.layers()
+        return ordered[order] if 0 <= int(order) < len(ordered) else None
+
+    def up(self) -> Optional[FloorLayer]:
+        return self.by_order(self.order_of(self.current_id) + 1)
+
+    def down(self) -> Optional[FloorLayer]:
+        order = self.order_of(self.current_id)
+        return self.by_order(order - 1) if order else None
+
+    def n_floors(self) -> int:
+        return len(self._layers)
+
+    def stats(self) -> Dict[str, int]:
+        return {"n_floors": len(self), "floor_switches": len(self.stair_edges)}
 
     # ------------------------------------------------------------------ dunder
 
@@ -149,7 +209,7 @@ class FloorStack:
         return sorted(self._layers.items())
 
     def layers(self) -> List[FloorLayer]:
-        return [l for _, l in self.items()]
+        return sorted(self._layers.values(), key=lambda layer: layer.floor_y)
 
     def reset(self) -> None:
         self._layers = {}

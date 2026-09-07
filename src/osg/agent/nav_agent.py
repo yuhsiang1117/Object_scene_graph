@@ -34,19 +34,22 @@ from typing import List, Optional
 import numpy as np
 
 from ..core.profiler import Profiler
+from ..core.config import resolve_navigation
 from ..core.types import Detection, FrameData
 from ..exploration.async_scorer import AsyncScorer
+from ..exploration.ascent_selector import FrontierCommitState
 from ..exploration.selector import frontier_goal_xy
 from ..exploration.strategy import ExplorationStrategy, WorldView
-from ..graph.scene_graph import SceneGraph
+from ..graph.scene_graph import ROOM_IDS_PER_FLOOR, SceneGraph
 from ..mapping.costmap import PLANE, Costmap2D
 from ..objects.object_layer import ObjectLayer
 from ..perception.detector import Detector
 from ..perception.vocabulary import target_vocabulary
 from ..pipeline.beliefs import build_affinity_prior, build_presence_filter
 from ..perception.keyframe import KeyframeSelector, KeyframeStore
-from ..planning.controller import WaypointController
-from ..planning.planner import PlanResult
+from ..planning.controller import WaypointController, agent_heading
+from ..planning.escape import ActionHistoryEscape
+from ..planning.planner import PlanResult, StraightLinePlanner
 from ..planning.voronoi_planner import HybridVoronoiPlanner
 from ..verification.absence import AbsenceSensor
 from ..verification.viewpoint import ViewpointPlanner
@@ -55,7 +58,7 @@ from .candidate import CandidatePolicy
 from .floor_policy import FloorPolicy
 from ..core.labels import normalize_label
 from ..graph.containers import CONTAINER_CATEGORIES
-from .state import STOP_ACTION, TURN_ACTION, State
+from .state import FORWARD_ACTION, STOP_ACTION, TURN_ACTION, State
 
 class NavAgent:
     def __init__(
@@ -69,6 +72,12 @@ class NavAgent:
         profiler: Optional[Profiler] = None,
         nav_fn=None,
         reachable_fn=None,
+        pointnav=None,
+        ranker=None,
+        floor_planner=None,
+        room_classifier=None,
+        image_text=None,
+        stair_segmenter=None,
     ) -> None:
         self.cfg = cfg
         self.detector = detector
@@ -81,9 +90,47 @@ class NavAgent:
         # frontier extraction / scene graph), only navigation switches.
         self._nav_fn = nav_fn
         self._reachable_fn = reachable_fn
-        self._use_navmesh = (
-            nav_fn is not None and bool(cfg.agent.use_habitat_navmesh)
+        self.navigation = resolve_navigation(cfg.agent)
+        self._use_navmesh = nav_fn is not None and self.navigation == "navmesh"
+        if pointnav is None and self.navigation == "pointnav":
+            from ..planning.pointnav_driver import build_pointnav
+
+            pointnav = build_pointnav(cfg)
+        self.pointnav = pointnav
+        self._driver = nav_fn if self._use_navmesh else self.pointnav
+        self._direct_approach = self._driver is not None
+        self.ranker = ranker
+        self.floor_planner = floor_planner
+        self._floor_goal_dir = 0
+        self.room_classifier = room_classifier
+        self.image_text = image_text
+        self.stair_segmenter = stair_segmenter
+        self.stair_detector = None
+        self._down_look_every = int(getattr(cfg.agent, "down_look_every", 0))
+        ascent_selector = str(getattr(cfg.exploration, "selector", "utility")) == "ascent"
+        self.commit_state = (
+            FrontierCommitState(quantise_m=cfg.exploration.frontier_dedup_m)
+            if ascent_selector or bool(getattr(cfg.exploration, "frontier_commit", False))
+            else None
         )
+        self._approach_recheck = image_text is not None and bool(
+            getattr(cfg.verification, "approach_recheck", False)
+        )
+        self._approach_recheck_thresh = float(
+            getattr(cfg.verification, "approach_recheck_thresh", 0.0)
+        )
+        self._frontier_desc = str(getattr(cfg.exploration, "frontier_desc", "graph"))
+        self.frontier_semantics = None
+        if self._frontier_desc in ("frame", "frame_objects"):
+            from ..exploration.frontier_semantics import FrontierSemantics
+
+            self.frontier_semantics = FrontierSemantics(
+                match_radius_m=float(
+                    getattr(cfg.exploration, "frontier_desc_match_m", 1.0)
+                ),
+                fov_rad=np.radians(float(getattr(cfg.eval, "hfov_deg", 79.0))),
+                max_range_m=float(cfg.mapping.max_range_m),
+            )
         # Terminal-view verification mode: skip the pre-approach best_crop VLM
         # call and instead verify the live close-up frame at the STOP decision
         # (see _do_approach). Requires a verifier; no-op when verifier is None.
@@ -103,7 +150,32 @@ class NavAgent:
         self.stats: dict = {}
         # Which storey the agent is on, and one costmap per storey. Inert
         # unless floor.enabled -- see agent/floor_policy.py.
-        self.floors = FloorPolicy(cfg, self.stats)
+        value_map_factory = None
+        if image_text is not None:
+            from ..mapping.value_map import ValueMap2D
+
+            value_map_factory = lambda costmap: ValueMap2D(
+                costmap, max_depth_m=cfg.mapping.max_range_m
+            )
+        self.floors = FloorPolicy(
+            cfg, self.stats, value_map_factory=value_map_factory
+        )
+        if bool(getattr(cfg.mapping, "multi_floor", False)):
+            from ..mapping.stairs import StairDetector
+
+            self.stair_detector = StairDetector(
+                resolution_m=cfg.mapping.resolution_m,
+                max_range_m=cfg.mapping.max_range_m,
+                min_hits=int(getattr(cfg.exploration, "stair_min_hits", 1)),
+                min_cells=int(getattr(cfg.exploration, "stair_min_cells", 25)),
+                up_mode=str(getattr(cfg.agent, "stair_up_mode", "detector")),
+            )
+        self.selection_planner = (
+            StraightLinePlanner()
+            if self._driver is not None
+            and not bool(cfg.agent.frontier_reachability_gate)
+            else self.planner
+        )
         self.object_layer = ObjectLayer(
             assoc_score_thresh=cfg.scene_graph.assoc_score_thresh,
             assoc_depth_gate_m=cfg.scene_graph.assoc_depth_gate_m,
@@ -119,6 +191,10 @@ class NavAgent:
             repeat_view_discount=cfg.scene_graph.repeat_view_discount,
             presence_filter=build_presence_filter(cfg),
             target_bypasses_gates=cfg.scene_graph.target_bypasses_gates,
+            max_range_m=cfg.mapping.max_range_m,
+            fp_disable_radius_m=cfg.scene_graph.fp_disable_radius_m,
+            cloud_stride=cfg.scene_graph.cloud_stride,
+            cloud_cap=cfg.scene_graph.cloud_cap,
         )
         self.scene_graph = SceneGraph(
             container_top_h_m=tuple(cfg.scene_graph.container_top_h_m),
@@ -131,14 +207,6 @@ class NavAgent:
         self.keyframes = KeyframeStore(save_dir=keyframe_dir)
         self.kf_selector = KeyframeSelector(
             cfg.scene_graph.keyframe_trans_m, cfg.scene_graph.keyframe_rot_deg
-        )
-        # GVG Voronoi (medial-axis) navigation ported from ObjectSceneGraph_old,
-        # with a grid-A* fallback for early/tiny maps (single planner so frontier
-        # selection and path planning both get the fallback).
-        self.planner = HybridVoronoiPlanner(
-            collision_m=cfg.agent.agent_radius + cfg.mapping.inflate_margin_m,
-            goal_near_m=cfg.exploration.voronoi_goal_near_m,
-            inflate_radius_m=cfg.agent.agent_radius + cfg.mapping.inflate_margin_m,
         )
         self.controller = WaypointController(forward_m=cfg.agent.forward_m)
         self.viewpoint_planner = ViewpointPlanner(list(cfg.verification.ring_radii_m))
@@ -153,7 +221,7 @@ class NavAgent:
         # It owns everything an exploration round remembers; see
         # exploration/strategy.py.
         self.exploration = ExplorationStrategy(
-            cfg, self.planner, scorer, self.viewpoint_planner,
+            cfg, self.selection_planner, scorer, self.viewpoint_planner,
             build_affinity_prior(cfg), self.stats, self.profiler,
         )
 
@@ -171,6 +239,11 @@ class NavAgent:
         needs no knowledge that other floors exist.
         """
         return self.floors.costmap
+
+    @property
+    def planner(self) -> HybridVoronoiPlanner:
+        """Planner scoped to the active storey."""
+        return self.floor_layer.planner
 
     @property
     def floor_layer(self):
@@ -222,6 +295,15 @@ class NavAgent:
     def _current_frontier(self):  # eval/runner.py's debug video draws it
         return self.exploration.current_frontier
 
+    @_current_frontier.setter
+    def _current_frontier(self, frontier) -> None:
+        self.exploration.current_frontier = frontier
+
+    @property
+    def _frontier_reach_m(self) -> float:
+        base = float(self.exploration.frontier_reach_m)
+        return max(base, float(getattr(self.pointnav, "stop_radius", 0.0)))
+
     # Per-episode approach telemetry, recorded by eval/runner.py.
     @property
     def approach_bbox_log(self) -> list:
@@ -257,6 +339,11 @@ class NavAgent:
             int(round(360.0 / self.cfg.agent.turn_deg)) if self.cfg.agent.initial_scan else 0
         )
         self.floors.reset()
+        # ``FloorStack.reset`` constructs a fresh layer (and therefore a fresh
+        # planner).  Keep the ordinary selection path attached to that planner;
+        # the straight-line selector is intentionally independent.
+        if not isinstance(self.selection_planner, StraightLinePlanner):
+            self.selection_planner = self.planner
         self._kf_count = 0
         self._current_path: Optional[np.ndarray] = None
         self._candidate_id: Optional[int] = None
@@ -265,6 +352,9 @@ class NavAgent:
         self._goto_deadline = 10**9
         self._target_obj_xy: Optional[np.ndarray] = None
         self._goal_floor_y_cache: Optional[float] = None
+        self._agent_xy: Optional[np.ndarray] = None
+        self._target_cloud_xy: Optional[np.ndarray] = None
+        self._room_votes: list = []
         self.stats.clear()
         self.stats.update({"plan_ok": 0, "plan_fail": 0, "select_none": 0, "select_ok": 0})
         # Phase 2 instrumentation (docs/DYNAMIC_SCENES.md): when the map STOPPED
@@ -279,10 +369,42 @@ class NavAgent:
         self.kf_selector.reset()
         self.controller.reset()
         self.exploration.reset()
+        self._escape = ActionHistoryEscape(int(self.cfg.agent.escape_window))
+        self._progress_ref_step = 0
+        self._progress_ref_xy = np.zeros(2)
+        self._frontier_ref_dist = None
+        self._approach_start_step = 0
+        self._terminal_last_xy = None
+        self._terminal_min_d = float("inf")
+        self._terminal_stalls = 0
+        self._approach_itm_max = 0.0
+        self._approach_itm_n = 0
+        self.approach_recheck_max = None
+        self._last_itm = 0.0
+        self._climb_carrot = bool(getattr(self.cfg.agent, "climb_carrot", False))
+        self._carrot_xy = None
+        self._carrot_disable_end = False
+        self._climb_last_dist = None
+        self._climb_paused_steps = 0
+        self._pitch_ticks = 0
+        self._last_down_look_step = -(10 ** 9)
+        if self.commit_state is not None:
+            self.commit_state.reset()
+        if self.frontier_semantics is not None:
+            self.frontier_semantics.reset()
         self.detector.set_vocabulary(
             target_vocabulary(self.target, self.cfg.detector.vocabulary)
         )
         self.object_layer.set_target(self.target)
+        self.object_layer.keep_cloud_labels = {self.target}
+        if self.pointnav is not None:
+            self.pointnav.reset()
+        for component in (
+            self.ranker, self.floor_planner, self.room_classifier, self.image_text
+        ):
+            reset = getattr(component, "reset", None)
+            if callable(reset):
+                reset()
 
     def rearm(self, max_steps: int) -> None:
         """Give the agent another attempt without giving it a new map.
@@ -315,23 +437,71 @@ class NavAgent:
         prev_state = self.state
         with self.profiler.timeit("control_loop"):
             action = self._act_inner(frame)
+        if self._escape.window > 0 and not (
+            action == STOP_ACTION and self.state is State.DONE
+        ):
+            action = self._escape(action)
         if self.state != prev_state:
             self.state_log.append((self.step_count, self.state.value))
         self._last_action = action
         return action
 
     def _act_inner(self, frame: FrameData) -> str:
+        self._agent_xy = frame.camera_position[list(PLANE)].copy()
+        if self.pointnav is not None:
+            self.pointnav.observe(frame)
         floor_y = self.floors.observe(frame, self.step_count)
+        # ExplorationStrategy is deliberately floor-agnostic; repoint its seam
+        # whenever the active FloorLayer changes.
+        self.exploration.planner = self.planner
+        if not isinstance(self.selection_planner, StraightLinePlanner):
+            self.selection_planner = self.planner
+        self.exploration.planner = self.selection_planner
+        standing_y = float(frame.camera_position[1] - self.cfg.agent.camera_height)
+        self._floor_y = float(floor_y)
+        self._off_plane_m = abs(standing_y - self._floor_y)
+        reject_m = float(getattr(self.cfg.mapping, "floor_reject_m", 0.0))
+        multi_floor = bool(
+            getattr(self.cfg.mapping, "multi_floor", False)
+            or getattr(self.cfg.floor, "per_floor_costmap", False)
+        )
+        off_map = (
+            self.floors.on_stairs if multi_floor
+            else reject_m > 0.0 and self._off_plane_m > reject_m
+        )
 
-        with self.profiler.timeit("costmap"):
-            self.costmap.update(
-                frame,
-                floor_y=floor_y,
-                obstacle_low=self.cfg.mapping.obstacle_low_m,
-                obstacle_high=self.cfg.mapping.obstacle_high_m,
-                max_range=self.cfg.mapping.max_range_m,
-                stride=self.cfg.mapping.depth_stride,
-            )
+        if off_map:
+            self.stats["frames_off_plane"] = self.stats.get("frames_off_plane", 0) + 1
+        else:
+            with self.profiler.timeit("costmap"):
+                self.costmap.update(
+                    frame,
+                    floor_y=floor_y,
+                    obstacle_low=self.cfg.mapping.obstacle_low_m,
+                    obstacle_high=self.cfg.mapping.obstacle_high_m,
+                    max_range=self.cfg.mapping.max_range_m,
+                    stride=self.cfg.mapping.depth_stride,
+                )
+            if self.image_text is not None:
+                self._update_value_map(frame, self.floor_layer)
+            # Tests and external callers may inject an image-text scorer
+            # without enabling the semantic value map. Preserve that legacy
+            # approach-recheck path in that case; when a value map exists the
+            # single score above already feeds both mechanisms.
+            if (
+                self.state is State.APPROACH
+                and self.image_text is not None
+                and self.floor_layer.value_map is None
+            ):
+                scores = self.image_text.score(
+                    frame.rgb, [self.target.replace("_", " ")]
+                )
+                if len(scores):
+                    self._last_itm = float(scores[0])
+                    self._approach_itm_max = max(
+                        self._approach_itm_max, self._last_itm
+                    )
+                    self._approach_itm_n += 1
         self.controller.observe_progress(
             frame.T_wc, self._last_action, self.costmap, self.step_count
         )
@@ -343,6 +513,10 @@ class NavAgent:
             self._on_keyframe(frame)
             if self.cfg.exploration.search_posterior:
                 self.exploration.glance(self._world(frame))
+
+        down_look = self._down_look(frame, self.floor_layer, off_map)
+        if down_look is not None:
+            return down_look
 
         # Candidate target check happens in every state except terminal ones
         if self.state in (State.INIT, State.EXPLORE, State.GOTO_FRONTIER):
@@ -372,6 +546,9 @@ class NavAgent:
                 return TURN_ACTION  # keep looking around; map will grow
 
         if self.state == State.GOTO_FRONTIER:
+            reselect = int(getattr(self.cfg.exploration, "reselect_every", 0))
+            if reselect > 0 and self.step_count % reselect == 0:
+                self._select_new_frontier(frame)
             if self.exploration.maybe_give_up(
                 self._world(frame),
                 portal_ok=self.floors.pursuing
@@ -408,7 +585,7 @@ class NavAgent:
             return self.candidates.verify(frame)
 
         if self.state == State.APPROACH:
-            return self.approach.step(frame)
+            return self._do_approach(frame)
 
         return STOP_ACTION
 
@@ -484,10 +661,25 @@ class NavAgent:
             dets = self.detector.detect(frame.rgb)
             if self.cfg.scene_graph.foveate_containers:
                 dets = self._foveate(frame, dets)
+        if self.frontier_semantics is not None:
+            room = self.room_classifier.classify(frame.rgb) if self.room_classifier else None
+            heading = agent_heading(frame.T_wc)
+            self.frontier_semantics.observe(
+                self.step_count,
+                room,
+                [d.label for d in dets],
+                camera_xy=frame.camera_position[list(PLANE)],
+                heading_xy=np.array([np.cos(heading), np.sin(heading)]),
+            )
+        if self.room_classifier is not None:
+            self._room_votes.append((
+                frame.camera_position[list(PLANE)].copy(),
+                self.room_classifier.classify(frame.rgb),
+            ))
         if self.on_keyframe_detections is not None:
             self.on_keyframe_detections(frame, dets)
         with self.profiler.timeit("object_layer"):
-            self.object_layer.update(frame, dets)
+            self.object_layer.update(frame, dets, floor_key=self.floors.current_id)
         self.keyframes.add(frame)
 
         pf = self.object_layer.presence_filter
@@ -530,10 +722,71 @@ class NavAgent:
             if self._room_labels.shape != self.costmap.grid.shape:
                 self._room_labels = self.floor_layer.segmenter.segment(self.costmap)
             with self.profiler.timeit("scene_graph"):
-                self.scene_graph.rebuild(
+                self.scene_graph.rebuild_floor(
                     self._room_labels, self.costmap, self.object_layer,
-                    floors=self.floors.estimator if self.cfg.floor.enabled else None,
+                    floor_key=self.floors.current_id,
+                    floor_height=self.floors.height_of(self.floors.current_id),
                 )
+                self._label_rooms(self.floor_layer)
+
+    def _label_rooms(self, layer) -> None:
+        from collections import Counter
+
+        if not self._room_votes or layer.room_labels is None:
+            return
+        base = layer.key * ROOM_IDS_PER_FLOOR
+        votes = {}
+        for xy, name in self._room_votes:
+            rc = layer.costmap.world_to_grid(xy)
+            if not layer.costmap.in_bounds(rc):
+                continue
+            local = int(layer.room_labels[rc[0], rc[1]])
+            if local > 0:
+                votes.setdefault(base + local, Counter())[name] += 1
+        self.stats["rooms_total"] = len(self.scene_graph.rooms)
+        for room_id, counter in votes.items():
+            room = self.scene_graph.rooms.get(room_id)
+            if room is not None:
+                room.label = counter.most_common(1)[0][0]
+        self.stats["rooms_labelled"] = sum(
+            1 for room in self.scene_graph.rooms.values() if room.label
+        )
+
+    def _check_candidates(self) -> None:
+        agent_xy = self._agent_xy if self._agent_xy is not None else np.zeros(2)
+        # ASCENT's compatibility facade can request the direct candidate gate
+        # without installing a mover (unit construction and policy A/Bs).  In
+        # that case preserve its verify/cooldown contract explicitly.
+        if self._direct_approach and not self._use_navmesh and self.pointnav is None:
+            candidates = self.object_layer.candidates(
+                self.target,
+                min_obs=self.cfg.verification.min_obs,
+                min_score=self.cfg.verification.min_score,
+                min_bbox_px=self.cfg.verification.min_bbox_px,
+                min_evidence=self.cfg.verification.min_evidence,
+                floor_key=self.floors.current_id,
+                step=self.step_count,
+            )
+            if not candidates:
+                return
+            track = candidates[0]
+            self._candidate_id = track.id
+            if self.verifier is not None and not self.cfg.verification.absence_only:
+                with self.profiler.timeit("verification"):
+                    accepted = self.verifier.verify(track, self.target)
+                if not accepted:
+                    cooldown = int(self.cfg.verification.reject_cooldown_steps)
+                    if cooldown > 0:
+                        self.object_layer.suppress(track.id, self.step_count + cooldown)
+                    else:
+                        self.object_layer.blacklist(track.id)
+                    self._candidate_id = None
+                    self.stats["verify_reject"] = self.stats.get("verify_reject", 0) + 1
+                    return
+            obj = self.object_layer.center_of(track)
+            self._start_approach(obj[list(PLANE)], floor_y=float(obj[1]))
+            return
+        self.candidates.check(agent_xy)
 
     def _world(self, frame: FrameData) -> WorldView:
         """What the exploration strategy is allowed to see this round.
@@ -552,6 +805,7 @@ class NavAgent:
             target=self.target,
             goal_xy=self._goal_xy,
             floor_id=self.floors.current_id,
+            value_map=self.floor_layer.value_map,
         )
 
     def _explore(self, frame: FrameData) -> None:
@@ -564,7 +818,10 @@ class NavAgent:
         """
         world = self._world(frame)
         choice = self.exploration.select(
-            world, floor_switch=lambda cost: self._try_floor_switch(frame, cost)
+            world,
+            floor_switch=lambda cost, target_floor=None: self._try_floor_switch(
+                frame, cost, target_floor=target_floor
+            ),
         )
         if choice is None:
             return
@@ -573,7 +830,9 @@ class NavAgent:
         self.exploration.note_progress(world)
         self.state = State.GOTO_FRONTIER
 
-    def _try_floor_switch(self, frame: FrameData, best_path_cost) -> bool:
+    def _try_floor_switch(
+        self, frame: FrameData, best_path_cost, target_floor: Optional[int] = None
+    ) -> bool:
         """Ask the floor policy whether to leave this storey, and go if so.
 
         The policy decides; the FSM moves. Returns True when a portal is now
@@ -585,6 +844,7 @@ class NavAgent:
         portal = self.floors.try_switch(
             frame, self.step_count, best_path_cost,
             self.scene_graph, self.target, self._reachable_fn,
+            target_floor=target_floor,
         )
         if portal is None:
             return False
@@ -710,6 +970,25 @@ class NavAgent:
             if action is None and self.state == State.GOTO_FRONTIER:
                 self.exploration.retire_pursued(self._world(frame), goal)
             return action
+        if self.pointnav is not None:
+            step = self.pointnav.step(goal)
+            if step.action is None and self.state == State.GOTO_FRONTIER:
+                if step.reason == "policy_stop" and not bool(
+                    self.cfg.agent.pointnav_stop_means_blocked
+                ):
+                    self.stats["pointnav_stop_forced_forward"] = (
+                        self.stats.get("pointnav_stop_forced_forward", 0) + 1
+                    )
+                    return "move_forward"
+                if float(
+                    np.linalg.norm(frame.camera_position[list(PLANE)] - goal)
+                ) > self._frontier_reach_m:
+                    # ``retire_pursued`` owns both the blacklist update and the
+                    # associated counter.  Doing either here would double count
+                    # a PointNav policy stop.
+                    pass
+                self.exploration.retire_pursued(self._world(frame), goal)
+            return step.action
         if self._current_path is None:
             self._plan_to(frame, goal)
             if self._current_path is None:
@@ -725,3 +1004,423 @@ class NavAgent:
                 self.exploration.retire_pursued(self._world(frame), goal)
         return action
 
+    # ------------------------------------------------ ASCENT compatibility API
+
+    @property
+    def frontier_extractor(self):
+        return self.exploration.frontier_extractor
+
+    @property
+    def _progress_ref_step(self) -> int:
+        return int(self.exploration.progress_ref_step)
+
+    @_progress_ref_step.setter
+    def _progress_ref_step(self, value: int) -> None:
+        self.exploration.progress_ref_step = int(value)
+
+    @property
+    def _progress_ref_xy(self) -> np.ndarray:
+        return self.exploration.progress_ref_xy
+
+    @_progress_ref_xy.setter
+    def _progress_ref_xy(self, value: np.ndarray) -> None:
+        self.exploration.progress_ref_xy = np.asarray(value, dtype=float)
+
+    @property
+    def _select_every(self) -> int:
+        return int(getattr(self.cfg.exploration, "select_every", 5))
+
+    @property
+    def _reselect_every(self) -> int:
+        return int(getattr(self.cfg.exploration, "reselect_every", 0))
+
+    @property
+    def _last_select_step(self) -> int:
+        return self.exploration._last_select_step
+
+    @_last_select_step.setter
+    def _last_select_step(self, value: int) -> None:
+        self.exploration._last_select_step = int(value)
+
+    def _select_new_frontier(self, frame: FrameData) -> None:
+        prev = self._current_frontier
+        before = self.exploration._last_select_step
+        progress_step = self._progress_ref_step
+        progress_xy = self._progress_ref_xy.copy()
+        frontier_dist = self._frontier_ref_dist
+        self._explore(frame)
+        if self.exploration._last_select_step == before:
+            return
+        current = self._current_frontier
+        if current is None:
+            return
+        same = prev is not None and float(
+            np.linalg.norm(prev.centroid_xy - current.centroid_xy)
+        ) < 0.5
+        if same:
+            self._progress_ref_step = progress_step
+            self._progress_ref_xy = progress_xy
+            self._frontier_ref_dist = frontier_dist
+        else:
+            self.stats["frontier_switch"] = self.stats.get("frontier_switch", 0) + 1
+            self._progress_ref_step = self.step_count
+            self._progress_ref_xy = frame.camera_position[list(PLANE)].copy()
+            self._frontier_ref_dist = None
+
+    def _frontier_consumed(self, frontier) -> bool:
+        if frontier is None:
+            return False
+        goal = frontier_goal_xy(frontier, self.costmap)
+        rc = self.costmap.world_to_grid(goal)
+        radius = max(1, int(round(self.cfg.agent.agent_radius / self.costmap.resolution)))
+        h, w = self.costmap.grid.shape
+        r0, r1 = max(0, rc[0] - radius), min(h, rc[0] + radius + 1)
+        c0, c1 = max(0, rc[1] - radius), min(w, rc[1] + radius + 1)
+        if r0 >= r1 or c0 >= c1:
+            return False
+        from ..mapping.costmap import UNKNOWN
+
+        return not bool((self.costmap.grid[r0:r1, c0:c1] == UNKNOWN).any())
+
+    def _frontier_stalled(
+        self, agent_xy: np.ndarray, frontier, stick_m: float, stick_steps: int
+    ) -> bool:
+        if stick_steps <= 0:
+            return False
+        if self.cfg.agent.frontier_stick_rule == "closing":
+            goal = frontier_goal_xy(frontier, self.costmap) if frontier else self._goal_xy
+            if goal is None:
+                return False
+            distance = float(np.linalg.norm(agent_xy - goal))
+            if self._frontier_ref_dist is None:
+                self._frontier_ref_dist = distance
+                self._progress_ref_step = self.step_count
+                return False
+            if abs(self._frontier_ref_dist - distance) > stick_m:
+                self._frontier_ref_dist = distance
+                self._progress_ref_step = self.step_count
+                return False
+            return self.step_count - self._progress_ref_step >= stick_steps
+        if self.step_count - self._progress_ref_step < stick_steps:
+            return False
+        moved = float(np.linalg.norm(agent_xy - self._progress_ref_xy))
+        self._progress_ref_step = self.step_count
+        self._progress_ref_xy = agent_xy.copy()
+        return moved < stick_m
+
+    def _nearest_point_stop(self, agent_xy: np.ndarray) -> Optional[str]:
+        track = self.object_layer.get(self._candidate_id) if self._candidate_id is not None else None
+        if track is None:
+            return None
+        distance = self.object_layer.nearest_point_dist_xy(
+            track, agent_xy, float(self.cfg.agent.terminal_percentile)
+        )
+        if distance is None or distance >= float(self.cfg.agent.terminal_engage_m):
+            return None
+        if distance <= float(self.cfg.agent.terminal_stop_m):
+            return "nearest_point"
+        moved = self._terminal_last_xy is not None and float(
+            np.linalg.norm(agent_xy - self._terminal_last_xy)
+        ) > 0.05
+        self._terminal_last_xy = agent_xy.copy()
+        if not moved:
+            return None
+        if abs(distance - self._terminal_min_d) < float(self.cfg.agent.terminal_progress_eps):
+            self._terminal_stalls += 1
+            if self._terminal_stalls >= int(self.cfg.agent.terminal_stall_steps):
+                return "nearest_point_stalled"
+        else:
+            self._terminal_stalls = 0
+            self._terminal_min_d = min(self._terminal_min_d, distance)
+        return None
+
+    def _carrot_goal(
+        self, frame: FrameData, agent_xy: np.ndarray
+    ) -> Optional[np.ndarray]:
+        """Place ASCENT's short stair waypoint along the farthest depth ray."""
+        depth = frame.depth
+        if depth.size == 0:
+            return None
+        max_value = float(np.max(depth))
+        if not np.isfinite(max_value):
+            return None
+        rows_cols = np.argwhere(depth == max_value)
+        if rows_cols.size == 0:
+            return None
+        u = float(np.mean(rows_cols[:, 1]))
+        intr = frame.intrinsics
+        hfov = 2.0 * float(np.arctan(intr.width / (2.0 * intr.fx)))
+        normalized_u = float(np.clip((u - float(intr.cx)) / float(intr.cx), -1.0, 1.0))
+        heading = agent_heading(frame.T_wc) + normalized_u * hfov / 2.0
+        distance = float(getattr(self.cfg.agent, "climb_carrot_m", 0.8))
+        return agent_xy + distance * np.array([np.cos(heading), np.sin(heading)])
+
+    def _update_carrot(
+        self, frame: FrameData, agent_xy: np.ndarray
+    ) -> Optional[np.ndarray]:
+        fresh = self._carrot_goal(frame, agent_xy)
+        if fresh is None:
+            return self._carrot_xy
+        end = getattr(self, "_climb_goal_xy", None)
+        near_end = end is not None and float(np.linalg.norm(end - agent_xy)) <= 0.5
+        if self._carrot_xy is None or end is None or near_end or self._carrot_disable_end:
+            self._carrot_xy = fresh
+        elif np.linalg.norm(fresh - end) < np.linalg.norm(self._carrot_xy - end):
+            self._carrot_xy = fresh
+        return self._carrot_xy
+
+    def _carrot_action(self, frame: FrameData, agent_xy: np.ndarray) -> str:
+        goal = self._update_carrot(frame, agent_xy)
+        if goal is None:
+            return FORWARD_ACTION
+        if self.pointnav is not None:
+            nav = self.pointnav.step(goal)
+            if nav.action is None:
+                self.stats["climb_forced_forward"] = (
+                    self.stats.get("climb_forced_forward", 0) + 1
+                )
+                return FORWARD_ACTION
+            return nav.action
+        action = self._follow_to(frame, goal)
+        return action if action is not None else FORWARD_ACTION
+
+    def _carrot_stalled(self, agent_xy: np.ndarray) -> bool:
+        ref = getattr(self, "_climb_centroid_xy", None)
+        if ref is None:
+            return False
+        distance = float(np.linalg.norm(agent_xy - ref))
+        if self._climb_last_dist is None or abs(self._climb_last_dist - distance) > 0.2:
+            self._climb_last_dist = distance
+            self._climb_paused_steps = 0
+        else:
+            self._climb_paused_steps += 1
+        if self._climb_paused_steps > 15:
+            self._carrot_disable_end = True
+        return self._climb_paused_steps > 30
+
+    def _update_value_map(self, frame: FrameData, layer) -> None:
+        """Score the current view and fuse it into the active floor map.
+
+        The image-text component is constructed only for explicit
+        ``exploration.value_map`` configurations. Keeping the update here,
+        after the floor policy has selected the layer and the costmap has
+        grown, guarantees that value/confidence arrays remain aligned with the
+        floor-specific occupancy grid. A stride avoids repeatedly scoring
+        effectively identical frames and preserves the approach re-check
+        telemetry from the same scalar.
+        """
+        value_map = getattr(layer, "value_map", None)
+        if self.image_text is None or value_map is None:
+            return
+        stride = max(1, int(getattr(self.cfg.exploration, "value_stride", 1)))
+        if self.step_count % stride:
+            return
+        prompt = str(
+            getattr(
+                self.cfg.exploration,
+                "value_prompt",
+                "Seems like there is a {target} ahead.",
+            )
+        ).format(target=self.target.replace("_", " "))
+        with self.profiler.timeit("value_map"):
+            scores = self.image_text.score(frame.rgb, [prompt])
+            if len(scores) == 0:
+                return
+            value = float(scores[0])
+            value_map.update(frame, value)
+        self.stats["value_calls"] = self.stats.get("value_calls", 0) + 1
+        self._last_itm = value
+        if self.state is State.APPROACH:
+            self._approach_itm_max = max(self._approach_itm_max, value)
+            self._approach_itm_n += 1
+
+    def _seg_stair_mask(self, frame: FrameData) -> Optional[np.ndarray]:
+        if self.stair_segmenter is None:
+            return None
+        with self.profiler.timeit("stair_seg"):
+            return self.stair_segmenter.stair_mask(frame)
+
+    def _accumulate_down_stairs(self, frame: FrameData, layer) -> None:
+        if self.stair_detector is None:
+            return
+        with self.profiler.timeit("stairs"):
+            self.stair_detector.accumulate(
+                frame, layer, None, self._seg_stair_mask(frame)
+            )
+
+    def _down_look(self, frame: FrameData, layer, off_map: bool) -> Optional[str]:
+        if self._pitch_ticks > 0:
+            if not off_map:
+                self._accumulate_down_stairs(frame, layer)
+            self._pitch_ticks -= 1
+            return "look_up"
+        if self._down_look_every <= 0:
+            return None
+        if self.state not in (State.INIT, State.EXPLORE, State.GOTO_FRONTIER):
+            return None
+        if self.step_count - self._last_down_look_step < self._down_look_every:
+            return None
+        self._last_down_look_step = self.step_count
+        self._pitch_ticks += 1
+        self.stats["down_look"] = self.stats.get("down_look", 0) + 1
+        return "look_down"
+
+    def _floor_direction_boost(self, kind: str) -> float:
+        if not self._floor_goal_dir:
+            return 1.0
+        boost = float(getattr(self.cfg.exploration, "floor_llm_boost", 5.0))
+        wanted = "up" if self._floor_goal_dir > 0 else "down"
+        return boost if kind == wanted else 1.0 / boost
+
+    def _mark_floor_explored(self, n_explore: int) -> None:
+        layer = self.floor_layer
+        rule = str(
+            getattr(self.cfg.exploration, "stair_explored_rule", "no_frontiers")
+        )
+        if rule == "no_frontiers":
+            if n_explore == 0:
+                layer.explored = True
+        elif not layer.explored:
+            layer.explored = layer.steps_on_floor >= int(
+                getattr(self.cfg.exploration, "floor_exp_steps", 100)
+            )
+
+    def _left_the_stairs(self, agent_xy: np.ndarray) -> bool:
+        cells = getattr(self, "_climb_cells_xy", None)
+        if cells is None or not len(cells):
+            return True
+        distance = float(np.linalg.norm(cells - agent_xy, axis=1).min())
+        return distance > float(getattr(self.cfg.agent, "stair_exit_m", 0.5))
+
+    def _on_a_staircase(self, agent_xy: np.ndarray) -> bool:
+        detector = self.stair_detector
+        layer = self.floor_layer
+        if detector is None or layer.up_stair_hits is None:
+            return False
+        mask = (
+            (layer.up_stair_hits >= detector.min_hits)
+            | (layer.down_stair_hits >= detector.min_hits)
+        )
+        if layer.disabled_stair is not None:
+            mask &= ~layer.disabled_stair
+        rc = layer.costmap.world_to_grid(agent_xy)
+        radius = max(
+            1,
+            int(round(float(getattr(self.cfg.agent, "stair_exit_m", 0.5)) /
+                      layer.costmap.resolution)),
+        )
+        r0, r1 = max(0, rc[0] - radius), min(mask.shape[0], rc[0] + radius + 1)
+        c0, c1 = max(0, rc[1] - radius), min(mask.shape[1], rc[1] + radius + 1)
+        if r0 >= r1 or c0 >= c1:
+            return False
+        yy, xx = np.ogrid[r0:r1, c0:c1]
+        disk = (yy - rc[0]) ** 2 + (xx - rc[1]) ** 2 <= radius ** 2
+        return bool((mask[r0:r1, c0:c1] & disk).any())
+
+    def _floor_frozen(self, frame: FrameData) -> bool:
+        if self.state is State.CLIMB and bool(
+            getattr(self.cfg.mapping, "freeze_floor_in_climb", False)
+        ):
+            return True
+        if bool(getattr(self.cfg.mapping, "freeze_floor_on_stairs", False)):
+            return self._on_a_staircase(frame.camera_position[list(PLANE)])
+        return False
+
+    def _recheck_rejects(self, stop_reason: str) -> bool:
+        """Apply ASCENT's latched image-text gate before committing a stop."""
+        self.approach_recheck_max = float(self._approach_itm_max)
+        if not self._approach_recheck:
+            return False
+        self.stats["recheck_calls"] = self.stats.get("recheck_calls", 0) + 1
+        if self._approach_itm_n == 0:
+            self.stats["recheck_no_obs"] = self.stats.get("recheck_no_obs", 0) + 1
+            return False
+        if self._approach_itm_max >= self._approach_recheck_thresh:
+            self.stats["recheck_pass"] = self.stats.get("recheck_pass", 0) + 1
+            return False
+        self.stats["recheck_reject"] = self.stats.get("recheck_reject", 0) + 1
+        self.stats[f"recheck_reject_{stop_reason}"] = (
+            self.stats.get(f"recheck_reject_{stop_reason}", 0) + 1
+        )
+        if self._candidate_id is not None:
+            self.object_layer.blacklist(self._candidate_id)
+        self._candidate_id = None
+        self._target_obj_xy = None
+        self._goal_xy = None
+        self._current_path = None
+        self.state = State.EXPLORE
+        return True
+
+    def _commit_terminal_stop(self, stop_reason: str) -> str:
+        if self._recheck_rejects(stop_reason):
+            return TURN_ACTION
+        self.state = State.DONE
+        self.approach.stop_reason = stop_reason
+        return STOP_ACTION
+
+    def _start_approach(
+        self,
+        obj_xy: np.ndarray,
+        agent_xy: Optional[np.ndarray] = None,
+        floor_y: Optional[float] = None,
+    ) -> None:
+        """Compatibility entry point shared by the FSM and ASCENT facade."""
+        self._approach_itm_max = 0.0
+        self._approach_itm_n = 0
+        self.approach_recheck_max = None
+        self._approach_start_step = self.step_count
+        here = agent_xy if agent_xy is not None else self._agent_xy
+        if self._candidate_id is not None and here is not None:
+            track = self.object_layer.get(self._candidate_id)
+            if track is not None:
+                nearest = self.object_layer.nearest_point_xy(track, here)
+                self._target_cloud_xy = (
+                    None if nearest is None else np.asarray(nearest, dtype=float).copy()
+                )
+        self.approach.start(obj_xy, agent_xy, floor_y)
+
+    def _abandon_approach(self) -> str:
+        disabled = self._candidate_id is not None and self.object_layer.disable_target(
+            self._candidate_id
+        )
+        if not disabled and self._target_obj_xy is not None:
+            self.object_layer.disable_place(self._target_obj_xy, self.target)
+        self.stats["approach_abandon"] = self.stats.get("approach_abandon", 0) + 1
+        self._candidate_id = self._target_obj_xy = self._goal_xy = None
+        self._current_path = None
+        self.state = State.EXPLORE
+        return TURN_ACTION
+
+    def _do_approach(self, frame: FrameData) -> str:
+        budget = int(getattr(self.cfg.agent, "approach_abandon_steps", 0))
+        if (
+            self._reachable_fn is None and budget > 0
+            and self.step_count - self._approach_start_step >= budget
+        ):
+            return self._abandon_approach()
+        if self.cfg.agent.terminal_rule == "nearest_point":
+            reason = self._nearest_point_stop(frame.camera_position[list(PLANE)])
+            if reason is not None and (
+                not self.cfg.agent.terminal_requires_detection
+                or self._target_visible(frame)
+            ):
+                return self._commit_terminal_stop(reason)
+        if hasattr(self, "_approach_steps_left"):
+            self.approach.steps_left = self._approach_steps_left
+        action = self.approach.step(frame)
+        self._approach_steps_left = self.approach.steps_left
+        if action == STOP_ACTION:
+            return self._commit_terminal_stop(self.approach.stop_reason or "approach")
+        return action
+
+    def _follow_to(self, frame: FrameData, goal_xy: np.ndarray) -> Optional[str]:
+        if self.pointnav is not None:
+            creep = (
+                float(self.cfg.agent.pointnav_approach_creep_m)
+                if self.state is State.APPROACH else 0.0
+            )
+            return self.pointnav(
+                goal_xy, creep_below=creep,
+                stop_radius=float(self.cfg.agent.pointnav_arrival_m),
+            )
+        return self.approach.follow_to(frame, goal_xy)

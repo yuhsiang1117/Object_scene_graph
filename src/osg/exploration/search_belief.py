@@ -45,6 +45,10 @@ class SearchCandidate:
     prior: float  # b(x) before this round's cost is known
     detect_prob: float  # d(x): chance a visit here would find the target
     label: str = ""
+    # Stable storey identity.  This is deliberately not a vertical-order
+    # index: discovering a basement must not renumber an already persisted
+    # candidate.
+    floor_key: int = 0
     path_cost: Optional[float] = None
     utility: Optional[float] = None
 
@@ -199,16 +203,19 @@ def build_container_candidates(
 ) -> List[SearchCandidate]:
     raw: List[tuple] = []
     for node in getattr(scene_graph, "containers", {}).values():
+        floor_key = int(getattr(node, "floor_id", getattr(node, "floor", 0)))
+        floor_node = getattr(scene_graph, "floors", {}).get(floor_key)
+        floor_y = float(getattr(floor_node, "height_y", 0.0))
         centre_xy = np.asarray(node.center, dtype=float)[list(plane)]
         prior = container_prior(
-            target, node.label, node.top_h, node.area_m2, centre_xy,
+            target, node.label, float(node.top_h) - floor_y, node.area_m2, centre_xy,
             last_known_xy=last_known_xy, proximity_len_m=proximity_len_m,
             proximity_floor=proximity_floor, affinity_source=affinity_source,
             present=present,
         )
         if prior <= 0.0:
             continue
-        raw.append((node, centre_xy, prior))
+        raw.append((node, centre_xy, prior, floor_key))
     if not raw:
         return []
 
@@ -230,9 +237,9 @@ def build_container_candidates(
     # touching the order. Decay is applied AFTER, so an inspected surface still
     # falls away -- normalising post-decay would restore the best survivor to
     # full mass every round and the agent would never hand back to exploration.
-    peak = max(prior for _, _, prior in raw)
+    peak = max(prior for _, _, prior, _ in raw)
     out: List[SearchCandidate] = []
-    for node, centre_xy, prior in raw:
+    for node, centre_xy, prior, floor_key in raw:
         out.append(
             SearchCandidate(
                 kind="container",
@@ -241,6 +248,7 @@ def build_container_candidates(
                 prior=surface_mass * (prior / peak) * log.factor(node.id),
                 detect_prob=float(detect_prob),
                 label=str(node.label),
+                floor_key=floor_key,
             )
         )
     return out

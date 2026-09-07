@@ -82,8 +82,11 @@ def _frame_at(xy) -> "object":
     return make_frame(_INTRINSICS, T)
 
 
-def make_agent(cfg=None, target="chair") -> NavAgent:
-    agent = NavAgent(cfg or make_cfg(), StubDetector(), AsyncScorer(_StubScorer()), None, target)
+def make_agent(cfg=None, target="chair", **kwargs) -> NavAgent:
+    agent = NavAgent(
+        cfg or make_cfg(), StubDetector(), AsyncScorer(_StubScorer()), None,
+        target, **kwargs,
+    )
     agent.costmap.grid[:, :] = FREE
     return agent
 

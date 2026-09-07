@@ -64,6 +64,7 @@ class WorldView:
     target: str
     goal_xy: Optional[np.ndarray]
     floor_id: int = 0
+    value_map: object = None
 
 
 @dataclass
@@ -160,6 +161,11 @@ class ExplorationStrategy:
         self.progress_ref_step = 0
         self.progress_ref_xy = np.zeros(2)
         self._glanced: set = set()
+        # A surface posterior may select another storey.  Only candidates on
+        # the active floor are ever converted to viewpoints or sent to the 2D
+        # planner; this field hands the other-floor decision to FloorPolicy.
+        self.requested_floor: Optional[int] = None
+        self.selected_search_floor: Optional[int] = None
 
     # ------------------------------------------------------------- blacklist
 
@@ -193,7 +199,9 @@ class ExplorationStrategy:
     def select(self, world: WorldView, floor_switch) -> Optional[ExplorationChoice]:
         # Extraction + top-N path planning is expensive; while waiting the
         # agent turns in place, which grows the map anyway.
-        if world.step - self._last_select_step < 5:
+        if world.step - self._last_select_step < max(
+            1, int(getattr(self.cfg, "select_every", 5))
+        ):
             return None
         self._last_select_step = world.step
         # A surface is only searched once the agent has actually got there.
@@ -216,13 +224,35 @@ class ExplorationStrategy:
                 world.costmap, world.agent_xy,
                 floor=world.floor_id,
             )
-        if not frontiers:
+        if not frontiers and not bool(self.cfg.search_posterior):
             # Nothing left on this floor is the strongest possible "no near
             # frontier", so the portal gate still gets its chance.
             floor_switch(None)
             return None
         # Async scoring request (never blocks); use whatever scores exist now
         self.scorer.request(frontiers, world.scene_graph, world.target, world.keyframes)
+        frontier_scores = dict(self.scorer.latest())
+        # Optional ASCENT/VLFM-style semantic value.  The image-text scorer
+        # paints only the active floor; applying it here keeps remote-floor
+        # candidates out of local geometry and leaves the default geometric
+        # path byte-for-byte unchanged when value_map is disabled.
+        value_map = getattr(world, "value_map", None)
+        if value_map is not None:
+            value_weight = float(getattr(self.cfg, "value_weight", 1.0))
+            value_argmax = bool(getattr(self.cfg, "value_argmax", False))
+            value_radius = float(getattr(self.cfg, "value_radius_m", 0.5))
+            for frontier in frontiers:
+                value = max(
+                    0.0,
+                    float(value_map.value_at(frontier.centroid_xy, value_radius)),
+                )
+                if value <= 0.0:
+                    continue
+                if value_argmax:
+                    frontier_scores[frontier.id] = value
+                else:
+                    base = frontier_scores.get(frontier.id, self.cfg.unscored_prior)
+                    frontier_scores[frontier.id] = base * (1.0 + value_weight * value)
         blocked = self._blocked_ids(frontiers, world.step)
         agent_xy = world.agent_xy
         heading_xy = self._heading_xy(world.frame)
@@ -230,7 +260,7 @@ class ExplorationStrategy:
         with self.profiler.timeit("frontier_select"):
             best = select_frontier(
                 frontiers,
-                self.scorer.latest(),
+                frontier_scores,
                 self.planner,
                 world.costmap,
                 agent_xy,
@@ -252,6 +282,16 @@ class ExplorationStrategy:
             self.block(by_id.get(fid), 50, world.step)
 
         surface = self._select_surface(world, best)
+        if self.requested_floor is not None:
+            requested = int(self.requested_floor)
+            try:
+                switched = floor_switch(None, requested)
+            except TypeError:
+                # Compatibility with small external strategies/tests that use
+                # the original one-argument callback.
+                switched = floor_switch(None)
+            if switched:
+                return None
         if surface is not None:
             self.search_container = int(surface.ref_id)
             node = world.scene_graph.containers.get(int(surface.ref_id))
@@ -274,6 +314,7 @@ class ExplorationStrategy:
                         else None
                     ),
                     "room": self.search_room_id,
+                    "floor_key": int(surface.floor_key),
                     "room_bonus": round(
                         self._room_bonus(
                             float(self.cfg.search_same_room_bonus),
@@ -311,7 +352,7 @@ class ExplorationStrategy:
                 }
             if len(relaxed_blocked) < len(frontiers):
                 best = select_frontier(
-                    frontiers, self.scorer.latest(), self.planner, world.costmap,
+                    frontiers, frontier_scores, self.planner, world.costmap,
                     agent_xy, unscored_prior=self.cfg.unscored_prior,
                     min_path_cost_m=self.cfg.min_path_cost_m,
                     top_n=self.cfg.top_n_frontiers, blocked=relaxed_blocked,
@@ -383,6 +424,10 @@ class ExplorationStrategy:
         K, T_cw = frame.intrinsics.K(), frame.T_cw
         h, w = frame.depth.shape
         for cid, node in containers.items():
+            if int(getattr(node, "floor_id", getattr(node, "floor", 0))) != int(
+                world.floor_id
+            ):
+                continue
             p_cam = T_cw[:3, :3] @ node.center + T_cw[:3, 3]
             z = float(p_cam[2])
             if not (0.3 <= z <= rng):
@@ -432,6 +477,34 @@ class ExplorationStrategy:
         )
         if not cands:
             return None
+        # Choose a storey from the posterior before doing any 2D geometry.
+        # Path cost is meaningful only within a floor; aggregate the remaining
+        # probability mass here and delegate vertical travel to FloorPolicy.
+        floor_mass: Dict[int, float] = {}
+        for cand in cands:
+            floor_mass[cand.floor_key] = floor_mass.get(cand.floor_key, 0.0) + (
+                cand.prior * cand.detect_prob
+            )
+        selected_floor = max(floor_mass, key=lambda key: (floor_mass[key], -int(key)))
+        self.selected_search_floor = int(selected_floor)
+        self.stats["selected_search_floor"] = int(selected_floor)
+        if int(selected_floor) != int(world.floor_id):
+            self.requested_floor = int(selected_floor)
+            self.stats["cross_floor_search_requests"] = (
+                self.stats.get("cross_floor_search_requests", 0) + 1
+            )
+            self.search_log_events.append({
+                "step": int(world.step),
+                "selected_floor": int(selected_floor),
+                "current_floor": int(world.floor_id),
+                "floor_mass": {
+                    str(key): round(float(value), 5)
+                    for key, value in sorted(floor_mass.items())
+                },
+            })
+            return None
+        self.requested_floor = None
+        cands = [c for c in cands if int(c.floor_key) == int(world.floor_id)]
         # Drive to a pose you can STAND in, not to the middle of the furniture.
         # A container's centre is inside the desk; the follower ends wherever the
         # navmesh allows, arrival is never registered, and the surface is scored
@@ -455,7 +528,7 @@ class ExplorationStrategy:
         # once the nearby surfaces are retired.
         room_bonus = float(self.cfg.search_same_room_bonus)
         if room_bonus > 1.0 and world.scene_graph.rooms:
-            here = world.scene_graph.room_of_point(agent_xy)
+            here = world.scene_graph.room_of_point(agent_xy, floor_key=world.floor_id)
             if here is not None:
                 for c in cands:
                     node = world.scene_graph.containers.get(c.ref_id)
@@ -563,6 +636,10 @@ class ExplorationStrategy:
             return None
         node = world.scene_graph.containers.get(self.search_container)
         if node is None:
+            return None
+        if int(getattr(node, "floor_id", getattr(node, "floor", 0))) != int(
+            world.floor_id
+        ):
             return None
         frame, agent_xy = world.frame, world.agent_xy
         if float(np.linalg.norm(agent_xy - world.goal_xy)) > float(
@@ -760,4 +837,3 @@ class ExplorationStrategy:
         # had simply finished exploring.
         self._last_giveup_pt = (frontier.centroid_xy.copy(), frontier.floor)
         self.stats["frontier_stub_block"] = self.stats.get("frontier_stub_block", 0) + 1
-

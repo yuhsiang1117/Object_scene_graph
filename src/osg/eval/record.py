@@ -85,15 +85,18 @@ def stair_track_fields(agent) -> dict:
     the evidence to confirm or falsify that BEFORE the stair-detection work is
     built on top of it. Cheap: a filter over tracks the layer already holds.
     """
+    object_layer = getattr(agent, "object_layer", None)
+    if object_layer is None:
+        return {"n_stair_tracks": 0, "stair_tracks": []}
     tracks = [
-        t for t in agent.object_layer.tracks(include_blacklisted=True)
+        t for t in object_layer.tracks(include_blacklisted=True)
         if normalize_label(t.label) in STAIR_LABELS
     ]
     return {
         "n_stair_tracks": len(tracks),
         "stair_tracks": [
             {
-                "center": [round(float(x), 3) for x in agent.object_layer.center_of(t)],
+                "center": [round(float(x), 3) for x in object_layer.center_of(t)],
                 "n_obs": int(t.n_obs),
                 "evidence": round(float(t.evidence), 3),
                 "best_score": round(float(t.best_score), 3),
@@ -110,9 +113,15 @@ def target_track_fields(agent) -> dict:
     _target_obj_xy is set (in _start_approach) only once a candidate is
     accepted into APPROACH, so it is None for episodes that never committed to
     a target (pure exploration failures) -- recorded as None there."""
+    object_layer = getattr(agent, "object_layer", None)
+    if object_layer is None:
+        return {
+            "target_obj_xy": None, "cand_best_cam_xy": None,
+            "cand_best_score": None, "cand_n_obs": None,
+        }
     obj_xy = getattr(agent, "_target_obj_xy", None)
     cand_id = getattr(agent, "_candidate_id", None)
-    track = agent.object_layer.get(cand_id) if cand_id is not None else None
+    track = object_layer.get(cand_id) if cand_id is not None else None
     best_cam = getattr(track, "best_cam_xy", None) if track is not None else None
     return {
         "target_obj_xy": [float(x) for x in obj_xy] if obj_xy is not None else None,
@@ -133,7 +142,7 @@ def build_episode_record(
     are cumulative -- without the deltas, every episode after the first would
     report the run's running total instead of its own.
     """
-    from .floors import episode_floor_fields
+    from .floors import episode_floor_fields, runtime_floor_fields
 
     authored = authored_episode_metadata(episode)
     # The env knows things the episode record cannot: whether a relocation
@@ -152,6 +161,16 @@ def build_episode_record(
         reloc["offline"] = True
 
     want = normalize_label(target)
+    exploration = getattr(agent, "exploration", None)
+    object_layer = getattr(agent, "object_layer", None)
+    tracks = (
+        list(object_layer.tracks()) if object_layer is not None else []
+    )
+    survival = (
+        exploration.survival_report()
+        if exploration is not None and hasattr(exploration, "survival_report") else {}
+    )
+    funnel = dict(getattr(object_layer, "funnel", {}) or {})
     return {
         "episode_id": str(episode.episode_id),
         "scene": authored.get("scene", str(episode.scene_id).split("/")[-1]),
@@ -172,8 +191,8 @@ def build_episode_record(
             # see the difference and has been guessing at it.
             **dict(getattr(env, "nav_reasons", {}) or {}),
             **agent.stats,
-            **agent.exploration.survival_report(),
-            **agent.object_layer.funnel,
+            **survival,
+            **funnel,
         },
         # Phase 2 dynamic-scene evidence: when beliefs flipped, what the agent
         # believed when it committed to a goal, and what it still believed about
@@ -181,14 +200,14 @@ def build_episode_record(
         "prior_map": outcome.map_note,
         "attempts_used": outcome.attempts_used,
         "attempt_log": outcome.attempt_log,
-        "presence_events": agent.presence_events,
-        "search_log_events": agent.search_log_events,
-        "goal_commit_log": agent.goal_commit_log,
+        "presence_events": getattr(agent, "presence_events", []),
+        "search_log_events": getattr(agent, "search_log_events", []),
+        "goal_commit_log": getattr(agent, "goal_commit_log", []),
         "target_tracks": [
             {
                 "track_id": int(t.id),
                 "label": str(t.label),
-                "center": [float(v) for v in agent.object_layer.center_of(t)],
+                "center": [float(v) for v in object_layer.center_of(t)],
                 "p": round(float(t.presence.p), 4),
                 # Why a track was or was not proposable: the candidate gates
                 # read exactly these, and without them a track that sits in the
@@ -198,18 +217,19 @@ def build_episode_record(
                 "best_score": round(float(t.best_score), 3),
                 "best_bbox_px": round(float(t.best_bbox_px), 1),
                 "evidence": round(float(t.evidence), 3),
+                "floor_key": int(getattr(t, "floor_key", 0)),
             }
-            for t in agent.object_layer.tracks()
+            for t in tracks
             if normalize_label(t.label) == want
         ],
-        "state_log": agent.state_log[:40],
-        "frontier_select_log": agent.frontier_select_log,
-        "giveup_log": agent.giveup_log[:50],
-        "approach_bbox_log": agent.approach_bbox_log,
-        "approach_stop_reason": agent.approach_stop_reason,
-        "approach_diag": agent.approach_diag,
-        "approach_retarget_log": agent.approach_retarget_log,
-        "candidate_reject_log": agent.candidate_reject_log,
+        "state_log": getattr(agent, "state_log", [])[:40],
+        "frontier_select_log": getattr(agent, "frontier_select_log", []),
+        "giveup_log": getattr(agent, "giveup_log", [])[:50],
+        "approach_bbox_log": getattr(agent, "approach_bbox_log", []),
+        "approach_stop_reason": getattr(agent, "approach_stop_reason", None),
+        "approach_diag": getattr(agent, "approach_diag", None),
+        "approach_retarget_log": getattr(agent, "approach_retarget_log", []),
+        "candidate_reject_log": getattr(agent, "candidate_reject_log", []),
         "final_xy": [float(x) for x in outcome.trajectory[-1]],
         "verify_calls": (verifier.n_calls - verifier_before[0]) if verifier is not None else 0,
         "verify_errors": (verifier.n_errors - verifier_before[1]) if verifier is not None else 0,
@@ -224,6 +244,7 @@ def build_episode_record(
         # Which floor the goal is on relative to the start pose, and whether the
         # agent actually changed level (docs/MULTI_FLOOR.md).
         **episode_floor_fields(episode, outcome.trajectory_y),
+        **runtime_floor_fields(episode, outcome.trajectory_y, agent, authored),
         **stair_track_fields(agent),
         # Ground-truth visibility (runner-side only; the agent never sees it).
         # Splits "never perceived the object at its new pose" into never-looked
@@ -233,9 +254,12 @@ def build_episode_record(
         # Online floor estimate (mapping/floors.py). Compare n_floors_seen
         # against the per-scene navmesh ground truth from scripts/scene_floors.py
         # before letting behaviour depend on the estimator.
-        "floor_log": agent.floor_log,
-        "n_floors_seen": len(agent.floors.levels),
-        "floor_y_drift": round(float(agent.floor_y_drift), 4),
-        "floor_transitions": len(agent.floors.transitions),
-        "portal_log": agent.portal_log,
+        "floor_log": getattr(agent, "floor_log", []),
+        "n_floors_seen": len(getattr(getattr(agent, "floors", None), "levels", {}))
+        or len(getattr(agent, "_floors", []) or []),
+        "floor_y_drift": round(float(getattr(agent, "floor_y_drift", 0.0)), 4),
+        "floor_transitions": len(
+            getattr(getattr(agent, "floors", None), "transitions", [])
+        ),
+        "portal_log": getattr(agent, "portal_log", []),
     }

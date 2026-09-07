@@ -5,7 +5,7 @@ Grid values: -1 unknown, 0 free, 100 occupied. The grid auto-grows.
 """
 from __future__ import annotations
 
-from typing import Optional, Tuple
+from typing import Callable, List, Optional, Tuple
 
 import numpy as np
 
@@ -38,6 +38,10 @@ class Costmap2D:
         # that exemption the next frame re-stamps them and the relabel is a
         # no-op, because OCCUPIED is never otherwise cleared.
         self.stair_mask: Optional[np.ndarray] = None
+        self._grow_listeners: List[Callable[[int, int, int, int], None]] = []
+
+    def add_grow_listener(self, fn: Callable[[int, int, int, int], None]) -> None:
+        self._grow_listeners.append(fn)
 
     # ------------------------------------------------------------- transforms
 
@@ -70,6 +74,8 @@ class Costmap2D:
                 grown[h // 2 : h // 2 + h, w // 2 : w // 2 + w] = old
                 setattr(self, name, grown)
         self.origin = self.origin - np.array([h // 2, w // 2]) * self.resolution
+        for listener in self._grow_listeners:
+            listener(h, w, h // 2, w // 2)
         self.ensure_contains(xy, margin_m)
 
     # ---------------------------------------------------------------- update
@@ -245,6 +251,15 @@ class Costmap2D:
 
     def coverage_cells(self) -> int:
         return int((self.grid != UNKNOWN).sum())
+
+
+def grow_aligned(
+    arr: np.ndarray, old_h: int, old_w: int, off_r: int, off_c: int, fill=0
+) -> np.ndarray:
+    """Grow a grid-aligned side array after its costmap doubles in size."""
+    new = np.full((old_h * 2, old_w * 2), fill, dtype=arr.dtype)
+    new[off_r : off_r + old_h, off_c : off_c + old_w] = arr
+    return new
 
 
 def block_min(height, block):

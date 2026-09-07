@@ -43,8 +43,13 @@ class EpisodeOutcome:
 def run_episode(cfg, env, agent, episode, target, frame, detector, debug=None) -> EpisodeOutcome:
     """Drive one episode to termination and report what happened."""
     outcome = EpisodeOutcome()
-    outcome.map_note = load_prior_map(cfg, agent, str(
-        authored_episode_metadata(episode).get("scene", "scene")))
+    outcome.map_note = load_prior_map(
+        cfg,
+        agent,
+        str(authored_episode_metadata(episode).get("scene", "scene")),
+        initial_floor_y=float(frame.camera_position[HEIGHT_AXIS])
+        - float(cfg.agent.camera_height),
+    )
 
     # Height is tracked alongside the 2D trajectory (rather than making
     # `trajectory` 3D) so the analyze_*.py tools keep working unchanged, while

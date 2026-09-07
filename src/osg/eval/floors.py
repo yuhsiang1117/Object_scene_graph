@@ -165,3 +165,77 @@ def episode_floor_fields(episode, trajectory_y: Sequence[float]) -> dict:
         "floor_changes": count_floor_changes(trajectory_y),
         "goal_y_span": round(max(goal_ys) - min(goal_ys), 3) if goal_ys else None,
     }
+
+
+def runtime_floor_fields(episode, trajectory_y: Sequence[float], agent, authored: dict) -> dict:
+    """Stable floor identities and cross-floor relocation telemetry.
+
+    Heights remain in the older fields for source compatibility.  These fields
+    bind them to FloorStack's persistent keys, whose numeric value never implies
+    vertical order.
+    """
+    levels = dict(getattr(getattr(agent, "floors", None), "levels", {}) or {})
+
+    def key_at(y: Optional[float]) -> Optional[int]:
+        if y is None or not levels:
+            return None
+        key = min(levels, key=lambda item: abs(float(levels[item]) - float(y)))
+        if abs(float(levels[key]) - float(y)) > SAME_FLOOR_M:
+            return None
+        return int(key)
+
+    start = getattr(episode, "start_position", None)
+    start_y = float(start[HEIGHT_AXIS]) if start is not None else (
+        float(trajectory_y[0]) if trajectory_y else None
+    )
+    goal_ys = goal_view_heights(episode)
+    goal_y = min(goal_ys, key=lambda y: abs(y - start_y)) if goal_ys and start_y is not None else (
+        goal_ys[0] if goal_ys else None
+    )
+    relocation = authored.get("relocation") or {}
+    origin = relocation.get("origin_position") if isinstance(relocation, dict) else None
+    destination = relocation.get("destination_position") if isinstance(relocation, dict) else None
+    prior_y = authored.get("prior_floor_y")
+    if prior_y is None and origin is not None:
+        prior_y = float(origin[HEIGHT_AXIS])
+    destination_y = authored.get("destination_floor_y")
+    if destination_y is None:
+        destination_y = float(destination[HEIGHT_AXIS]) if destination is not None else goal_y
+
+    start_floor = key_at(start_y)
+    goal_floor = key_at(destination_y)
+    prior_floor = key_at(prior_y)
+    direction = authored.get("relocation_direction")
+    if prior_floor is not None and goal_floor is not None:
+        if prior_floor == goal_floor:
+            direction = "same_floor"
+        else:
+            direction = "upward" if levels[goal_floor] > levels[prior_floor] else "downward"
+    if direction is None and prior_y is not None and destination_y is not None:
+        delta = float(destination_y) - float(prior_y)
+        direction = (
+            "same_floor" if abs(delta) <= SAME_FLOOR_M
+            else "upward" if delta > 0.0 else "downward"
+        )
+    goal_height = (
+        levels.get(goal_floor) if goal_floor is not None else destination_y
+    )
+    reached = None if goal_height is None else any(
+        abs(float(y) - float(goal_height)) <= SAME_FLOOR_M for y in trajectory_y
+    )
+    exploration = getattr(agent, "exploration", None)
+    selected = getattr(exploration, "selected_search_floor", None)
+    stack = getattr(getattr(agent, "floors", None), "stack", None)
+    stats = dict(getattr(agent, "stats", {}) or {})
+    return {
+        "start_floor": start_floor,
+        "goal_floor": goal_floor,
+        "prior_floor": prior_floor,
+        "relocation_direction": direction,
+        "selected_search_floor": None if selected is None else int(selected),
+        "floor_switches": len(getattr(stack, "stair_edges", []) or []),
+        "climb_attempts": int(
+            stats.get("climb_attempt", 0) + stats.get("floor_switch_attempts", 0)
+        ),
+        "goal_floor_reached": reached,
+    }

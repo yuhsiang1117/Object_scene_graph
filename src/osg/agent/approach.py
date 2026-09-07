@@ -503,6 +503,8 @@ class ApproachPolicy:
         detour around a nearby thin obstacle to blow the 0.13 m success
         radius even when we were geometrically almost there.
         """
+        if self.nav.pointnav is not None:
+            return self.nav._follow_to(frame, goal_xy)
         if self.nav._use_navmesh:
             # navmesh drives to the object; None = arrived
             return self.nav._nav_fn(goal_xy, self.nav._goal_floor_y_cache)
