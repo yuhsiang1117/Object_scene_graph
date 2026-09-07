@@ -439,7 +439,16 @@ def generate_manifest(
             try:
                 viewpoints = _viewpoints_for_object(simulator, authored, cfg)
             except YCBLayoutError as exc:
-                if not bool(getattr(cfg.ycb, "cross_floor_relocations_only", False)):
+                # Combined campaigns may explicitly retain heterogeneous
+                # authored layouts while omitting individual targets that do
+                # not have a valid navigable/viewpoint construction.  The
+                # same opt-in must apply to the static map pass; otherwise a
+                # single unobservable object aborts map generation before the
+                # dynamic suite can run.
+                if not (
+                    bool(getattr(cfg.ycb, "cross_floor_relocations_only", False))
+                    or bool(getattr(cfg.ycb, "skip_incomplete_layouts", False))
+                ):
                     raise
                 skipped_targets.append({
                     "semantic_id": int(authored.semantic_id),
@@ -485,7 +494,10 @@ def generate_manifest(
                     required_floor_y=required_y,
                 )
             except YCBLayoutError as exc:
-                if not bool(getattr(cfg.ycb, "cross_floor_relocations_only", False)):
+                if not (
+                    bool(getattr(cfg.ycb, "cross_floor_relocations_only", False))
+                    or bool(getattr(cfg.ycb, "skip_incomplete_layouts", False))
+                ):
                     raise
                 skipped_targets.append({
                     "semantic_id": int(authored.semantic_id),
