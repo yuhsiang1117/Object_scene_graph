@@ -1,0 +1,12 @@
+defaults:
+  - nim
+
+# Terminal-view verification: same NIM llama-3.2-11b-vision verifier and the
+# same loosened candidate-admission gates as verification=nim, but the VLM call
+# is moved from the pre-approach best_crop (which is category-correct even for
+# false positives -> 97% accept, no SR change; run outputs/20260727_110447) to
+# the LIVE close-up frame at the STOP decision. A rejected terminal STOP
+# blacklists the track and resumes exploration. This targets the 38.5% of
+# approach failures attributed to false-positive detections
+# (scripts/analyze_trackloc.py) that pre-approach verification could not catch.
+terminal: true

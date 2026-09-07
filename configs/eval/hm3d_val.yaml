@@ -1,0 +1,5 @@
+defaults:
+  - base_hm3d
+
+split: val
+num_episodes: -1

@@ -1,0 +1,28 @@
+__pycache__/
+*.py[cod]
+*.egg-info/
+.pytest_cache/
+.hydra/
+outputs/
+# Ignore data/ contents, but keep a couple of small tracked files. git does not
+# descend into an excluded DIRECTORY, so each path component has to be
+# re-included explicitly -- hence `data/*` rather than `data/`.
+data/*
+!data/README.md
+# A/B split provenance (scene floor spans + the sampled episode ids): a few KB,
+# and the record of how configs/eval/dev50*.yaml were produced.
+!data/splits/
+data/splits/*
+!data/splits/*.json
+.env
+*.npz
+*.pt
+mobileclip_blt.ts
+.vscode/
+.idea/
+.claude
+# The ASCENT reference implementation (arXiv 2505.23019) is a CHECKOUT of an
+# external project with its own .git, kept here to read against -- every
+# `relative_work/ascent/...:NNN` citation in docs/AB_RESULTS.md points into it.
+# It is not part of this package and is not ours to vendor.
+relative_work/

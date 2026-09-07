@@ -1,0 +1,74 @@
+services:
+  ollama:
+    image: ollama/ollama:latest
+    restart: unless-stopped
+    environment:
+      - OLLAMA_KEEP_ALIVE=30m
+      - OLLAMA_MAX_LOADED_MODELS=2  
+      - OLLAMA_CONTEXT_LENGTH=8192
+    volumes:
+      - ollama-models:/root/.ollama
+    ports:
+      - "11434:11434"
+    deploy:
+      resources:
+        reservations:
+          devices:
+            - driver: nvidia
+              count: 1
+              capabilities: [gpu]
+
+  nav:
+    build:
+      context: .
+      dockerfile: Dockerfile
+      args:
+        USER_UID: ${UID:-1000}
+        USER_GID: ${GID:-1000}
+    runtime: nvidia
+    depends_on:
+      - ollama
+    stdin_open: true
+    tty: true
+    command: ["bash"]
+    # Share the host's network namespace. The default bridge already reaches
+    # most of the internet, but not everything -- the CLIP checkpoint CDN
+    # (openaipublic.azureedge.net) times out from the bridge while resolving and
+    # downloading fine on the host, which is the kind of gap that turns into a
+    # confusing model-load failure. Host networking removes the class of
+    # problem.
+    #
+    # Consequence: docker's service DNS is gone, so ollama is reached on
+    # localhost (the ollama service publishes 11434 on the host) rather than by
+    # service name.
+    network_mode: host
+    environment:
+      - OLLAMA_HOST=http://localhost:11434
+      - NVIDIA_DRIVER_CAPABILITIES=all
+      - PYTORCH_CUDA_ALLOC_CONF=expandable_segments:True
+      - HOME=/tmp
+      - YOLO_CONFIG_DIR=/tmp/Ultralytics
+      - NVIDIA_API_KEY=${NVIDIA_API_KEY}
+    volumes:
+      - ..:/workspace
+      - weights-cache:/workspace/data/weights
+      - ../outputs:/workspace/outputs
+      # HM3D scene meshes (~6 GB), mounted READ-ONLY from wherever they live on
+      # the host -- they are large, immutable, and frequently shared between
+      # checkouts, so they are not copied into the repo. Point HM3D_SCENES at
+      # the directory CONTAINING hm3d-0.2/ (see .env.example).
+      # data/scene_datasets/hm3d symlinks in here; episodes stay in the repo
+      # under data/datasets/ because they are small and version-specific.
+      - ${HM3D_SCENES:-../data/versioned_data}:/workspace/data/versioned_data:ro
+    deploy:
+      resources:
+        reservations:
+          devices:
+            - driver: nvidia
+              count: 1
+              capabilities: [gpu, graphics]
+    ipc: host
+
+volumes:
+  ollama-models: {}
+  weights-cache: {}

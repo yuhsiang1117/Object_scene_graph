@@ -1,0 +1,16 @@
+# @package _global_
+#
+# Alias kept for reproducibility: this is the exact preset that produced
+# `outputs/s30_fix1` (S30 run B, 42.0% SR). `ascent_sensor` has since been
+# reduced to the same settings, since fixes 2 and 3 measured null -- so the two
+# are now identical and either reproduces run B.
+#
+#   python scripts/run_eval.py +experiment=ascent_sensor_fix1 eval=scenes20_ep0to4
+
+defaults:
+  - ascent_sensor
+
+agent:
+  terminal_requires_detection: false
+  pointnav_stop_means_blocked: true
+  frontier_reachability_gate: true

@@ -1,0 +1,181 @@
+"""Grid path planning. A* on the inflated costmap; unknown cells are
+traversable at a penalty (frontier goals sit at the unknown boundary by
+definition). The Planner ABC keeps a Voronoi/FMM planner pluggable later.
+"""
+from __future__ import annotations
+
+import heapq
+from abc import ABC, abstractmethod
+from dataclasses import dataclass, field
+from typing import List, Optional, Tuple
+
+import numpy as np
+
+from ..mapping.costmap import OCCUPIED, UNKNOWN, Costmap2D
+
+
+@dataclass
+class PlanResult:
+    success: bool
+    path: np.ndarray = field(default_factory=lambda: np.zeros((0, 2)))  # (M, 2) world xy
+    cost: float = float("inf")  # meters (unknown penalty excluded)
+
+
+class Planner(ABC):
+    @abstractmethod
+    def plan(
+        self,
+        costmap: Costmap2D,
+        start_xy: np.ndarray,
+        goal_xy: np.ndarray,
+        goal_tolerance_m: Optional[float] = None,
+    ) -> PlanResult: ...
+
+
+_SQRT2 = float(np.sqrt(2.0))
+_NEIGHBORS: List[Tuple[int, int, float]] = [
+    (-1, 0, 1.0), (1, 0, 1.0), (0, -1, 1.0), (0, 1, 1.0),
+    (-1, -1, _SQRT2), (-1, 1, _SQRT2), (1, -1, _SQRT2), (1, 1, _SQRT2),
+]
+
+
+class StraightLinePlanner(Planner):
+    """Every goal is reachable, at straight-line cost.
+
+    Not a planner so much as the ABSENCE of one, in the shape the selectors
+    already expect. ASCENT never checks reachability: the frontier waypoint goes
+    straight to its PointNav network (ascent_policy.py:705), and its only
+    distance term is the euclidean `nearby_distance` shortcut. A self-planning
+    mover discards `PlanResult.path` anyway -- `NavAgent._follow_path` takes the
+    driver branch and never reads `_current_path` -- so running A* there only
+    lets a conservative costmap veto frontiers the mover could actually reach.
+
+    Used only when `agent.frontier_reachability_gate` is off AND a self-planning
+    mover is present; every configuration where the planner really drives keeps
+    `AStarPlanner`.
+    """
+
+    def plan(
+        self,
+        costmap: Costmap2D,
+        start_xy: np.ndarray,
+        goal_xy: np.ndarray,
+        goal_tolerance_m: Optional[float] = None,
+    ) -> PlanResult:
+        start = np.asarray(start_xy, dtype=float)
+        goal = np.asarray(goal_xy, dtype=float)
+        cost = float(np.linalg.norm(goal - start))
+        return PlanResult(True, path=np.stack([start, goal]), cost=max(cost, costmap.resolution))
+
+
+class AStarPlanner(Planner):
+    def __init__(
+        self,
+        inflate_radius_m: float = 0.25,
+        unknown_penalty: float = 3.0,
+        inflate_penalty: float = 8.0,
+        goal_tolerance_m: float = 0.3,
+        max_expansions: int = 60_000,  # caps worst-case spikes (~12 s at 200k)
+    ) -> None:
+        self.inflate_radius_m = inflate_radius_m
+        self.unknown_penalty = unknown_penalty
+        self.inflate_penalty = inflate_penalty
+        self.goal_tolerance_m = goal_tolerance_m
+        self.max_expansions = max_expansions
+        self.last_failure: str = ""
+
+    def plan(
+        self,
+        costmap: Costmap2D,
+        start_xy: np.ndarray,
+        goal_xy: np.ndarray,
+        goal_tolerance_m: Optional[float] = None,
+    ) -> PlanResult:
+        # Inflation is a SOFT cost, not a hard block: only truly occupied
+        # cells are impassable. Hard-blocking the inflated band sealed thin
+        # passages of partially-observed maps and disconnected the agent's
+        # local pocket from the rest of the map (total exploration deadlock).
+        grid = costmap.grid
+        hard = grid == OCCUPIED
+        soft = costmap.inflated(self.inflate_radius_m) & ~hard
+        h, w = grid.shape
+        start = tuple(costmap.world_to_grid(start_xy))
+        goal = tuple(costmap.world_to_grid(goal_xy))
+        if not costmap.in_bounds(np.array(start)):
+            return PlanResult(False)
+        goal = (min(max(goal[0], 0), h - 1), min(max(goal[1], 0), w - 1))
+        start = self._nudge_free(start, hard, grid)
+        if start is None:
+            self.last_failure = "start_nudge"
+            return PlanResult(False)
+
+        tol_m = self.goal_tolerance_m if goal_tolerance_m is None else goal_tolerance_m
+        tol_cells = max(1, int(tol_m / costmap.resolution))
+        res = costmap.resolution
+
+        g = {start: 0.0}
+        came: dict = {}
+        pq: List[Tuple[float, Tuple[int, int]]] = [(0.0, start)]
+        visited = set()
+        expansions = 0
+        found = None
+        while pq and expansions < self.max_expansions:
+            _, cur = heapq.heappop(pq)
+            if cur in visited:
+                continue
+            visited.add(cur)
+            expansions += 1
+            if abs(cur[0] - goal[0]) <= tol_cells and abs(cur[1] - goal[1]) <= tol_cells:
+                found = cur
+                break
+            for dr, dc, step in _NEIGHBORS:
+                nr, nc = cur[0] + dr, cur[1] + dc
+                if not (0 <= nr < h and 0 <= nc < w):
+                    continue
+                if hard[nr, nc]:
+                    continue
+                mult = self.unknown_penalty if grid[nr, nc] == UNKNOWN else 1.0
+                if soft[nr, nc]:
+                    mult = max(mult, self.inflate_penalty)
+                ng = g[cur] + step * mult
+                nxt = (nr, nc)
+                if ng < g.get(nxt, float("inf")):
+                    g[nxt] = ng
+                    came[nxt] = cur
+                    hcost = np.hypot(nr - goal[0], nc - goal[1])
+                    heapq.heappush(pq, (ng + hcost, nxt))
+
+        if found is None:
+            self.last_failure = (
+                f"expansions_exhausted({expansions})" if expansions >= self.max_expansions
+                else f"no_path(searched {expansions})"
+            )
+            return PlanResult(False)
+
+        # Reconstruct and convert to world coords; cost in meters over the
+        # actual geometric path (penalties guide search, not the reported d_i).
+        cells = [found]
+        while cells[-1] in came:
+            cells.append(came[cells[-1]])
+        cells.reverse()
+        path = np.array([costmap.grid_to_world(np.array(c)) for c in cells])
+        seg = np.diff(path, axis=0)
+        cost = float(np.sum(np.linalg.norm(seg, axis=1))) if len(path) > 1 else 0.0
+        return PlanResult(True, path=path, cost=max(cost, res))
+
+    @staticmethod
+    def _nudge_free(start, hard, grid, max_r: int = 20):
+        """If the start cell is occupied (stale map / phantom obstacle from
+        the stuck detector), find the nearest passable cell within ~1 m."""
+        if not hard[start]:
+            return start
+        h, w = grid.shape
+        best, best_d = None, float("inf")
+        for r in range(max(0, start[0] - max_r), min(h, start[0] + max_r + 1)):
+            for c in range(max(0, start[1] - max_r), min(w, start[1] + max_r + 1)):
+                if hard[r, c]:
+                    continue
+                d = (r - start[0]) ** 2 + (c - start[1]) ** 2
+                if d < best_d:
+                    best, best_d = (r, c), d
+        return best

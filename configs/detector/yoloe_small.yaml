@@ -1,0 +1,6 @@
+defaults:
+  - base_yoloe
+
+# 6 GB laptop profile
+weights: data/weights/yoloe-11s-seg.pt
+imgsz: 512

@@ -1,0 +1,11 @@
+defaults:
+  - base_vlm
+
+frontier_text_scorer: llm_text
+max_frontiers_per_call: 8
+
+# Pinned, not inherited: exploration.value_map now defaults to ON, and this
+# config's whole meaning is "geometric only". Leaving it to the default would
+# silently change what this baseline is and make earlier runs irreproducible.
+value_map: false
+knowledge_prior: false

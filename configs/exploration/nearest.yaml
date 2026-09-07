@@ -1,0 +1,16 @@
+defaults:
+  - base_vlm
+
+# Geometric exploration (no LLM): pick the NEAREST frontier weighted by its
+# exploration range (info gain over unknown cells). select_frontier gives every
+# frontier unscored_prior, so utility = (1 + info_gain_weight*gain/gain_max) /
+# path_cost -- nearest + largest-unexplored-area. Zero LLM scoring calls.
+frontier_text_scorer: disabled
+info_gain_weight: 2.0
+info_gain_radius_m: 2.5
+
+# Pinned, not inherited: exploration.value_map now defaults to ON, and this
+# config's whole meaning is "geometric only". Leaving it to the default would
+# silently change what this baseline is and make earlier runs irreproducible.
+value_map: false
+knowledge_prior: false

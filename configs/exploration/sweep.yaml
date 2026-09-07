@@ -1,0 +1,23 @@
+defaults:
+  - base_vlm
+
+# Continuous-sweep exploration: nearest frontier + a MOMENTUM bonus that prefers
+# the next frontier to lie ahead of the agent's current heading, so exploration
+# sweeps continuously instead of the greedy argmax ping-ponging between far-apart
+# frontiers (~30 steps/trip). No LLM. Same info_gain as `nearest` (isolates the
+# continuity effect).
+frontier_text_scorer: disabled
+# info_gain=2 kept: the long jumps to distant large-area frontiers LOOK
+# inefficient (ep8) but are net-beneficial across the set -- they steer the
+# agent to unexplored rooms where the target is (info_gain=0 regressed SR
+# 51.4%->45.7% and raised mean steps; see docs/AB_RESULTS.md). The
+# continuity bonus already tames the ping-pong.
+info_gain_weight: 2.0
+info_gain_radius_m: 2.5
+continuity_weight: 2.0
+
+# Pinned, not inherited: exploration.value_map now defaults to ON, and this
+# config's whole meaning is "geometric only". Leaving it to the default would
+# silently change what this baseline is and make earlier runs irreproducible.
+value_map: false
+knowledge_prior: false

@@ -1,0 +1,17 @@
+defaults:
+  - base_config
+  - agent: default
+  - detector: yoloe_small   # 'yoloe_small' or 'yoloe'
+  - scene_graph: default
+  - exploration: llm_text   # old-algorithm: text-LLM frontier ranking
+  - llm: nim                # NVIDIA NIM (needs NVIDIA_API_KEY); override llm=ollama for local
+  - verification: nim       # forced-choice VLM verify (catches detector mislabels, e.g. stool->chair)
+  - eval: hm3d_val_mini
+  - _self_
+
+seed: 42
+output_dir: outputs/${now:%Y%m%d_%H%M%S}
+
+hydra:
+  job:
+    chdir: false

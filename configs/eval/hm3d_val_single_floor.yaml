@@ -1,0 +1,24 @@
+defaults:
+  - base_hm3d
+
+# Single-floor-only subset of HM3D val. The 2D costmap + watershed room
+# segmentation scene graph cannot represent stairs / multiple levels, so
+# multi-floor scenes confound SR/SPL (the agent may need to cross floors the
+# map collapses into one plane). These 10 scenes have all goal viewpoints
+# within <0.2 m vertical spread (measured, scripts/scene_floors.py); the other
+# 26 val scenes are 2-4 floors. 279 episodes total. Note: the default val_mini
+# scenes (wcojb4TFT35, TEEsavR23oF) are BOTH 2-floor and must not be used for
+# single-floor experiments.
+split: val
+num_episodes: -1
+content_scenes:
+  - svBbv1Pavdk
+  - ziup5kvtCCR
+  - Nfvxx8J5NCo
+  - HY1NcmCgn3n
+  - VBzV5z6i1WS
+  - mv2HUxq3B53
+  - BAbdmeyTvMZ
+  - 5cdEh9F2hJL
+  - QaLdnwvtxbs
+  - Dd4bFSTQ8gi

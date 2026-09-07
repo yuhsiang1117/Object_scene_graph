@@ -1,0 +1,8 @@
+defaults:
+  - value
+
+# ASCENT's COMMITMENT half only: retire a frontier chosen 20 rounds running
+# without closing, or returned to 20 times. Ranking stays score/path_cost, so
+# this isolates F3 from F2 -- exploration=ascent_select changes both at once and
+# measured net -3 with no way to attribute it.
+frontier_commit: true

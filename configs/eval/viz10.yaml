@@ -1,0 +1,43 @@
+defaults:
+  - base_hm3d
+
+# Ten episodes of `scenes20_ep0to4` picked from `outputs/s41_stairs` for the
+# debug videos (`eval.debug_frames=true`): five the arm succeeded on and five it
+# failed, chosen to span the distinct behaviours rather than to be a sample.
+#
+#   python scripts/run_eval.py +experiment=ascentnav eval=viz10 \
+#       eval.debug_frames=true output_dir=outputs/s42_viz
+#
+# NOT an A/B split: 10 episodes measure nothing. The videos are the output.
+#
+# successes
+#   4ok3usBNeis:1  38 steps, SPL 0.78 -- the clean same-floor case
+#   5cdEh9F2hJL:4  125 steps, SPL 0.23 -- same floor, exploration-heavy
+#   mL8ThkuaVTM:2  420 steps, climb 2 attempts / 1 completed -- a real ascent
+#   mL8ThkuaVTM:1  104 steps, climb 1/0 -- changed storey with the climb marked
+#                  FAILED, i.e. the abandon threshold firing on a finished climb
+#   p53SfW6mjZe:0  209 steps, climb 2/0, cross-floor
+# failures
+#   4ok3usBNeis:2  31 steps, dtg 5.87 -- commits to a false positive and walks
+#                  to it (the gate S13 measured at +3 and this agent ignores)
+#   5cdEh9F2hJL:3  147 steps, dtg 0.30 -- near miss, stopped just outside 0.1 m
+#   XB4GS9ShBRE:3  500 steps, same floor, 2 climb attempts -- stairs as a
+#                  distraction on an episode that never needed them
+#   wcojb4TFT35:3  500 steps, 8 climb attempts all abandoned
+#   qyAac8rV8Zk:1  500 steps, cross-floor, never reached the goal storey
+split: val
+dataset_version: v1
+episodes_path: data/datasets/objectnav/hm3d/v1/{split}/{split}.json.gz
+num_episodes: -1
+max_scene_repeat_episodes: -1
+episode_ids:
+    - 4ok3usBNeis.basis.glb:1
+    - 4ok3usBNeis.basis.glb:2
+    - 5cdEh9F2hJL.basis.glb:3
+    - 5cdEh9F2hJL.basis.glb:4
+    - XB4GS9ShBRE.basis.glb:3
+    - mL8ThkuaVTM.basis.glb:1
+    - mL8ThkuaVTM.basis.glb:2
+    - p53SfW6mjZe.basis.glb:0
+    - qyAac8rV8Zk.basis.glb:1
+    - wcojb4TFT35.basis.glb:3

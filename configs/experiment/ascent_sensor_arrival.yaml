@@ -1,0 +1,46 @@
+# @package _global_
+#
+# S40: give the sensor-only mover the arrival signal the navmesh supplied.
+#
+#   python scripts/run_eval.py +experiment=ascent_sensor_arrival eval=scenes20_ep0to4
+#
+# Its pair is `+experiment=ascent_sensor` (outputs/s38_sensor, 42.0%), from
+# which it differs in one key.
+#
+# ---------------------------------------------------------------- the finding
+#
+# Switching navmesh -> pointnav costs 21 episodes, and it is NOT the mover's
+# speed. On the 37 episodes both arms solve, pointnav takes 1.30x the steps at
+# an almost identical SPL (0.461 against 0.489). Of the 20 episodes navmesh
+# solves and pointnav times out on, navmesh solved them in a median of 162
+# steps -- at 1.30x that is ~211, well inside the 500 budget. Only 1 of 20
+# could not have fit.
+#
+# What the navmesh actually supplied was a FEEDBACK CHANNEL. It reports
+# arrival, and OSG turns that into a stop:
+#
+#   how episodes end        navmesh   pointnav
+#   path_consumed (arrived)      46          0
+#   nearest_point (cloud)        38         49
+#   timeout                      14         43
+#
+# The pointnav arm cannot produce `path_consumed` at all, so termination rests
+# entirely on the object cloud being well placed. 8 of those 20 timeouts are
+# episodes that REACHED the object and had no way to conclude it.
+#
+# ------------------------------------------------------------------- the bug
+#
+# The driver did have an arrival test, and it was unreachable: `creep_below`
+# (1.0 m) was checked before the stop radius (0.9 m), so every approach inside
+# a metre force-forwarded forever. Arrival is now tested first, with its own
+# radius -- so the approach band reads: arrive tight, creep between, ask the
+# network beyond.
+#
+# 0.3 m rather than the navmesh's 0.1: at a 0.25 m step a tighter radius is
+# not reliably reachable, and the terminal cloud rule still runs underneath.
+
+defaults:
+  - ascent_sensor
+
+agent:
+  pointnav_arrival_m: 0.3

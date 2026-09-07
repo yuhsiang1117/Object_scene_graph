@@ -1,0 +1,223 @@
+"""habitat-lab ObjectNav wrapper. Converts habitat observations + ground-truth
+sensor pose into FrameData (OpenCV camera convention: the OpenGL camera is
+rotated 180 deg about x so z points forward, y down).
+"""
+from __future__ import annotations
+
+from typing import Optional
+
+import numpy as np
+
+from ..core.geometry import quat_to_matrix
+from ..core.types import CameraIntrinsics, FrameData
+
+# OpenGL -> OpenCV camera rotation (180 deg about x)
+_GL_TO_CV = np.diag([1.0, -1.0, -1.0])
+
+
+def make_objectnav_config(cfg):
+    """Build a habitat-lab ObjectNav config from our EvalConfig/AgentConfig."""
+    import habitat
+    from habitat.config.read_write import read_write
+    from hydra.core.global_hydra import GlobalHydra
+
+    # Our own @hydra.main leaves GlobalHydra initialized; habitat.get_config
+    # needs to initialize its own search path. Our cfg is already resolved to
+    # a plain DictConfig at this point, so clearing is safe.
+    GlobalHydra.instance().clear()
+    hab_cfg = habitat.get_config("benchmark/nav/objectnav/objectnav_hm3d.yaml")
+    with read_write(hab_cfg):
+        task = hab_cfg.habitat.task
+        sim = hab_cfg.habitat.simulator
+        ds = hab_cfg.habitat.dataset
+
+        ds.split = cfg.eval.split
+        ds.data_path = cfg.eval.episodes_path.replace("{split}", cfg.eval.split)
+        ds.scenes_dir = cfg.eval.scenes_dir
+        # Restrict to specific scenes (e.g. single-floor only: the 2D costmap /
+        # room-seg scene graph cannot handle stairs). Default ["*"] = all.
+        content_scenes = getattr(cfg.eval, "content_scenes", None)
+        if content_scenes:
+            ds.content_scenes = list(content_scenes)
+
+        agent = sim.agents.main_agent
+        agent.sim_sensors.rgb_sensor.width = cfg.eval.rgb_width
+        agent.sim_sensors.rgb_sensor.height = cfg.eval.rgb_height
+        agent.sim_sensors.rgb_sensor.hfov = int(cfg.eval.hfov_deg)  # habitat wants int
+        agent.sim_sensors.depth_sensor.width = cfg.eval.rgb_width
+        agent.sim_sensors.depth_sensor.height = cfg.eval.rgb_height
+        agent.sim_sensors.depth_sensor.hfov = int(cfg.eval.hfov_deg)
+        agent.sim_sensors.depth_sensor.normalize_depth = False
+        # Depth range. objectnav_hm3d.yaml already sets 0.5/5.0, so pinning is
+        # behaviourally a no-op -- but agent.navigation=pointnav normalises
+        # depth against these before feeding a FROZEN network, so a drift here
+        # would silently shift that network's input distribution. Same reason
+        # allow_sliding is pinned below.
+        agent.sim_sensors.depth_sensor.min_depth = float(
+            getattr(cfg.eval, "depth_min_m", 0.5))
+        agent.sim_sensors.depth_sensor.max_depth = float(
+            getattr(cfg.eval, "depth_max_m", 5.0))
+        # Agent embodiment: match the HM3D ObjectNav benchmark (and the old ROS
+        # system) -- a 0.88 m agent with the camera at the top. The previous
+        # hardcoded 1.5 m body made the navmesh reject low-clearance areas the
+        # 0.88 m benchmark agent can traverse, diverging from both the standard
+        # and the workspace we compare against.
+        agent.height = cfg.agent.camera_height
+        agent.radius = cfg.agent.agent_radius
+        cam_pos = [0.0, float(cfg.agent.camera_height), 0.0]
+        agent.sim_sensors.rgb_sensor.position = cam_pos
+        agent.sim_sensors.depth_sensor.position = cam_pos
+
+        sim.forward_step_size = cfg.agent.forward_m
+        sim.turn_angle = int(cfg.agent.turn_deg)
+
+        # Whether the agent slides along walls on collision. objectnav_hm3d.yaml
+        # already sets False (matching ascent), but habitat's own default is
+        # True -- pin it explicitly so the protocol cannot drift if the
+        # benchmark yaml is ever swapped.
+        sim.habitat_sim_v0.allow_sliding = bool(getattr(cfg.eval, "allow_sliding", False))
+
+        task.measurements.success.success_distance = cfg.agent.success_distance
+        hab_cfg.habitat.environment.max_episode_steps = cfg.agent.max_steps
+
+        it = hab_cfg.habitat.environment.iterator_options
+        # Deterministic episode order. Habitat defaults to shuffle=True, which
+        # makes a truncated run (num_episodes < split size) non-reproducible and
+        # diverges from the ascent baseline (eval_ascent_hm3d.yaml sets False).
+        it.shuffle = bool(getattr(cfg.eval, "shuffle_episodes", False))
+        # Per-scene step budget before habitat moves to the next scene. Habitat
+        # defaults to 1e4, ascent uses 50000.
+        it.max_scene_repeat_steps = int(getattr(cfg.eval, "max_scene_repeat_steps", 50_000))
+        # Spread a fixed-size eval across scenes rather than draining one scene
+        # first. -1 keeps the habitat default (grouped by scene, bounded only by
+        # max_scene_repeat_steps) -- that is what the ascent-matched full-split
+        # run uses; the 50-episode dev splits set this to spread across scenes.
+        msre = getattr(cfg.eval, "max_scene_repeat_episodes", -1)
+        if msre and msre > 0:
+            it.max_scene_repeat_episodes = msre
+        hab_cfg.habitat.seed = cfg.seed
+    return hab_cfg
+
+
+class HabitatObjectNavEnv:
+    ACTIONS = {"stop": 0, "move_forward": 1, "turn_left": 2, "turn_right": 3, "look_up": 4, "look_down": 5}
+
+    def __init__(self, cfg) -> None:
+        import habitat
+
+        self._hab_cfg = make_objectnav_config(cfg)
+        self.env = habitat.Env(config=self._hab_cfg)
+        self.intrinsics = CameraIntrinsics.from_hfov(
+            cfg.eval.hfov_deg, cfg.eval.rgb_width, cfg.eval.rgb_height
+        )
+        self._frame_id = 0
+        # Habitat-navmesh path follower, mirroring the OLD ObjectSceneGraph
+        # stack (publish a goal point -> Habitat plans+drives on its own
+        # navmesh) instead of the from-scratch costmap planner+controller.
+        # Only used when agent.use_habitat_navmesh is set; harmless otherwise.
+        self._follower = None
+        self._action_name = {v: k for k, v in self.ACTIONS.items()}
+        self._navmesh_goal_radius = float(getattr(cfg.agent, "navmesh_goal_radius", 0.1))
+
+    def _ensure_follower(self):
+        if self._follower is None:
+            from habitat.tasks.nav.shortest_path_follower import ShortestPathFollower
+            self._follower = ShortestPathFollower(
+                self.env.sim, goal_radius=self._navmesh_goal_radius, return_one_hot=False
+            )
+        return self._follower
+
+    def action_to_goal(self, goal_xy) -> Optional[str]:
+        """Next discrete action to drive toward a ground-plane goal on Habitat's
+        navmesh, or None if arrived (within goal_radius) or the goal is not
+        navigable. Snaps the 2D goal to the nearest navmesh point at the agent's
+        current floor height."""
+        follower = self._ensure_follower()
+        pos = self.env.sim.get_agent_state().position
+        goal3d = np.array([float(goal_xy[0]), float(pos[1]), float(goal_xy[1])], dtype=np.float32)
+        snapped = self.env.sim.pathfinder.snap_point(goal3d)
+        if snapped is None or bool(np.isnan(np.asarray(snapped)).any()):
+            return None  # unreachable -> caller treats as "arrived" and re-decides
+        try:
+            a = follower.get_next_action(np.asarray(snapped, dtype=np.float32))
+        except Exception:
+            return None
+        if a is None or int(a) == self.ACTIONS["stop"]:
+            return None  # arrived at goal
+        return self._action_name.get(int(a))
+
+    def is_reachable(self, goal_xy) -> bool:
+        """Whether a ground-plane goal is on the same navmesh component as the
+        agent (a geodesic path exists). Targets in sealed/disconnected rooms
+        (closed door or a step in the mesh) are visible but unreachable -- the
+        agent should not commit to them."""
+        import habitat_sim
+
+        pf = self.env.sim.pathfinder
+        pos = self.env.sim.get_agent_state().position
+        goal3d = np.array([float(goal_xy[0]), float(pos[1]), float(goal_xy[1])], dtype=np.float32)
+        g = pf.snap_point(goal3d)
+        if g is None or bool(np.isnan(np.asarray(g)).any()):
+            return False
+        path = habitat_sim.ShortestPath()
+        path.requested_start = pf.snap_point(pos)
+        path.requested_end = g
+        return bool(pf.find_path(path))
+
+    # ---------------------------------------------------------------- episode
+
+    def reset(self) -> FrameData:
+        obs = self.env.reset()
+        self._frame_id = 0
+        return self._to_frame(obs)
+
+    def step(self, action: str) -> FrameData:
+        obs = self.env.step(self.ACTIONS[action])
+        self._frame_id += 1
+        return self._to_frame(obs)
+
+    @property
+    def hab_cfg(self):
+        """The habitat config actually handed to the simulator. Read by the
+        runner to fingerprint the evaluation protocol in summary.json, so an
+        override that silently failed to apply is visible in the output."""
+        return self._hab_cfg
+
+    @property
+    def episode_over(self) -> bool:
+        return self.env.episode_over
+
+    @property
+    def current_episode(self):
+        return self.env.current_episode
+
+    def target_category(self) -> str:
+        return str(self.current_episode.object_category)
+
+    def metrics(self) -> dict:
+        return self.env.get_metrics()
+
+    def close(self) -> None:
+        self.env.close()
+
+    # -------------------------------------------------------------- internals
+
+    def _to_frame(self, obs) -> FrameData:
+        state = self.env.sim.get_agent_state()
+        sensor = state.sensor_states.get("rgb") or state.sensor_states.get("depth")
+        q = sensor.rotation  # quaternion (numpy-quaternion type: w, x, y, z)
+        R_gl = quat_to_matrix(q.w, q.x, q.y, q.z)
+        T_wc = np.eye(4)
+        T_wc[:3, :3] = R_gl @ _GL_TO_CV
+        T_wc[:3, 3] = np.asarray(sensor.position, dtype=float)
+
+        depth = obs["depth"]
+        if depth.ndim == 3:
+            depth = depth[..., 0]
+        return FrameData(
+            frame_id=self._frame_id,
+            rgb=np.ascontiguousarray(obs["rgb"][..., :3]),
+            depth=depth.astype(np.float32),
+            T_wc=T_wc,
+            intrinsics=self.intrinsics,
+        )

@@ -1,0 +1,37 @@
+# @package _global_
+#
+# S33: `ascent_sensor` with ASCENT's up-stair signal -- RedNet MPCAT40
+# segmentation -- in place of YOLOE's open-vocabulary `stairs` class.
+#
+#   python scripts/download_weights.py --rednet          # once, 626 MB
+#   python scripts/run_eval.py +experiment=ascent_sensor_rednet eval=scenes20_ep0to4
+#
+# Measured on 250 stair poses from the cross-floor split (control
+# false-positive in brackets):
+#
+#   YOLOE `stairs` + geometry           10%  [0%]   <- what ascent_sensor uses
+#   ASCENT's fusion, RedNet AND YOLOE   10%  [0%]
+#   RedNet + OSG's geometric gate       27%  [2%]
+#   RedNet alone                        54%  [3%]   <- this preset
+#
+# `stair_up_mode: ascent` is ASCENT's exact rule and is available, but it buys
+# nothing here and the reason is structural rather than a tuning miss: an
+# intersection cannot beat its weaker input, and ASCENT's second opinion is
+# GroundingDINO (`map_controller.py:700-704`), which this repo does not run.
+# All 26 YOLOE firings already sit inside RedNet's 134, so ANDing them discards
+# 81% of what RedNet found. Intersecting with geometry instead keeps 27%.
+#
+# Why up-stairs and not down: 17 of the 21 cross-floor episodes on
+# scenes20_ep0to4 go UP, and down-stairs already have a detector-free signal at
+# 50% (below-floor points). Up-stairs had 10%.
+#
+# This is S14a's own pre-registered conclusion, finally acted on: pitch was
+# ruled out in S32 (10.4% level, 7.2% up, 3.2% down), which by that rule leaves
+# "only a dedicated segmentation model will move it (S14c, RedNet)".
+
+defaults:
+  - ascent_sensor
+
+agent:
+  rednet_stairs: true
+  stair_up_mode: rednet

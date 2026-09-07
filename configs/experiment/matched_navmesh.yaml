@@ -1,0 +1,30 @@
+# @package _global_
+#
+# matched_single_floor + Habitat-navmesh navigation (old-stack alignment).
+# Perception / scene graph / frontier selection are unchanged; path planning +
+# execution and the terminal approach switch from the from-scratch costmap
+# planner+controller to Habitat's ShortestPathFollower -- mirroring the OLD
+# ObjectSceneGraph stack (publish a goal point -> Habitat drives on its navmesh;
+# navigate to the object then STOP, like /goal_object). Removes the self-built-
+# costmap failure modes (planner_no_path, stuck-give-up). See docs/AB_RESULTS.
+#
+#   python scripts/run_eval.py +experiment=matched_navmesh
+defaults:
+  - override /detector: yoloe
+  - override /eval: hm3d_val_v1
+
+agent:
+  success_distance: 0.18
+  use_habitat_navmesh: true
+
+eval:
+  num_episodes: 35
+  max_scene_repeat_episodes: 5
+  content_scenes:
+    - svBbv1Pavdk
+    - ziup5kvtCCR
+    - Nfvxx8J5NCo
+    - mv2HUxq3B53
+    - 5cdEh9F2hJL
+    - QaLdnwvtxbs
+    - Dd4bFSTQ8gi

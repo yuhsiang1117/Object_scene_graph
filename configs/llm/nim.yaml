@@ -1,0 +1,27 @@
+defaults:
+  - base_ollama
+
+# NVIDIA NIM (build.nvidia.com) — OpenAI-compatible hosted inference.
+# Pair with `verification=nim` so the target verifier also uses the hosted
+# vision model. Needs NVIDIA_API_KEY in the environment (e.g. from .env).
+#
+# Note: on the public NIM endpoint the 90B vision model times out; the 11B
+# sibling responds in <1s and scored 0.850 on verify_bench (vs local qwen
+# 0.750). Vision models mangle their output under response_format=json_object,
+# so send_response_format is disabled and JSON is parsed from the text reply.
+base_url: https://integrate.api.nvidia.com/v1
+api_key: ${oc.env:NVIDIA_API_KEY,missing}
+# Text scorer / frontier ranker.
+#
+# Was nvidia/nvidia-nemotron-nano-9b-v2, which NVIDIA retired on 2026-08-26 and
+# now answers 410 Gone. No previous result in docs/AB_RESULTS is affected: every
+# arm ran exploration.frontier_text_scorer=disabled, so `llm_calls` in episodes.jsonl counts
+# NullScorer invocations and no text request was ever sent.
+#
+# The nemotron-nano-3 / llama-3.1-nemotron successors are listed by /v1/models
+# but return 404 for this key, and llama-3.3-70b / llama-3.1-8b / phi-4-mini are
+# also 410. The vision model below is the one text-capable endpoint this account
+# can actually reach, and it answers the ranker prompt in the right JSON shape
+# first try. Deviation from ASCENT, which runs Qwen2.5-7B locally.
+text_model: meta/llama-3.2-11b-vision-instruct
+send_response_format: false

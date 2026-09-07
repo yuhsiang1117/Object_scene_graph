@@ -1,0 +1,6 @@
+defaults:
+  - base_hm3d
+
+# Smoke-scale eval on the minival scenes
+split: val_mini
+num_episodes: 3

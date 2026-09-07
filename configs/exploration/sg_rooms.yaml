@@ -1,0 +1,6 @@
+defaults:
+  - value
+
+# Places365 room typing on top of the value-map baseline. Isolates whether
+# labelling rooms at all changes behaviour, before any prompt uses the labels.
+knowledge_prior: false
