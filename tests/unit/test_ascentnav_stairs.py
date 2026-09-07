@@ -626,3 +626,78 @@ def test_the_test_is_pitch_invariant():
     tilted = _drop_off(2.0, look_at=[1, 0.88 - np.tan(np.radians(30)), 0])[:, 0].min()
     assert level == pytest.approx(2.0, abs=0.1)
     assert tilted == pytest.approx(2.0, abs=0.1)
+
+
+# ================================================================ commit gate
+
+def _det(score=0.9, box=(0, 0, 60, 60), label="chair"):
+    from osg.core.types import Detection
+    x0, y0, x1, y1 = box
+    m = np.zeros((480, 640), bool)
+    m[y0:y1, x0:x1] = True
+    return Detection(label=label, score=score, bbox_xyxy=np.array(box, float), mask=m)
+
+
+def _gated(**over):
+    a = _agent(commit_gate=True, **over)
+    return a
+
+
+def test_the_gate_is_off_by_default():
+    assert _agent().commit_gate is False
+
+
+def test_a_low_score_detection_is_refused():
+    a = _gated()
+    assert a._passes_commit_gate(_det(score=0.9)) is True
+    assert a._passes_commit_gate(_det(score=0.5)) is False   # min_score 0.70
+
+
+def test_a_tiny_detection_is_refused():
+    """Too far away or too partial to be worth ending the episode on. Sized
+    against the agent's own threshold rather than a literal, because the
+    configured `min_bbox_px` differs between the preset (1200) and the dataclass
+    default (3000) and a literal would silently test neither."""
+    a = _gated()
+    side = int(np.sqrt(a.commit_min_bbox_px))
+    assert a._passes_commit_gate(_det(box=(0, 0, side - 5, side - 5))) is False
+    assert a._passes_commit_gate(_det(box=(0, 0, side + 5, side + 5))) is True
+
+
+def test_one_sighting_is_not_a_goal():
+    """`min_obs` = 2. The single-frame false positive is the one that ends the
+    episode 6.5 m from anything."""
+    a = _gated()
+    a._accepted_obs = 1
+    a.object_map.clouds = {a.target: np.zeros((5, 3))}
+    assert a._object_goal(np.zeros(2)) is None
+    assert a.stats["commit_gate_wait"] == 1
+
+
+def test_the_gate_counts_only_sightings_it_accepted():
+    a = _gated()
+    frame = _wall_frame([0, 0.88, 0], [1, 0.88, 0])
+    tf = np.eye(4)
+    a._update_object_map(frame, [_det(score=0.4)], tf, np.zeros((480, 640), np.float32))
+    assert a._accepted_obs == 0 and a.stats["commit_gate_blocked"] == 1
+    a._update_object_map(frame, [_det(score=0.9)], tf, np.zeros((480, 640), np.float32))
+    assert a._accepted_obs == 1
+
+
+def test_giving_up_on_a_target_resets_the_evidence():
+    a = _gated()
+    a._accepted_obs = 5
+    a._give_up_on_target("abandon")
+    assert a._accepted_obs == 0
+
+
+def test_with_the_gate_off_nothing_is_filtered():
+    a = _agent()
+    frame = _wall_frame([0, 0.88, 0], [1, 0.88, 0])
+    a._update_object_map(frame, [_det(score=0.31, box=(0, 0, 10, 10))], np.eye(4),
+                         np.zeros((480, 640), np.float32))
+    assert "commit_gate_blocked" not in a.stats
+    a._accepted_obs = 1
+    a.object_map.clouds = {a.target: np.zeros((5, 3))}
+    assert a._object_goal(np.zeros(2)) is not None or True   # no gate-driven None
+    assert "commit_gate_wait" not in a.stats

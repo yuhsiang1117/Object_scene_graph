@@ -114,6 +114,15 @@ class AscentNavAgent:
         self.abandon_steps = int(getattr(a, "approach_abandon_steps", 100) or 100)
         self.escape = ActionHistoryEscape(int(getattr(a, "escape_window", 30) or 30))
 
+        # S47's commit gate. Off by default: it changes what the agent is
+        # willing to walk to, so it is an A/B, not a bug fix. The thresholds are
+        # OSG's own, already in this preset and until now read by nobody here.
+        v = cfg.verification
+        self.commit_gate = bool(getattr(a, "commit_gate", False))
+        self.commit_min_score = float(getattr(v, "min_score", 0.70))
+        self.commit_min_obs = int(getattr(v, "min_obs", 2))
+        self.commit_min_bbox_px = float(getattr(v, "min_bbox_px", 1200))
+
         self.scene_graph = SceneGraph()
         self.reset(target_category)
 
@@ -146,6 +155,7 @@ class AscentNavAgent:
         self._init_left = int(round(360.0 / self.turn_deg)) if self.cfg.agent.initial_scan else 0
         self._navigate_steps = 0
         self._min_dist_seen = np.inf
+        self._accepted_obs = 0
         self._verified = False
         self._verify_after = 0
         self._disabled_frontiers: set = set()
@@ -440,10 +450,36 @@ class AscentNavAgent:
             return None
         return np.where(m, STAIR_CLASS_ID, 0).astype(np.uint8)
 
+    def _bbox_px(self, det) -> float:
+        x0, y0, x1, y1 = [float(v) for v in det.bbox_xyxy]
+        return max(0.0, x1 - x0) * max(0.0, y1 - y0)
+
+    def _passes_commit_gate(self, det) -> bool:
+        """The evidence bar OSG applies before it will walk to a detection
+        (`object_layer.candidates`, `object_layer.py:367`).
+
+        Without it this agent writes anything the detector emits above its own
+        `conf` (0.3) into the object cloud and treats a cloud as a goal. S47:
+        373 of 601 same-floor failures on the full v1 val split were commit
+        stops more than 3 m from any instance of the category, median 6.51 m,
+        at a median step 69 of a 500-step budget -- the agent was not running
+        out of anything, it stopped on the wrong object.
+
+        `min_evidence` is not ported: it accumulates over an OSG track, and this
+        agent has no track layer. The observation count is the stand-in.
+        """
+        return (det.score >= self.commit_min_score
+                and self._bbox_px(det) >= self.commit_min_bbox_px)
+
     def _update_object_map(self, frame, dets, tf, depth_n) -> None:
         cone = 2 * np.arctan(frame.depth.shape[1] / (2 * self.fx))
+        if dets and self.commit_gate:
+            dets = [d for d in dets if self._passes_commit_gate(d)]
+            if not dets:
+                self.stats["commit_gate_blocked"] = self.stats.get("commit_gate_blocked", 0) + 1
         if dets:
             best = max(dets, key=lambda d: d.score)
+            self._accepted_obs += 1
             if self.steps_to_first_candidate is None:
                 self.steps_to_first_candidate = self.step_count
             self._maybe_verify(frame, best)
@@ -476,6 +512,13 @@ class AscentNavAgent:
 
     def _object_goal(self, robot_xy) -> Optional[np.ndarray]:
         if not self.object_map.has_object(self.target):
+            return None
+        # One glimpse is not a target. OSG requires `min_obs` sightings before a
+        # track becomes a candidate; the same bar here costs a step or two of
+        # delay and refuses the single-frame false positives that end 6.5 m from
+        # anything.
+        if self.commit_gate and self._accepted_obs < self.commit_min_obs:
+            self.stats["commit_gate_wait"] = self.stats.get("commit_gate_wait", 0) + 1
             return None
         # 2D, as ASCENT passes (`ascent_policy.py:441` hands it `robot_xy`).
         # `get_best_object` subtracts this from a 2D point for its hysteresis
@@ -612,6 +655,7 @@ class AscentNavAgent:
         self.object_map._map.fill(0)
         self._navigate_steps = 0
         self._nav_goal = None
+        self._accepted_obs = 0
         self._min_dist_seen = np.inf
         self._verified = False
         self._verify_after = self.step_count

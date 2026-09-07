@@ -1,0 +1,28 @@
+# @package _global_
+#
+# S48: `ascentnav` plus the commit gate.
+#
+#   python scripts/run_eval.py +experiment=ascentnav_gate eval=scenes20_ep0to4
+#
+# The only difference from `ascentnav` is `agent.commit_gate`. Its control is
+# `+experiment=ascentnav` on the same split, so the fingerprint diff is exactly
+# one field.
+#
+# Why: S47 decomposed the 2000-episode full-split run. 85% of same-floor
+# failures are commit stops, and 373 of them end more than 3 m from any instance
+# of the category (median 6.51 m) at a median step 69 of a 500-step budget. The
+# agent is not running out of time -- it walks to the wrong object and STOPs,
+# which in ObjectNav is irreversible. The gate is OSG's own
+# (`object_layer.candidates`): detection score >= verification.min_score (0.70),
+# bbox >= min_bbox_px (1200), and min_obs (2) accepted sightings before the
+# cloud counts as a goal.
+#
+# Falsifiable prediction: far-commits (stop >3 m from any goal) fall by at least
+# a third, and SR rises. If SR does not move while far-commits do fall, the
+# blocked episodes were failing for another reason and the gate is a null.
+
+defaults:
+  - ascentnav
+
+agent:
+  commit_gate: true

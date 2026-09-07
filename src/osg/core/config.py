@@ -155,6 +155,13 @@ class AgentConfig:
     #    cur_dis_to_goal, :910 tests it). Navmesh mode hid the difference by
     #    reporting arrival; a sensor-only mover has no arrival signal, and 28 of
     #    100 episodes closed to a median 0.67 m and never stopped.
+    # S47: refuse to walk to a detection until it clears the same evidence bar
+    # OSG's NavAgent uses (`object_layer.candidates`, verification.min_score /
+    # min_obs / min_bbox_px). `ascentnav` writes every detection above the
+    # detector's own conf into its object cloud and treats a cloud as a goal,
+    # and 373 of 601 same-floor failures on the full v1 val split were commit
+    # stops more than 3 m from any instance of the category.
+    commit_gate: bool = False
     terminal_requires_detection: bool = True
     # 2. Does a PointNav STOP short of the goal retire the frontier? ASCENT
     #    overwrites it with one forward step and keeps the target
