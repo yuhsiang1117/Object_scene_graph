@@ -3345,6 +3345,62 @@ ASCENT's own `MORPH_CLOSE` with the agent-radius kernel (`obstacle_map.py:673`),
 which is what makes the lip wide enough to stand on, and the curve accumulates
 as the agent moves and sees more of the edge.
 
+### S47 — the same-floor gap is one failure, and it is not navigation
+
+`s47_full_v1` (2000 episodes, full v1 val, sensor-only, pre-stair-fixes) scored
+**52.15% SR / 0.270 SPL**, split **62.2% same-floor (n=1589)** and 13.4%
+cross-floor (n=411). ASCENT reports **72.6% same-floor** on the same split, so
+the same-floor gap is 10.4 points -- about 165 episodes.
+
+**Every one of those 165 could come from a single failure mode.** Taxonomy of
+the 601 same-floor failures:
+
+| | n | share |
+|---|---|---|
+| committed, stopped, and was wrong | **509** | **85%** |
+| ran out of steps | 92 | 15% |
+| ended some other way | 0 | 0% |
+
+Of the 509 stops, only **40** were near misses within 1 m. **373 were more than
+3 m from any instance of the category** -- median **6.51 m**, p75 9.76 m, p90
+13.06 m. HM3D scores success against a view-point of ANY instance, so ending
+6.5 m out does not mean a bad approach; it means the thing the agent walked to
+was not an instance at all.
+
+**It is a commit failure, not a navigation failure**, and three measurements say
+so:
+
+* Far-commits happen EARLY. First `approach` at median step **22**, against 45
+  for successes; 47% commit inside the first 20 steps against 27%.
+* They are cheap in time and fatal anyway. Median 11 steps walking to the false
+  positive, median episode length **69 steps of a 500-step budget**. The agent
+  is not running out of anything -- it stops, and in ObjectNav STOP is
+  irreversible.
+* The VLM verifier does not separate them. It rejects at least once in **46% of
+  successes** and **37% of far-commits** -- pointing the wrong way, with
+  ~2 calls per episode either way. As a gate on commit correctness it is noise.
+
+**Arithmetic.** Far-commits are 23.5% of all same-floor episodes. Converting 44%
+of them into episodes that keep exploring and eventually succeed closes the
+entire 10.4-point gap; converting half would put same-floor at 73.9%, just past
+ASCENT's 72.6%.
+
+**What is missing is the commit gate.** OSG's `NavAgent` requires a track to
+clear `verification.min_score` 0.70, `min_obs` 2, `min_bbox_px` 1200 and
+`min_evidence` 0.5 before it will walk to it (`object_layer.py:367`, called from
+`nav_agent.py:2145-2151`). All four are SET in this preset and `ascentnav` reads
+none of them: it writes any detection above the detector's own `conf: 0.3` into
+the object cloud and treats a cloud as a goal. S13 measured the `min_score`
+raise alone at net +3 episodes on 100 navmesh episodes, for exactly this failure
+-- there, 30 far-commit failures reached what they aimed at (median 0.43 m)
+while sitting a median 7.48 m from any real goal.
+
+This run cannot say WHICH threshold would have blocked which commit:
+`cand_best_score` and `cand_n_obs` come from OSG's object layer, and
+`ascentnav`'s view of it returns no tracks, so both are null for all 2000
+episodes. Instrumenting the commit (score, observation count, bbox at commit)
+is the prerequisite for calibrating the gate rather than guessing it.
+
 ### S26 — ASCENT's dense approach re-check
 
 S23/S25 closed the mover, the aim point and the commit gate as explanations for
