@@ -385,3 +385,68 @@ def test_the_agent_marker_and_the_map_share_one_frame():
     left = _vis_px(om, np.array([0.0, 1.0]))      # +y
     assert ahead[1] == here[1] - om.pixels_per_meter and ahead[0] == here[0]
     assert left[0] == here[0] - om.pixels_per_meter and left[1] == here[1]
+
+
+# ==================================================== where the stairs land
+#
+# The regression these guard is subtle and was invisible for three runs: the
+# stair pixels were SELECTED correctly and projected at the wrong RANGE, so the
+# staircase appeared along the right bearing at max_depth. It looked like a
+# calibration shift, not a crash.
+
+def _wall_frame(pos, look_at, range_m=3.0):
+    from osg.core.types import CameraIntrinsics, FrameData
+    from .conftest import make_camera
+    intr = CameraIntrinsics.from_hfov(79.0, 640, 480)
+    return FrameData(frame_id=0, rgb=np.zeros((480, 640, 3), np.uint8),
+                     depth=np.full((480, 640), range_m, np.float32),
+                     T_wc=make_camera(pos, look_at), intrinsics=intr)
+
+
+def _paint(det_mask_dtype, range_m=3.0, patch=(200, 280, 280, 360)):
+    """Project one patch of a fronto-parallel wall and return the painted xy."""
+    from ascentnav.constants import STAIR_CLASS_ID
+    from ascentnav.geometry import camera_pitch, normalise_depth, tf_camera_to_episodic
+    from ascentnav.mapping.obstacle_map import ObstacleMap
+
+    f = _wall_frame([0, 0.88, 0], [1, 0.88, 0], range_m)
+    tf = tf_camera_to_episodic(f, 0.88)
+    fx = fy = 640 / (2 * np.tan(np.radians(79.0) / 2))
+    v0, v1, u0, u1 = patch
+    m = np.zeros((480, 640), np.uint8)
+    m[v0:v1, u0:u1] = 1
+    seg = np.where(m.astype(bool), STAIR_CLASS_ID, 0).astype(np.uint8)
+
+    om = ObstacleMap(min_height=0.61, max_height=0.88, agent_radius=0.18, size=800)
+    om.update_map(normalise_depth(f.depth, 0.5, 5.0), tf, 0.5, 5.0, fx, fy,
+                  np.radians(79.0), {}, np.zeros((480, 640), np.uint8),
+                  m.astype(det_mask_dtype), seg,
+                  float(np.degrees(-camera_pitch(f))), True, False, 0)
+    px = np.argwhere(om._up_stair_map)
+    return om._px_to_xy(px[:, ::-1].astype(float))
+
+
+def test_stairs_are_painted_at_their_true_range():
+    """A patch of wall 3 m ahead must be painted at 3 m, not at max_depth."""
+    xy = _paint(np.uint8, range_m=3.0)
+    assert len(xy) > 0, "nothing was painted at all"
+    assert xy[:, 0].mean() == pytest.approx(3.0, abs=0.1), (
+        f"painted at {xy[:, 0].mean():.2f} m instead of 3.0 m")
+
+
+def test_a_uint8_detector_mask_projects_the_same_as_a_bool_one():
+    """`uint8 & bool` promotes to uint8, and indexing a depth array with a uint8
+    array is INTEGER ROW indexing, not masking -- which left every stair pixel
+    at max_depth. ASCENT's own masks are bool, so its code never sees this."""
+    a, b = _paint(np.uint8), _paint(bool)
+    assert np.allclose(np.sort(a, axis=0), np.sort(b, axis=0))
+
+
+def test_the_range_error_scaled_with_max_depth_not_the_scene():
+    """The signature of the old bug: the painted range was pinned to max_depth,
+    so a 2 m wall and a 3 m wall landed in the same place. They must not."""
+    near = _paint(np.uint8, range_m=2.0)[:, 0].mean()
+    far = _paint(np.uint8, range_m=3.5)[:, 0].mean()
+    assert near == pytest.approx(2.0, abs=0.1)
+    assert far == pytest.approx(3.5, abs=0.1)
+    assert far - near > 1.0

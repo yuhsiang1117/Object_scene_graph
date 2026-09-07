@@ -519,7 +519,19 @@ class ObstacleMap(BaseMap):
             ## upstair or look down to find downstair
             if np.any(stair_mask) > 0 and np.sum(seg_mask == STAIR_CLASS_ID) > 20: # STAIR_CLASS_ID in seg_mask
                 stair_map = (seg_mask == STAIR_CLASS_ID)
-                fusion_stair_mask = stair_mask & stair_map
+                # DEVIATION from the vendored file: force BOOL. `stair_mask`
+                # arrives as uint8 here (ASCENT's comes from GroundingDINO as
+                # bool), and `uint8 & bool` promotes to uint8 -- which turns the
+                # `stair_depth[fusion_stair_mask] = ...` below from a boolean
+                # mask into INTEGER ROW INDEXING. Every stair pixel then kept
+                # `max_depth` instead of its own range, so the whole staircase
+                # was projected along the right bearing at 5 m: a 3 m staircase
+                # painted at 5 m, radially displaced by max_depth/true_depth.
+                # `np.where` in `get_point_cloud` treats uint8 as nonzero, so
+                # the pixel SELECTION was right the whole time and only the
+                # range was wrong -- which is why it looked like a shift rather
+                # than garbage, and why the agent still climbed sometimes.
+                fusion_stair_mask = stair_mask.astype(bool) & stair_map.astype(bool)
                 if np.any(fusion_stair_mask) > 0: # 检测出楼梯
                 # fusion_stair_mask = stair_mask
                     stair_depth = np.full_like(depth, max_depth)
