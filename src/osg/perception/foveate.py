@@ -46,6 +46,7 @@ def container_regions(
     max_range_m: float,
     min_px: float,
     max_regions: int,
+    only_ids: Optional[Sequence[int]] = None,
 ) -> List[Region]:
     """Image boxes of the container surfaces in view, nearest first.
 
@@ -58,9 +59,16 @@ def container_regions(
     h, w = frame.rgb.shape[:2]
     cam = frame.camera_position
     wanted = {str(c).lower() for c in categories}
+    # `only_ids` is the surface the search is actually inspecting. Restricting
+    # to it does not narrow WHAT can be found -- an object is found on the
+    # surface the agent went to look at -- it narrows when the second inference
+    # is paid for.
+    keep = None if only_ids is None else {int(i) for i in only_ids}
     scored: List[Tuple[float, Region]] = []
     for track in object_layer.tracks():
-        if str(track.label).lower() not in wanted:
+        if keep is not None and int(track.id) not in keep:
+            continue
+        if keep is None and str(track.label).lower() not in wanted:
             continue
         centre = object_layer.center_of(track)
         rng = float(np.linalg.norm(np.asarray(centre) - np.asarray(cam)))

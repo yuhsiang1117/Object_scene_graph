@@ -424,6 +424,19 @@ class NavAgent:
 
     # -------------------------------------------------------------- keyframes
 
+    def _active_container_tracks(self):
+        """The tracks making up the surface the search is currently inspecting.
+
+        A container is a view over tracks rather than an entity of its own, and
+        an L-shaped sofa is two ellipsoids under one anchor id, so the answer is
+        a list -- projecting only the representative would crop half the sofa.
+        """
+        cid = getattr(self.exploration, "search_container", None)
+        if cid is None:
+            return None
+        node = self.scene_graph.containers.get(int(cid))
+        return list(node.track_ids) if node is not None else None
+
     def _foveate(self, frame: FrameData, dets: list) -> list:
         """A second detector pass over the container surfaces in view.
 
@@ -436,11 +449,17 @@ class NavAgent:
         from ..perception.foveate import container_regions, foveated_detect, merge
 
         sg = self.cfg.scene_graph
+        only_ids = None
+        if sg.foveate_active_only:
+            only_ids = self._active_container_tracks()
+            if not only_ids:
+                return dets
         regions = container_regions(
             self.object_layer, frame, CONTAINER_CATEGORIES,
             max_range_m=float(sg.foveate_max_range_m),
             min_px=float(sg.foveate_min_bbox_px),
             max_regions=int(sg.foveate_max_regions),
+            only_ids=only_ids,
         )
         if not regions:
             return dets

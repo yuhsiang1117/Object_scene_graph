@@ -65,3 +65,15 @@ defaults:
 
 scene_graph:
   foveate_containers: true
+  # Pay for the second inference while INSPECTING, not all episode. The first F
+  # run fired 3897 times for 16 target detections at an 18% control-loop cost;
+  # the yield is concentrated on the surface the search posterior went to look
+  # at, and the range band is set by where recoveries actually happen.
+  foveate_active_only: true
+  foveate_max_range_m: 3.0
+
+agent:
+  # The last 0.8 m: cross_anchor_01's tin can spun on its viewpoint for 84 steps
+  # at 0.769 m from a can it could see, because the depth stop is off here and
+  # the follower never reports arrival while the agent sits on the goal.
+  viewpoint_stop_m: 0.3

@@ -149,9 +149,18 @@ class SceneGraphConfig:
     # ten alternative names name it at most 1/21 -- while a 320 px window around
     # it, upscaled, names it 5/21. Not the name, not class competition, scale.
     foveate_containers: bool = False
-    # Beyond this the crop is mostly background and the object is a few pixels
-    # in it either way. The probe's recoveries all sit at 2.6-3.4 m.
-    foveate_max_range_m: float = 4.0
+    # Beyond this the second look recovers nothing, measured IN THE LOOP rather
+    # than in the probe. Over six tin can episodes under condition F, every
+    # recovered detection is within 3 m -- 6/9 and 7/8 close, 5/5 and 10/16
+    # close -- and the far bands are 0/6, 0/3, 0/2, 0/1, 0/0.
+    #
+    # The probe's own recoveries sat at 2.6-3.4 m with a FIXED 320 px window and
+    # nothing under 2.4 m, which would argue for a lower bound too. It does not
+    # transfer, and the reason is the design: the runtime window is the
+    # surface's projection, which grows as the agent approaches, so the
+    # magnification adapts and close range works where a fixed window failed. A
+    # 2 m floor read off the probe would have cut the detections that convert.
+    foveate_max_range_m: float = 3.0
     # A surface projecting smaller than this is too far or too oblique to be
     # worth a second inference.
     foveate_min_bbox_px: float = 20_000.0
@@ -162,6 +171,13 @@ class SceneGraphConfig:
     # window scored 0/21 -- WORSE than no crop -- because an object that fills
     # its crop has lost the context the detector needs to call it an object.
     foveate_pad: float = 0.15
+    # Foveate ONLY the surface the search posterior is currently inspecting,
+    # rather than every container in view. The arm's cost is one detector call
+    # per keyframe per region and its yield is concentrated on the surface the
+    # agent came to look at: 3897 fires bought 16 target detections. Restricting
+    # it there is the difference between paying the 18% control-loop cost all
+    # episode and paying it while inspecting.
+    foveate_active_only: bool = False
     # Evidence-score corroboration (P1i, FUS3DMaps-inspired 2026-07-19): a
     # detection that only re-matches an existing track from nearly the same
     # camera position adds little real corroborating evidence (no parallax)

@@ -84,3 +84,64 @@ def test_the_same_box_under_a_different_label_is_not_a_duplicate():
     _, n_added = merge(base, [inside])
 
     assert n_added == 1
+
+
+def _layer_with(tracks):
+    from osg.objects.object_layer import ObjectLayer
+
+    layer = ObjectLayer()
+    for t in tracks:
+        layer._tracks[t.id] = t
+    return layer
+
+
+def _container(tid, label, centre):
+    from osg.objects.association import ObjectTrack
+    from osg.objects.ellipsoid import Ellipsoid
+
+    return ObjectTrack(
+        id=tid, label=label,
+        ellipsoid=Ellipsoid(center=np.asarray(centre, dtype=float),
+                            axes=np.array([0.8, 0.4, 0.8]), R=np.eye(3)),
+    )
+
+
+def _frame_looking_down_x():
+    from tests.unit.conftest import make_camera, make_frame
+    from osg.core.types import CameraIntrinsics
+
+    K = CameraIntrinsics(fx=640.0, fy=640.0, cx=640.0, cy=480.0,
+                         width=1280, height=960)
+    return make_frame(K, make_camera([0.0, 0.9, 0.0], [1.0, 0.9, 0.0]))
+
+
+def test_only_the_inspected_surface_is_cropped():
+    """The arm's cost is one inference per keyframe per region and its yield is
+    on the surface the agent came to look at -- 3897 fires bought 16 target
+    detections. `only_ids` is what makes that a cost paid while inspecting
+    rather than all episode."""
+    from osg.perception.foveate import container_regions
+
+    near, far = _container(1, "sofa", [2.0, 0.5, 0.0]), _container(2, "table", [2.2, 0.5, 0.4])
+    layer = _layer_with([near, far])
+    frame = _frame_looking_down_x()
+
+    everything = container_regions(layer, frame, ["sofa", "table"],
+                                   max_range_m=3.0, min_px=0.0, max_regions=5)
+    just_one = container_regions(layer, frame, ["sofa", "table"],
+                                 max_range_m=3.0, min_px=0.0, max_regions=5,
+                                 only_ids=[2])
+
+    assert len(everything) == 2
+    assert len(just_one) == 1
+
+
+def test_a_surface_beyond_the_range_is_not_cropped():
+    """Measured in the loop, not in the probe: every recovered detection under
+    condition F is within 3 m, and the far bands are 0/6, 0/3, 0/2, 0/1."""
+    from osg.perception.foveate import container_regions
+
+    layer = _layer_with([_container(1, "sofa", [6.0, 0.5, 0.0])])
+
+    assert container_regions(layer, _frame_looking_down_x(), ["sofa"],
+                             max_range_m=3.0, min_px=0.0, max_regions=5) == []
