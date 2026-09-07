@@ -1,7 +1,10 @@
 # @package _global_
 #
-# Condition F: condition N plus a foveated second detector pass over the
-# container surfaces in view (perception/foveate.py).
+# Condition O: condition N plus a foveated second detector pass over the
+# container surface being inspected (perception/foveate.py).
+#
+# NOT "condition F" -- that letter is taken by the surface-search pair in
+# docs/PROGRESS_zh.md and a second F would break the ladder it belongs to.
 #
 # The whole-frame pass is budgeted for furniture and misses the objects this
 # benchmark asks for. On 00848 the tomato soup can is detected ZERO times in
@@ -33,10 +36,14 @@
 # Measured, 12 episodes on 00848 (tin can and red plate, all six layouts),
 # against condition N reproduced episode-for-episode on the same maps:
 #
-#                              N        F
+#                              N        O
 #     SR                    2/12     6/12
 #     SPL                  0.102    0.226
 #     control loop fps      2.71     2.23
+#
+# Those are the UNGATED numbers. This preset then adds the two gates below and
+# `viewpoint_stop_m`, so it is not the configuration that produced them; the
+# gated pilot is what the ladder should record.
 #
 # and the mechanism, in-situ target recall (GT detected / GT in view):
 #
@@ -56,7 +63,7 @@
 #
 #   python scripts/run_eval.py +experiment=ycb_dynamic_foveate \
 #     'ycb.scenes=[00848-ziup5kvtCCR]' \
-#     ycb.map_in=outputs/maps_v5/00848-ziup5kvtCCR +run_tag=F
+#     ycb.map_in=outputs/maps_v5/00848-ziup5kvtCCR +run_tag=O
 #
 # NOT yet run at 96 episodes, and the 18% control-loop cost lands directly on
 # the paper's real-time claim -- both belong in any comparison that uses this.
