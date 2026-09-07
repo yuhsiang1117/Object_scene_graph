@@ -119,7 +119,23 @@ class ApproachPolicy:
             # at 0.8-1.2 m and the depth threshold is 1.0 m -- and leave the
             # agent short of the pose success is actually measured at.
             if self.at_viewpoint:
-                pass
+                # Arriving at the viewpoint IS the stop condition -- but only
+                # the follower ever said so, and it never says so while the
+                # agent is sitting ON the goal. Measured on 00848's
+                # cross_anchor_01 tin can, an episode where everything upstream
+                # worked: the can found at step 416 (15 of 22 keyframes, track
+                # 0.039 m from truth, p=0.95), the viewpoint reached to 0.111 m,
+                # and then 84 steps of the same 8640 px detection at the same
+                # 0.769 m depth every 14 steps -- one full 12-turn revolution,
+                # spinning on the goal until the episode ran out.
+                #
+                # So say it here: on the goal, with the target in view, this is
+                # the pose success is measured at and there is nothing left to
+                # improve by turning.
+                tol = float(getattr(self.nav.cfg.agent, "viewpoint_stop_m", 0.0) or 0.0)
+                if (tol > 0.0 and self.nav._goal_xy is not None
+                        and float(np.linalg.norm(agent_xy - self.nav._goal_xy)) <= tol):
+                    stop_reason = "viewpoint"
             elif self.nav.cfg.agent.approach_depth_stop:
                 if depth is not None:
                     if depth <= self.nav.cfg.agent.approach_stop_depth_m:

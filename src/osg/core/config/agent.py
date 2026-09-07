@@ -92,6 +92,22 @@ class AgentConfig:
     #
     # 0.5 m is a real change of vantage and half the agent's own turning circle,
     # so a second strike means the pathfinder was asked from somewhere new.
+    # Stop on ARRIVING at the approach viewpoint with the target in view.
+    # 0.0 disables the check, which is the shipped behaviour.
+    #
+    # In viewpoint mode the depth stop is deliberately off -- it would fire en
+    # route and leave the agent short of the ring success is measured on -- so
+    # the only stop left was the follower reporting arrival, and the follower
+    # does not report arrival while the agent is sitting on the goal. Measured
+    # on 00848's cross_anchor_01 tin can, an episode where everything upstream
+    # worked: viewpoint reached to 0.111 m, then 84 steps of the same 8640 px
+    # detection at the same 0.769 m depth every 14 steps -- a 12-turn
+    # revolution, spinning on the goal until the step budget ran out.
+    #
+    # 0.3 m is above the approach controller's own stopping tolerance and well
+    # inside the 0.18 m-from-a-viewpoint success radius plus the ring's angular
+    # sampling error, so arriving this close is arriving.
+    viewpoint_stop_m: float = 0.0
     unreachable_restrike_m: float = 0.0
     approach_retarget_m: float = 0.0
     # Retargets allowed per approach. A cap, not a budget: a track that moves

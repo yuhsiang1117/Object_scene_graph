@@ -25,6 +25,7 @@
   "agent.turn_deg": 30.0,
   "agent.unreachable_restrike_m": 0.0,
   "agent.use_habitat_navmesh": false,
+  "agent.viewpoint_stop_m": 0.0,
   "detector.class_conf": {},
   "detector.conf": 0.3,
   "detector.device": "cuda",

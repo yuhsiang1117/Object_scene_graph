@@ -780,3 +780,62 @@ def test_the_restrike_guard_measures_from_the_last_verdict_not_the_last_step():
     assert track.identity_rejections >= 2, (
         "a track re-tested from 2.2 m away has been ruled out from somewhere new"
     )
+
+
+def _at_viewpoint_agent(goal, agent_at, **agent_overrides):
+    """An agent in APPROACH whose goal IS a viewpoint, with the target in view."""
+    agent = make_agent(make_cfg(**agent_overrides), target="chair")
+    agent.state = State.APPROACH
+    agent._goal_xy = np.asarray(goal, dtype=float)
+    agent._target_obj_xy = np.asarray(goal, dtype=float) + np.array([0.8, 0.0])
+    agent.approach.at_viewpoint = True
+    agent.approach.steps_left = 50
+    agent._goto_deadline = 10_000
+    det = _det("chair", (60, 60))
+    det.mask[100:200, 100:200] = True
+    agent.detector.push([det])
+    frame = make_frame(_INTRINSICS,
+                       make_camera([agent_at[0], 0.88, agent_at[1]],
+                                   [agent_at[0] + 1.0, 0.88, agent_at[1]]),
+                       depth_value=0.77)
+    return agent, frame
+
+
+def test_arriving_at_the_viewpoint_with_the_target_in_view_is_a_stop():
+    """The depth stop is off in viewpoint mode, so the follower reporting
+    arrival was the only stop left -- and it does not report arrival while the
+    agent sits ON the goal. Measured on 00848's cross_anchor_01 tin can: the
+    viewpoint reached to 0.111 m, then 84 steps of the same 8640 px detection at
+    the same 0.769 m depth, one full revolution every 14 steps, to the buzzer."""
+    agent, frame = _at_viewpoint_agent(goal=(2.0, 0.0), agent_at=(1.9, 0.0),
+                                       viewpoint_stop_m=0.3)
+
+    action = agent.approach.step(frame)
+
+    assert action == STOP_ACTION
+    assert agent.state == State.DONE
+    assert agent.approach.stop_reason == "viewpoint"
+
+
+def test_the_viewpoint_stop_does_not_fire_en_route():
+    """Firing early is the failure this replaces: it leaves the agent short of
+    the ring the success radius is measured on."""
+    agent, frame = _at_viewpoint_agent(goal=(2.0, 0.0), agent_at=(0.0, 0.0),
+                                       viewpoint_stop_m=0.3)
+
+    action = agent.approach.step(frame)
+
+    assert action != STOP_ACTION
+    assert agent.state == State.APPROACH
+
+
+def test_the_viewpoint_stop_is_off_unless_asked_for():
+    """With the flag off the new branch must not be taken. On a hand-built FREE
+    costmap the follower does report arrival and the agent stops anyway -- which
+    is exactly what it failed to do in the sim -- so the assertion is on WHICH
+    stop fired, not on whether one did."""
+    agent, frame = _at_viewpoint_agent(goal=(2.0, 0.0), agent_at=(1.9, 0.0))
+
+    agent.approach.step(frame)
+
+    assert agent.approach.stop_reason != "viewpoint"
