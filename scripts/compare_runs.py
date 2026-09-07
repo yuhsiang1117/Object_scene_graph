@@ -10,6 +10,7 @@ reports the instrumented counters the campaign analyzer predates.
 """
 from __future__ import annotations
 
+import argparse
 import json
 import math
 import statistics
@@ -20,6 +21,81 @@ from pathlib import Path
 def load(path: Path):
     f = path / "episodes.jsonl"
     return [json.loads(l) for l in f.read_text().splitlines() if l.strip()]
+
+
+def load_paired(path: Path):
+    rows = load(path)
+    paired = {
+        row.get("uid") or f"{row.get('scene', '?')}:{row['episode_id']}": row
+        for row in rows
+    }
+    summary_path = path / "summary.json"
+    summary = json.loads(summary_path.read_text()) if summary_path.exists() else {}
+    return paired, summary.get("config", {}), summary.get("algorithm", {})
+
+
+def _is_cross_floor(a: dict, b: dict, threshold: float) -> bool:
+    for row in (a, b):
+        if row.get("floor_class") in ("same_floor", "cross_floor"):
+            return row["floor_class"] == "cross_floor"
+        if row.get("goal_floor_gap_m") is not None:
+            return float(row["goal_floor_gap_m"]) > threshold
+    return max(float(a.get("traj_y_range", 0.0) or 0.0),
+               float(b.get("traj_y_range", 0.0) or 0.0)) > threshold
+
+
+def paired_report(argv) -> None:
+    parser = argparse.ArgumentParser(description="paired source/treatment comparison")
+    parser.add_argument("baseline", type=Path)
+    parser.add_argument("treatment", type=Path)
+    parser.add_argument("--split", choices=("all", "multi", "single"), default="all")
+    parser.add_argument("--floor-span", type=float, default=1.0)
+    parser.add_argument("--flips", action="store_true")
+    args = parser.parse_args(argv)
+    a, a_cfg, a_alg = load_paired(args.baseline)
+    b, b_cfg, b_alg = load_paired(args.treatment)
+    shared = sorted(set(a) & set(b))
+    if args.split != "all":
+        want_cross = args.split == "multi"
+        shared = [uid for uid in shared
+                  if _is_cross_floor(a[uid], b[uid], args.floor_span) == want_cross]
+    if not shared:
+        raise SystemExit("no paired episodes match this split")
+
+    protocol_keys = ("success_distance", "dataset_version", "split")
+    mismatch = {key: (a_cfg.get(key), b_cfg.get(key)) for key in protocol_keys
+                if key in a_cfg and key in b_cfg and a_cfg[key] != b_cfg[key]}
+    if mismatch:
+        print(f"ERROR: protocol mismatch: {mismatch}")
+    alg_diff = {key: (a_alg.get(key), b_alg.get(key))
+                for key in sorted(set(a_alg) | set(b_alg))
+                if a_alg.get(key) != b_alg.get(key)}
+    print(f"algorithm differences: {alg_diff or 'none'}")
+
+    gained = [uid for uid in shared if a[uid]["success"] < 0.5 <= b[uid]["success"]]
+    lost = [uid for uid in shared if b[uid]["success"] < 0.5 <= a[uid]["success"]]
+    sr_a = statistics.mean(a[uid]["success"] for uid in shared)
+    sr_b = statistics.mean(b[uid]["success"] for uid in shared)
+    print(f"paired={len(shared)} baseline_SR={sr_a:.3f} treatment_SR={sr_b:.3f}")
+    print(f"gained={len(gained)} lost={len(lost)} net={len(gained)-len(lost):+d}")
+    if args.flips:
+        for label, ids in (("gained", gained), ("lost", lost)):
+            for uid in ids:
+                print(f"{label:7s} {uid} target={a[uid].get('target', '?')}")
+
+    mechanisms = (
+        "floor_switches", "floor_switch_attempts", "directed_floor_switch_attempts",
+        "climb_attempt", "goal_floor_reached", "cross_floor_search_requests",
+        "search_surface", "glance_updates", "steps", "spl", "distance_to_goal",
+    )
+    for key in mechanisms:
+        av = [a[uid].get("agent_stats", {}).get(key, a[uid].get(key)) for uid in shared]
+        bv = [b[uid].get("agent_stats", {}).get(key, b[uid].get(key)) for uid in shared]
+        pairs = [(x, y) for x, y in zip(av, bv) if x is not None and y is not None]
+        if pairs:
+            before = statistics.mean(float(x) for x, _ in pairs)
+            after = statistics.mean(float(y) for _, y in pairs)
+            print(f"{key:34s} {before:9.3f} -> {after:9.3f} ({after-before:+.3f})")
 
 
 def d2(a, b):
@@ -95,6 +171,11 @@ def funnel(eps) -> dict:
 
 
 def main(argv):
+    # Teammate mode: two positional run directories with paired flip analysis.
+    # Dynamic-scene mode below remains compatible with NAME=directory columns.
+    if argv and all("=" not in arg for arg in argv if not arg.startswith("--")):
+        paired_report(argv)
+        return
     named = []
     for arg in argv:
         label, _, path = arg.partition("=")

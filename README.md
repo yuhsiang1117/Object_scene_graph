@@ -2,19 +2,25 @@
 
 Open-vocabulary, object-goal navigation on HM3D ObjectNav (Habitat). A
 from-scratch Python `osg` package: open-vocab perception → a `floor → room →
-object` 3D scene graph → frontier exploration → approach + verify. The pipeline
-has two navigation modes and can drive on Habitat's own navmesh (matching the
-old ROS stack) for reliable, multi-floor-capable motion.
+container → object` 3D scene graph → frontier exploration → approach + verify.
+The pipeline has three navigation modes and three policies, including the
+sensor-only ASCENT path and a floor-aware dynamic-scene path.
 
 The current pipeline (see **[docs/INVESTIGATION.md](docs/INVESTIGATION.md)** for
 how it got here):
 
 - **Perception — YOLOE** (open-vocab detection **and** segmentation in one
   model; no SAM) → ellipsoid object layer (dual-quadric + Wasserstein refine).
-- **Navigation — Habitat navmesh** (`agent.use_habitat_navmesh`): the agent
-  drives on Habitat's 3D navmesh (`ShortestPathFollower`), removing the
-  from-scratch 2D-costmap failure modes (planner-no-path, stuck). The costmap is
-  still built, but only for frontier extraction / the scene graph.
+- **Navigation — `agent.navigation`**:
+  - `costmap`: the from-scratch A*/Voronoi planner and waypoint controller.
+  - `pointnav`: ASCENT's frozen depth + point-goal policy; sensor-only.
+  - `navmesh`: Habitat's ground-truth `ShortestPathFollower`. This is
+    privileged navigation and its SR/SPL must not be compared with sensor-only
+    methods. `agent.use_habitat_navmesh` remains a compatible alias.
+- **Policy — `agent.policy`**: `nav_agent` is the OSG state machine and dynamic
+  world model; `ascent` keeps OSG maps with ASCENT-style control flow;
+  `ascentnav` uses the alternative ASCENT map/control pipeline under
+  `src/ascentnav/`.
 - **Exploration — continuous sweep** (`exploration=sweep`): nearest frontier +
   a momentum bonus that prefers frontiers ahead of the heading, so the agent
   sweeps continuously instead of ping-ponging. **LLM-free** (the LLM frontier
@@ -81,6 +87,9 @@ python scripts/download_data.py --username <TOKEN_ID> --password <TOKEN_SECRET> 
 # later, for full eval: --uids hm3d_val_v0.2
 python scripts/download_data.py --episodes-only          # ObjectNav v2 episodes (public)
 python scripts/download_weights.py                       # detector + mobileclip weights (offline-safe eval)
+python scripts/download_weights.py --pointnav            # ASCENT sensor-only mover
+python scripts/download_weights.py --rednet              # ASCENT stair segmentation
+python scripts/download_weights.py --clip                # ASCENT/value-map image-text model
 ```
 
 See `data/README.md` for the full split layout. LLM/VLM defaults to
@@ -137,6 +146,24 @@ generator settings, seed, and layout SHA-256, so editing an authoring JSON
 automatically regenerates its manifest. Each layout starts with a fresh scene
 graph; memory is not carried between static and dynamic layouts.
 
+For the combined benchmark, `+experiment=ycb_dynamic_multifloor` emits only
+authored relocations whose prior/static floor differs from the destination and
+samples every start on the prior floor. It keeps the OSG `nav_agent`, stale-map
+presence beliefs and container posterior, but gives every storey its own map.
+Build the static maps in a separate pass (the combined preset intentionally
+filters its manifests to relocations):
+
+```bash
+python scripts/run_eval.py +experiment=ycb_dynamic_multifloor \
+  'ycb.cross_floor_relocations_only=false' 'ycb.layout_types=[static]' \
+  ycb.map_out=outputs/static_maps
+python scripts/run_eval.py +experiment=ycb_dynamic_multifloor \
+  ycb.map_in=outputs/static_maps
+```
+
+Snapshot schema v2 stores all floors, stairs, connectivity and track floor
+keys; v1 single-floor maps still load as floor 0.
+
 ### Different configs
 
 Override any Hydra group on the CLI, standalone or stacked on a preset:
@@ -162,19 +189,22 @@ whole preset with `+experiment=name`:
 |---|---|
 | `detector` | `yoloe` (11l, 640px), `yoloe_small` (11s, 512px) |
 | `llm` | `nim` (NVIDIA hosted, default), `ollama` (local) |
-| `exploration` | `llm_text` (LLM-scored, default), `nearest` (geometric, no LLM), `sweep` (nearest + momentum, no LLM) |
+| `exploration` | `llm_text`, `nearest`, `sweep`, plus ASCENT/value/floor-aware alternatives |
 | `verification` | `nim` (forced-choice VLM, **default**), `nim_terminal` (verify at STOP), `off` |
 | `eval` | `hm3d_val` (v2), `hm3d_val_v1` (v1, matched-to-old), `hm3d_val_single_floor`, `hm3d_val_mini`, `ycb_authored` |
 | `floor` | multi-floor support; all off by default, enabled by `+experiment=full_v1_navmesh` (see docs/MULTI_FLOOR.md) |
 
-Key agent flags (CLI: `agent.<flag>=...`): `use_habitat_navmesh` (drive on the
-navmesh, default off — the `*_navmesh` experiments turn it on),
+Key agent flags (CLI: `agent.<flag>=...`): `navigation`
+(`costmap | navmesh | pointnav`), `policy`
+(`nav_agent | ascent | ascentnav`), `use_habitat_navmesh` (legacy alias),
 `exploration.continuity_weight` (momentum), `verification.choice_mode`.
 
 `configs/experiment/` presets: **`full_v1_navmesh`** (current best — navmesh +
 sweep + verify, full v1, 5 eps/scene), `matched_navmesh` (single-floor),
 `matched_single_floor`, `matched_old`, `matched_verify`,
-`matched_terminal_verify`, `single_floor_navgoal`, `ycb_authored_nav`.
+`matched_terminal_verify`, `single_floor_navgoal`, `ycb_authored_nav`,
+`ycb_dynamic_multifloor`, and the ASCENT A/B presets documented in
+[docs/AB_RESULTS.md](docs/AB_RESULTS.md).
 
 ### Analysis & debugging
 
@@ -222,9 +252,10 @@ separately in `timing.csv`.
   selector) → `planning` (A*, waypoint controller — used when *not* on the
   navmesh) → `verification` (forced-choice VLM verifier) → `agent` (FSM) →
   `sim` (Habitat env + `ShortestPathFollower` navmesh driving) / `eval`.
-- **Navigation** is either the from-scratch costmap planner+controller or, with
-  `agent.use_habitat_navmesh`, Habitat's navmesh (`sim/habitat_env.py`:
-  `action_to_goal`, `is_reachable`) — the latter is the current best.
+- **Navigation** uses one of the three movers above. Only `navmesh` receives
+  simulator geometry (`action_to_goal` / `is_reachable`); `costmap` and
+  `pointnav` are sensor-only. `src/ascentnav/` is an attributed alternative
+  policy, not a replacement for OSG's dynamic hierarchy.
 - `configs/` — Hydra groups; `configs/experiment/*` are composable presets.
 - `scripts/` — eval entry (`run_eval.py`), data/weights download,
   `analyze_*.py` diagnostics, keyframe/video tools.
