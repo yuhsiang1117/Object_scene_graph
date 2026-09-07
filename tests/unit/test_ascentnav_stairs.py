@@ -589,11 +589,23 @@ def _drop_off(edge_m, look_at=None, hole_range=3.8, size=800):
 
 
 @pytest.mark.parametrize("edge", [1.5, 2.0, 2.5, 3.0])
-def test_the_drop_off_is_marked_from_the_lip_outward(edge):
+def test_the_drop_off_is_marked_at_the_lip(edge):
     xy = _drop_off(edge)
     assert len(xy) > 0, f"a hole starting at {edge} m was not detected at all"
     assert xy[:, 0].min() == pytest.approx(edge, abs=0.1), (
         f"marking starts at {xy[:, 0].min():.2f} m, the floor stops at {edge} m")
+
+
+@pytest.mark.parametrize("edge", [1.5, 2.5])
+def test_the_marking_does_not_spread_across_the_void(edge):
+    """Every ray past the lip also misses the floor, so marking them all fills
+    the whole visible void -- a 22 m^2 blob spilling onto the floor below and
+    out through whatever the stairwell overlooks. Only the near edge is a place
+    the agent can stand."""
+    xy = _drop_off(edge)
+    depth_of_band = xy[:, 0].max() - xy[:, 0].min()
+    assert depth_of_band < 0.5, (
+        f"the marked band is {depth_of_band:.2f} m deep; it should hug the lip")
 
 
 def test_the_marking_tracks_the_lip_rather_than_the_far_surface():

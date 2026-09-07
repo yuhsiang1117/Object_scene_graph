@@ -134,6 +134,8 @@ class ObstacleMap(BaseMap):
         # as missing. Depth noise on a flat floor is centimetres; half a metre
         # is a step and a half.
         self._drop_off_margin_m = 0.5
+        # Missing-floor pixels a column needs before its nearest sample counts.
+        self._drop_off_min_col_px = 8
         self._disable_end = False
         # self._look_for_downstair = True
         self._look_for_downstair_flag = False
@@ -613,12 +615,29 @@ class ObstacleMap(BaseMap):
                     & (measured_fwd < max_depth - 0.05)
                     & (filled_depth_for_stair > 0.0)
                 )
+                # Mark only the NEAR EDGE of the void, one point per image
+                # column, not every ray that misses the floor. Every ray beyond
+                # the lip also misses, so painting them all fills the whole
+                # visible void -- a 22 m^2 blob spilling across the lower floor
+                # and out through whatever the stairwell overlooks. The lip is
+                # the part a navigator can stand on, and it is the nearest
+                # missing-floor sample along each bearing.
                 if np.any(missing_floor):
-                    lip = C + t_floor[missing_floor][:, None] * dirs[missing_floor]
-                    lip_px = self._xy_to_px(lip[:, :2])
-                    ok = ((lip_px[:, 0] >= 0) & (lip_px[:, 0] < self._down_stair_map.shape[1])
-                          & (lip_px[:, 1] >= 0) & (lip_px[:, 1] < self._down_stair_map.shape[0]))
-                    self._down_stair_map[lip_px[ok, 1], lip_px[ok, 0]] = 1
+                    t_masked = np.where(missing_floor, t_floor, np.inf)
+                    per_col_rows = np.argmin(t_masked, axis=0)
+                    cols = np.arange(t_masked.shape[1])
+                    nearest_t = t_masked[per_col_rows, cols]
+                    # A column needs a real run of missing floor, not one noisy
+                    # pixel, before its nearest sample counts as an edge.
+                    enough = missing_floor.sum(axis=0) >= self._drop_off_min_col_px
+                    keep = np.isfinite(nearest_t) & enough
+                    if np.any(keep):
+                        lip_dirs = dirs[per_col_rows[keep], cols[keep]]
+                        lip = C + nearest_t[keep][:, None] * lip_dirs
+                        lip_px = self._xy_to_px(lip[:, :2])
+                        ok = ((lip_px[:, 0] >= 0) & (lip_px[:, 0] < self._down_stair_map.shape[1])
+                              & (lip_px[:, 1] >= 0) & (lip_px[:, 1] < self._down_stair_map.shape[0]))
+                        self._down_stair_map[lip_px[ok, 1], lip_px[ok, 0]] = 1
                 
             # 不爬楼梯的时候标注
             if search_stair_over == True: # reach_stair == False:

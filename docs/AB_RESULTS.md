@@ -3299,6 +3299,52 @@ uniform win either.
 Known limitation, unchanged: a stairwell whose visible return is beyond
 `max_depth` still cannot be detected by this path.
 
+### S46 — the drop-off marking filled the whole void, not the edge
+
+S45 moved the down-stair marking from a mirrored depth to the geometric
+missing-floor test. It put the near edge in exactly the right place, and then
+kept going: every ray past the lip also misses the floor, so the marked region
+was the entire VISIBLE VOID -- on synthetic geometry a band from the lip out to
+3.30 m, and in episodes a blob averaging 2296 cells (5.7 m^2) and peaking at
+8808 (22 m^2), spilling across the lower floor and out through whatever the
+stairwell overlooks.
+
+That matters beyond tidiness: the stair frontier is the centroid of the largest
+component, so a void-shaped region aims the agent at the middle of the hole
+rather than at the lip, and `robot_on_stairs` -- a footprint test against the
+same map -- only fires once the agent is over the drop.
+
+**Fix:** mark one point per image column, the NEAREST missing-floor sample along
+that bearing, and only for columns with a real run of missing pixels (8) rather
+than a single noisy one. That is the lip, and it cannot spread into the void.
+
+| true lip | marked band (before) | marked band (after) |
+|---|---|---|
+| 1.5 m | 1.50 .. 3.30 m | **1.50 .. 1.50 m** |
+| 2.0 m | 2.00 .. 3.30 m | **2.00 .. 2.00 m** |
+| 2.5 m | 2.50 .. 3.30 m | **2.50 .. 2.50 m** |
+| 3.0 m | 3.00 .. 3.30 m | **3.00 .. 3.00 m** |
+
+Still nothing on an unbroken floor, still pitch-invariant, and the per-frame
+cost drops from thousands of points to at most one per column.
+
+**Measured on the 10-episode strict descent split:**
+
+| | SR | UP / DOWN climb steps | mean down-stair cells |
+|---|---|---|---|
+| whole void (S45) | 3/10 | 0 / 194 | 2296 |
+| **lip only** | **4/10** | 0 / **309** | **1273** |
+
+`q3zU7Yy5E5s:9` flips to a success (dtg 12.82 -> 0.06 m), and `XB4GS9ShBRE:13`
+gets from 11.40 m to **4.90 m** of its goal while still failing. Total steps rise
+1377 -> 1768, which is the right direction: episodes that used to stop early on
+the starting floor now go down.
+
+The residual cells are not bleed. A one-pixel lip curve is thickened by
+ASCENT's own `MORPH_CLOSE` with the agent-radius kernel (`obstacle_map.py:673`),
+which is what makes the lip wide enough to stand on, and the curve accumulates
+as the agent moves and sees more of the edge.
+
 ### S26 — ASCENT's dense approach re-check
 
 S23/S25 closed the mover, the aim point and the commit gate as explanations for
