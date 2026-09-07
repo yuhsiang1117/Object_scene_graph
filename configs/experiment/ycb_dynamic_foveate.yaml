@@ -72,12 +72,25 @@ defaults:
 
 scene_graph:
   foveate_containers: true
-  # Pay for the second inference while INSPECTING, not all episode. The first F
-  # run fired 3897 times for 16 target detections at an 18% control-loop cost;
-  # the yield is concentrated on the surface the search posterior went to look
-  # at, and the range band is set by where recoveries actually happen.
-  foveate_active_only: true
-  foveate_max_range_m: 3.0
+  # Both gates tried and both OFF, because a 12-episode pilot said so.
+  #
+  #                       ungated      + active_only, range 3.0
+  #     SR                  6/12                 4/12
+  #     regions             3897                  472
+  #     TARGET detections  16 in 7 eps       0 in 0 eps
+  #
+  # `foveate_active_only` does not trim the cost, it removes the mechanism.
+  # `search_container` is set only while the posterior is scoring a surface
+  # inspection, and the can is detected while approaching and travelling, not
+  # inside that window -- so the one gate that looked like pure savings turned
+  # the arm off and cost two of the four wins.
+  #
+  # `foveate_max_range_m` stays at its measured 4.0 for the same reason: every
+  # recovery in the loop is under 3 m, which argues 3.0 is free, but "argues"
+  # is what the 2 m floor did too. The suite runs the configuration that was
+  # measured; tightening it is a separate arm with its own pilot.
+  foveate_active_only: false
+  foveate_max_range_m: 4.0
 
 agent:
   # The last 0.8 m: cross_anchor_01's tin can spun on its viewpoint for 84 steps
