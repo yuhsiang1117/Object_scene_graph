@@ -1,0 +1,44 @@
+defaults:
+  - base_hm3d
+
+# Five DESCENT episodes -- the nearest goal view-point is more than a metre
+# BELOW the start -- picked one per scene and spanning the difficulty range.
+#
+#   python scripts/run_eval.py +experiment=ascentnav eval=downstairs5 \
+#       eval.debug_frames=true output_dir=outputs/s49_down
+#
+# Down-stairs are worth their own split because their detection path is
+# completely different from up-stairs: not the RedNet/detector fusion, but the
+# inverted-depth "the floor near my feet is missing" trick
+# (`obstacle_map.py:561-573`), which only fires when the drop-off is within
+# about 2 m and low in the frame.
+#
+# Selected by INDEX, not by the dataset's `episode_id` field: habitat reassigns
+# `episode.episode_id = str(i)` per content file, and every stored id in this
+# split is the string "0".
+#
+# STRICT: every view-point of every goal instance is more than a metre below the
+# start, so the episode cannot be solved by going up. The looser "nearest
+# view-point is below" rule is not enough -- it admits episodes with another
+# instance of the category upstairs, and the first run of this split had one
+# (`4ok3usBNeis:31`), which the agent solved by climbing 1.4 m UP.
+#
+#   scene          ep   highest goal   target      geodesic
+#   DYehNKdT76V    63     -1.60 m      sofa          3.9 m
+#   qyAac8rV8Zk    62     -1.52 m      sofa          5.4 m
+#   XB4GS9ShBRE    43     -2.61 m      sofa          7.1 m
+#   q3zU7Yy5E5s    96     -2.49 m      sofa          8.7 m
+#   6s7QHgap2fW    50     -2.80 m      sofa         12.8 m
+#
+# NOT an A/B split: 5 episodes measure nothing on their own.
+split: val
+dataset_version: v1
+episodes_path: data/datasets/objectnav/hm3d/v1/{split}/{split}.json.gz
+num_episodes: -1
+max_scene_repeat_episodes: -1
+episode_ids:
+    - DYehNKdT76V.basis.glb:63
+    - qyAac8rV8Zk.basis.glb:62
+    - XB4GS9ShBRE.basis.glb:43
+    - q3zU7Yy5E5s.basis.glb:96
+    - 6s7QHgap2fW.basis.glb:50
