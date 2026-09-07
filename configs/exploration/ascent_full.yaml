@@ -1,0 +1,8 @@
+defaults:
+  - value
+
+# Both halves of ASCENT's frontier path together.
+extractor: contour
+area_thresh_m2: 1.5
+selector: ascent
+nearby_distance_m: 3.0

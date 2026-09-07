@@ -18,12 +18,14 @@ To change a default on purpose:  python tests/unit/test_config_snapshot.py
 from __future__ import annotations
 
 import dataclasses
+import hashlib
 import json
 from pathlib import Path
 
 from osg.core.config import OSGConfig
 
 SNAPSHOT = Path(__file__).parent / "golden" / "config_snapshot.json"
+EXPERIMENT_SNAPSHOT = Path(__file__).parent / "golden" / "experiment_fingerprints.json"
 
 
 def flatten(obj, prefix: str = "") -> dict:
@@ -59,6 +61,26 @@ def test_no_calibrated_default_has_moved():
     assert not changed, f"defaults changed (was, is): {changed}"
     assert not removed, f"config fields removed: {removed}"
     assert not added, f"config fields added without updating the snapshot: {added}"
+
+
+def test_every_experiment_preset_composes_and_matches_its_fingerprint():
+    from hydra import compose, initialize_config_dir
+    from omegaconf import OmegaConf
+
+    from osg.core.config import register_configs
+
+    register_configs()
+    root = Path(__file__).resolve().parents[2] / "configs"
+    actual = {}
+    with initialize_config_dir(config_dir=str(root), version_base="1.3"):
+        for path in sorted((root / "experiment").glob("*.yaml")):
+            cfg = compose(config_name="config", overrides=[f"+experiment={path.stem}"])
+            encoded = json.dumps(
+                OmegaConf.to_container(cfg, resolve=False),
+                sort_keys=True, separators=(",", ":"),
+            ).encode("utf-8")
+            actual[path.stem] = hashlib.sha256(encoded).hexdigest()
+    assert actual == json.loads(EXPERIMENT_SNAPSHOT.read_text(encoding="utf-8"))
 
 
 def test_every_field_is_reachable_by_its_dotted_name():

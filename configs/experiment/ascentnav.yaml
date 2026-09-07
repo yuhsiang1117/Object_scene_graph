@@ -1,0 +1,47 @@
+# @package _global_
+#
+# S39/S41: ASCENT's navigation pipeline reimplemented in src/ascentnav.
+#
+#   python scripts/download_weights.py --pointnav --rednet    # once
+#   python scripts/run_eval.py +experiment=ascentnav eval=scenes20_ep0to4
+#
+# THE DEFAULT ARM. `final_sensor` inherits this preset, so this file is what the
+# headline sensor-only number is produced with. Measured on `scenes20_ep0to4`:
+# 58.0% SR / 0.285 SPL, 66.7% same-floor, 27.3% cross-floor (`outputs/s41_stairs`),
+# against 42.0% for the S30-S38 port chain (`+experiment=ascent_sensor`, still
+# reachable by name).
+#
+# Where the earlier arms put ASCENT's control flow on OSG's maps (S37), this
+# runs ASCENT's OWN maps -- ObstacleMap, ValueMap, ObjectPointCloudMap, vendored
+# from the reference implementation -- under ASCENT's control flow. Those maps
+# differ from OSG's in kind, not in parameters: a fog-of-war reveal over a
+# maintained navigable map with a [0.61, 0.88] obstacle band and
+# `detect_frontier_waypoints`, against OSG's per-frame depth raycast over
+# [0.15, 1.5] with contour frontiers.
+#
+# Three substitutions, each the OSG equivalent of something that cannot run
+# here, and each already a documented deviation:
+#   detector     YOLOE for D-FINE + GroundingDINO + MobileSAM (`transformers`
+#                absent) -- and S15 measured the detector as worth ZERO here
+#   value map    CLIP for BLIP-2 ITM (`lavis` absent)
+#   LLM          the hosted client for a local Qwen2.5-7B
+#
+# The object scene graph is built from the same object cloud and is read-only
+# with respect to every navigation decision.
+
+defaults:
+  - ascent_sensor
+
+agent:
+  policy: ascentnav
+
+  # ASCENT runs RedNet every step (`ascent_policy.py:151, 424`) and the stair
+  # maps are dead without it: with `rednet_stairs: false` the fused mask is
+  # empty on every frame and the agent has no floor-transition capability at
+  # all, which is what left the first s39 run at 0.0% on the 21 cross-floor
+  # episodes.
+  rednet_stairs: true
+  # `rednet` unions the two stair inputs instead of ANDing them; see
+  # `ascentnav/agent.py::_stair_det_mask` for the recall measurement that
+  # motivates it. `ascent` restores the strict fusion.
+  stair_up_mode: rednet

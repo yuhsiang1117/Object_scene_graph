@@ -1,0 +1,9 @@
+defaults:
+  - value
+
+# ASCENT's frontier extraction: contour of the explored region rather than
+# clusters of unknown cells, and a size filter on the unexplored AREA a frontier
+# opens (1.5 m2) rather than on the frontier's own length. Everything else
+# matches `value` so the A/B isolates the extractor.
+extractor: contour
+area_thresh_m2: 1.5

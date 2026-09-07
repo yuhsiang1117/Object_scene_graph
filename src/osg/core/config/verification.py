@@ -14,6 +14,9 @@ from typing import List
 @dataclass
 class VerificationConfig:
     enabled: bool = True
+    # ASCENT treats a rejection as retryable; zero preserves the legacy
+    # permanent rejection behavior used by existing dynamic presets.
+    reject_cooldown_steps: int = 0
     # Arriving at a committed target without ever seeing it is an OBSERVATION,
     # not just a failed trip (docs/DYNAMIC_SCENES.md, C5). Applying it as
     # negative evidence is what stops a stale map sending the agent back to the
@@ -88,7 +91,7 @@ class VerificationConfig:
     min_obs: int = 3
     # Candidate quality gates: sliver/fragment detections (a chair edge seen
     # through furniture) must not trigger the expensive approach+verify loop.
-    min_score: float = 0.45
+    min_score: float = 0.70
     min_bbox_px: int = 3000
     # The same exemption one stage later. Without it the deadlock simply moves:
     # a track seeded from a distant sighting can only grow its best box by being
@@ -142,8 +145,8 @@ class VerificationConfig:
     # pre-approach VLM call is skipped (accept) so this isolates the terminal
     # gate. A rejected terminal STOP blacklists the track and resumes exploring.
     terminal: bool = False
+    approach_recheck: bool = False
+    approach_recheck_thresh: float = 0.0
     # Verification is rare (1-3 calls/episode) and precision-critical: the 3B
     # VLM rejected clear true positives in prompt-lab tests; 7B passed all.
     vlm_model: str = "qwen2.5vl:7b"
-
-

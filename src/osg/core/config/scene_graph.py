@@ -101,6 +101,8 @@ class SceneGraphConfig:
     # starve target candidates -- so gate on category by default.
     assoc_category_gate: bool = True
     room_seg_every_kf: int = 10
+    room_erode_iters: int = 6
+    min_room_cells: int = 60
     room_min_radius_m: float = 0.9
     # 1.2 caused universal 1-room collapse on real HM3D scans: the merge
     # condition is clearance > door_width_m/2, so a wider value RAISES the
@@ -196,6 +198,12 @@ class SceneGraphConfig:
     # gets full weight, matching pre-feature behavior).
     confirm_baseline_m: float = 0.15
     repeat_view_discount: float = 0.2
+    fp_retraction: bool = False
+    fp_disable_radius_m: float = 0.5
+    target_every_step: bool = False
+    cloud_stride: int = 4
+    cloud_cap: int = 2000
+    room_classifier: str = "none"  # none | place365
     # Container (anchor) layer -- floor -> room -> container -> object
     # (docs/DYNAMIC_SCENES.md). A track qualifies as a support surface when its
     # label is in graph.containers.CONTAINER_CATEGORIES AND its world top height
@@ -221,5 +229,4 @@ class SceneGraphConfig:
     # its ghost, wrong for a bed seen on two different passes.
     container_merge_m: float = 1.0
     presence: PresenceConfig = field(default_factory=PresenceConfig)
-
 

@@ -1,0 +1,26 @@
+# @package _global_
+#
+# The S30 arm with all three fixes, kept because it is the FAITHFUL port even
+# though it is not the best one.
+#
+#   python scripts/run_eval.py +experiment=ascent_sensor_all3 eval=scenes20_ep0to4
+#
+# Measured on `scenes20_ep0to4` (outputs/s30_all): 41.0% SR / 0.191 SPL against
+# `ascent_sensor`'s 42.0% / 0.182 -- net -1 episode, McNemar p = 1.00. A null.
+#
+# Both extra fixes did fire (`frontier_consumed` 213, `pointnav_stop_forced_forward`
+# 27, `frontier_stub_block` 8 -> 0), so this is a null result about the WORLD,
+# not a no-op: not retiring frontiers on a spurious STOP, and not gating them on
+# an unused A* plan, simply does not buy exploration budget back. Exploration
+# cost is dominated by something else -- 24k of 31k steps are still spent in
+# GOTO_FRONTIER against the navmesh arm's 15.5k.
+#
+# Kept switchable so a later change to exploration can be tested with the port
+# either faithful or trimmed.
+
+defaults:
+  - ascent_sensor
+
+agent:
+  pointnav_stop_means_blocked: false
+  frontier_reachability_gate: false

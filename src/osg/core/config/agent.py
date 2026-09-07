@@ -7,7 +7,8 @@ sampled goal viewpoints on fixed rings rather than against the object itself.
 """
 from __future__ import annotations
 
-from dataclasses import dataclass
+from dataclasses import dataclass, field
+from typing import List, Optional
 
 
 @dataclass
@@ -179,4 +180,54 @@ class AgentConfig:
     # bottle (2 of 6).
     reachable_via_viewpoint: bool = False
 
+    # Canonical mover selection.  ``None`` preserves the historical
+    # ``use_habitat_navmesh`` spelling; resolve_navigation() is the only place
+    # the two settings are reconciled.
+    navigation: Optional[str] = None  # costmap | navmesh | pointnav
+    # Control flow is independent of the mover.  The standard OSG FSM remains
+    # the default; the two ASCENT policies are explicit alternatives.
+    policy: str = "nav_agent"  # nav_agent | ascent | ascentnav
+
+    # Sensor-only PointNav mover (ASCENT/VLFM compatible defaults).
+    pointnav_weights: str = "data/weights/pointnav_weights.pth"
+    pointnav_stop_radius: float = 0.9
+    pointnav_depth_shape: List[int] = field(default_factory=lambda: [224, 224])
+    pointnav_approach_creep_m: float = 1.0
+    pointnav_arrival_m: float = 0.0
+    pointnav_stop_means_blocked: bool = True
+
+    # Navigation/termination controls imported with the ASCENT behavior
+    # snapshot.  Defaults are intentionally inert for legacy presets.
+    approach_abandon_steps: int = 0
+    frontier_stick_m: float = 0.2
+    frontier_stick_steps: int = 15
+    frontier_stick_rule: str = "displacement"  # displacement | closing
+    escape_window: int = 0
+    terminal_requires_detection: bool = True
+    frontier_reachability_gate: bool = True
+    check_candidates_all_states: bool = False
+    terminal_rule: str = "depth"  # depth | nearest_point
+    terminal_engage_m: float = 1.0
+    terminal_stop_m: float = 0.6
+    terminal_progress_eps: float = 0.1
+    terminal_stall_steps: int = 3
+    terminal_percentile: float = 5.0
+
+    # Stair sensing and traversal.  RedNet is loaded only when explicitly
+    # enabled by an imported or combined multi-floor preset.
+    ascent_min_obstacle_h: float = 0.61
+    ascent_max_obstacle_h: float = 0.88
+    stair_up_mode: str = "detector"  # detector | ascent | rednet
+    rednet_stairs: bool = False
+    rednet_weights: str = "data/weights/rednet_semmap_mp3d_40.pth"
+    stair_reach_m: float = 0.6
+    stair_overshoot_m: float = 1.5
+    climb_max_steps: int = 80
+    stair_climb_state: bool = True
+    floor_gap_min_m: float = 0.9
+    climb_exit_rule: str = "height"  # height | topological
+    stair_exit_m: float = 0.5
+    climb_carrot: bool = False
+    climb_carrot_m: float = 0.8
+    down_look_every: int = 0
 

@@ -4,8 +4,13 @@ __pycache__/
 .pytest_cache/
 .hydra/
 outputs/
-data/
+# Generated datasets, checkpoints and external checkouts stay ignored.  Keep
+# only the tiny, provenance-carrying A/B split manifests under version control.
+data/*
 !data/README.md
+!data/splits/
+data/splits/*
+!data/splits/*.json
 .env
 *.npz
 *.pt
@@ -13,3 +18,4 @@ mobileclip_blt.ts
 .vscode/
 .idea/
 .claude
+relative_work/

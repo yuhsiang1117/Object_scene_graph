@@ -1,0 +1,55 @@
+# @package _global_
+#
+# S37: ASCENT's navigation control flow, on OSG's perception.
+#
+#   python scripts/run_eval.py +experiment=ascent_policy eval=scenes20_ep0to4
+#
+# Its pair is `+experiment=ascent_sensor` (42.0%, outputs/s30_fix1): identical
+# perception, mapping, value map, terminal rule and mover -- the ONLY difference
+# is which control flow decides the action.
+#
+# ------------------------------------------------------------------ why
+#
+# On this split ASCENT scores 70% sensor-only, OSG 63% WITH a ground-truth
+# navmesh and 42% sensor-only. ASCENT's navigation beats OSG's even when OSG is
+# allowed to cheat, so the gap is the pipeline, not its settings.
+#
+# Four ASCENT mechanisms were ported into NavAgent one at a time and three
+# measured null or worse (S31 carrot, S33 RedNet, S34 cadence). S36 says why:
+# the differences are structural. ASCENT has no state machine -- it rebuilds
+# every input and re-decides every step -- while NavAgent commits to a frontier
+# for a median 23 steps and to an approach goal for the whole approach. A
+# mechanism lifted out of the first structure and dropped into the second loses
+# what made it work; S34 is the clearest case, where ASCENT's re-selection
+# cadence without its `_force_frontier` damping thrashed 4002 times.
+#
+# ------------------------------------------------------- what actually changes
+#
+#   no committed states     the dispatch re-decides from the maps every step
+#   object goal             re-aimed every step at the nearest cloud point,
+#                           with ASCENT's hysteresis (ignore <0.1 m, or <0.5 m
+#                           while further than 2 m)
+#   frontier                re-chosen every step, AND FrontierCommitState fed on
+#                           every choice so the sticky counter, force_xy and the
+#                           retirement set accumulate -- the damping S34 lacked
+#   arrival at a frontier   does not exist; a network STOP is overwritten with a
+#                           forward step, in exploring and approaching alike
+#
+# Perception, mapping, floor stack, value map, object layer, stair detector,
+# PointNav driver and escape guard are all inherited unchanged.
+#
+# ------------------------------------------------------ deliberate deviations
+#
+#   * OSG's candidate gate is kept (worth +3, S13/S15) where ASCENT commits to
+#     any cloud of the target class.
+#   * OSG's VLM verifier is kept (the largest measured win in the log) where
+#     ASCENT gates on a BLIP-2 cosine; `lavis` is not installed here.
+#   * The terminal stop and the 100-step abandon are ASCENT's already, ported in
+#     S30, and are called rather than rewritten -- so both arms decide terminal
+#     questions identically and the control flow stays the single variable.
+
+defaults:
+  - ascent_sensor
+
+agent:
+  policy: ascent

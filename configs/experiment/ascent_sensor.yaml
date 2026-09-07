@@ -1,0 +1,98 @@
+# @package _global_
+#
+# S8: ascent_aligned with the privileged navigation removed, and ASCENT's own
+# mover put in its place.
+#
+#   python scripts/run_eval.py +experiment=ascent_sensor eval=scenes20_ep0to4
+#
+# Every number in docs/AB_RESULTS up to S28 was produced with
+# `agent.use_habitat_navmesh: true`, which hands the agent two things no
+# sensor-only system has:
+#
+#   * `env.action_to_goal`  -- Habitat's ShortestPathFollower planning on the
+#     ground-truth navmesh, i.e. a perfect map of everything walkable including
+#     regions the agent has never seen.
+#   * `env.is_reachable`    -- a ground-truth connectivity oracle. NavAgent uses
+#     it to blacklist targets on disconnected navmesh islands before approaching
+#     (`unreachable_skip`). A visible-but-unreachable object -- the far side of a
+#     sealed bathroom wall -- costs a sensor-only agent the whole episode, and
+#     costs the navmesh agent nothing.
+#
+# Those are the only two channels: runner.py passes `nav_fn` and `reachable_fn`
+# only when the resolved mode is `navmesh`, and NavAgent receives no other
+# simulator handle. Pose still comes from the simulator, which is fair -- ASCENT
+# reads GPS+compass the same way (ascent_policy.py:229-232).
+#
+# ---------------------------------------------------------------- what replaces them
+#
+# Not the from-scratch costmap planner. ASCENT has no planner at all: it hands
+# (rho, theta) plus a 224x224 depth image to a frozen PointNav ResNet policy and
+# executes whatever comes back (`_pointnav` at ascent_policy.py:837, `_navigate`
+# at :876). `navigation: pointnav` is that mover, loaded from the same
+# checkpoint ASCENT runs -- stage it with
+#
+#   python scripts/download_weights.py --pointnav
+#
+# It keeps the navmesh arm's FSM shape (drive straight at the object, no
+# viewpoint pre-positioning), so the delta against `ascent_aligned` isolates
+# exactly the two privileged channels rather than also swapping the behaviour.
+#
+# `approach_abandon_steps` is the reachability substitute, and is ASCENT's own:
+# commit, and if 100 steps have not got you there, treat the target as a false
+# positive, retire its LOCATION, and go back to exploring (ascent_policy.py:929).
+# `escape_window` is ASCENT's 30-step action-history guard (:595-606), which a
+# reactive mover needs because it has no costmap to mark when it gets stuck.
+#
+# ------------------------------------------------------------ read the delta as
+#
+# "cost of removing privilege, with ASCENT's mover in place" -- not a
+# single-variable A/B. Three things change together, because a sensor-only agent
+# without the give-up rule or the escape guard is not a weaker ASCENT, it is a
+# deadlocked one.
+
+defaults:
+  - ascent_aligned
+
+agent:
+  use_habitat_navmesh: false
+  navigation: pointnav
+  approach_abandon_steps: 100
+  escape_window: 30
+  # ASCENT's sticky-frontier rule AND its constants (llm_planner.py:239-257,
+  # constants.py:234-235). Not just a retune of OSG's 0.2 m / 15 steps: OSG
+  # measures agent DISPLACEMENT, ASCENT measures the change in DISTANCE TO THE
+  # FRONTIER. They catch different failures, and this mover has the one only
+  # ASCENT's rule sees -- a reactive policy orbits instead of freezing. Measured
+  # on a smoke run before this was added: one frontier held from step 85 to 500,
+  # the agent moving the whole time.
+  frontier_stick_rule: closing
+  frontier_stick_m: 0.3
+  frontier_stick_steps: 20
+
+  # ------------------------------------------------------------------ S30
+  # Three divergences from ASCENT, found by decomposing the S8 result
+  # (33.0% against the navmesh arm's 63.0%, 57/100 episodes timing out).
+  #
+  # 1. The terminal stop was gated on a live detection, but the rule it runs
+  #    measures the accumulated surface cloud and never needed one. ASCENT
+  #    asks every step (ascent_policy.py:434 / :910). Navmesh mode hid this
+  #    behind ShortestPathFollower's arrival signal; 28 episodes here closed
+  #    to a median 0.67 m of their goal and never issued STOP.
+  terminal_requires_detection: false
+
+verification:
+  # S38: a VLM rejection sets a track aside for 100 steps instead of retiring it
+  # for good. ASCENT's equivalent gate is re-evaluated every step until it
+  # passes and only abandons a target at close range (map_controller.py:770-776,
+  # ascent_policy.py:910-922). OSG asked once, from wherever the agent stood,
+  # and a NO was final -- measured at 3 of 22 episodes ending within 0.5 m of
+  # the goal with no candidate left to stop on, two of them at 3-5 cm.
+  reject_cooldown_steps: 100
+  # 2 and 3 (`pointnav_stop_means_blocked: false`,
+  #    `frontier_reachability_gate: false`) are MEASURED NULL and are therefore
+  #    NOT enabled here. Both are faithful to ASCENT and both demonstrably fire
+  #    -- but on 100 paired episodes they moved SR 42.0% -> 41.0% (net -1,
+  #    McNemar p = 1.00) and their predicted mechanism did not happen:
+  #    `GOTO_FRONTIER` steps stayed flat at ~24k and `frontier_give_up` rose
+  #    from 127 to 168. See docs/AB_RESULTS.md S30, and
+  #    `+experiment=ascent_sensor_all3` to run that arm.

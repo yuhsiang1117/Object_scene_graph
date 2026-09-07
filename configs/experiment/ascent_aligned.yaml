@@ -1,0 +1,121 @@
+# @package _global_
+#
+# Every ASCENT mechanism this repo has ported, switched on together, at the
+# settings ASCENT actually runs. Inherits the protocol from ascent_matched.
+#
+# Each line below was read off ASCENT's source rather than its paper. The four
+# forced deviations are listed at the bottom -- they are the reason a number
+# from this preset is "as close as this hardware allows", not "identical".
+#
+#   python scripts/run_eval.py +experiment=ascent_aligned eval=scenes20_ep0to4
+#
+# ---------------------------------------------------------------- what matches
+#
+#   frontier extraction   contour of the explored region, area_thresh 1.5 m^2
+#                         (frontier_detection.py; eval_ascent_hm3d.yaml:27)
+#   frontier ranking      value argmax, NO division by path cost, 3 m nearby
+#                         shortcut (llm_planner.py:96-115, 166-179)
+#   commitment            retire after 20 rounds without closing, or 20 repeat
+#                         selections (constants.py:234-236)
+#   frontier LLM          forced choice among top-3, {"Index","Reason"}
+#                         (llm_planner.py:409-487; ascent_policy.py topk: 3)
+#   floor LLM             asked every >=60 steps once >=100 steps on this floor
+#                         (llm_planner.py:217; constants.py:237-238)
+#   floor exhausted       when no explore frontiers remain, NOT on a step count
+#                         (ascent_policy.py:655)
+#   room typing           Places365 top-5 -> 10 reference rooms
+#                         (map_controller.py:816-830; utils.py:209-229)
+#   value prompt          "Seems like there is a {target} ahead."
+#                         (base_objectnav_policy.py:377)
+#   terminal stop         distance to the target's nearest surface point
+#                         (map_controller.py:866)
+#   temperature           0, do_sample False (qwen25_out.py:62-66)
+#
+defaults:
+  - ascent_matched
+  - override /exploration: value
+
+mapping:
+  # ASCENT keeps one obstacle/value/object map per storey and this split is 21%
+  # cross-floor; without this the stair machinery has nowhere to put a floor.
+  multi_floor: true
+
+scene_graph:
+  room_classifier: place365
+
+exploration:
+  # -- extraction ---------------------------------------------------------
+  extractor: contour
+  area_thresh_m2: 1.5
+
+  # -- ranking: this is the path_cost removal --------------------------------
+  # `utility` computes score / path_cost (selector.py:145). ASCENT never divides
+  # by distance: it takes the value argmax and lets distance in exactly once, as
+  # a hard shortcut for frontiers within nearby_distance. `ascent` is that
+  # ranking, plus the commitment bookkeeping, keyed spatially because
+  # Frontier.id is reassigned on every extraction.
+  selector: ascent
+  nearby_distance_m: 3.0
+
+  # -- the LLM cascade -----------------------------------------------------
+  ranker: ascent
+  ranker_topk: 3
+  ranker_every_steps: 20
+  floor_llm: true
+  floor_ask_every: 60
+  floor_min_steps: 100
+  floor_llm_boost: 5.0
+
+  # -- stairs --------------------------------------------------------------
+  stair_prior: 0.6
+  stair_explored_rule: no_frontiers
+
+  # -- value map -----------------------------------------------------------
+  value_map: true
+  value_weight: 4.0
+  # OFF: this is the numeric multiplier applied OUTSIDE the model. ASCENT has no
+  # such term -- it states the same priors as text inside the prompt, which the
+  # ranker and floor planner both do and which they load independently of this
+  # flag. Leaving it on would apply the prior twice.
+  knowledge_prior: false
+
+agent:
+  use_habitat_navmesh: true
+  terminal_rule: nearest_point
+  terminal_stop_m: 0.4
+  # ASCENT DBSCAN-filters the target cloud before measuring it
+  # (object_point_cloud_map.py:217-224, eps 0.2 / min_points 100). OSG's cloud
+  # is unfiltered, so a raw minimum is set by its worst stray point -- measured
+  # net -8 on dev50, with the distance-to-goal distribution splitting in two.
+  # The 5th percentile is the same operation on a noisier input, not a different
+  # rule: it restored the median stop distance from 0.401 m to 0.060 m.
+  terminal_percentile: 5.0
+
+verification:
+  # Not an ASCENT mechanism, kept because it is the largest measured win in this
+  # repo (premature commitment 27/50 -> 12/50 on cross-floor episodes) and
+  # removing it would confound "did the ports help" with "did the verifier".
+  enabled: true
+
+# ------------------------------------------------------- forced deviations
+#
+# 1. VALUE MAP BACKEND. ASCENT scores frames with BLIP-2 ITM
+#    (blip2itm_out.py:19-36); this uses CLIP ViT-B/32 through the ImageTextScorer
+#    interface. BLIP-2 needs LAVIS and ~1.2 GB of VRAM on top of YOLOE, CLIP and
+#    Places365, and this box is a 6 GB RTX 4050.
+#
+# 2. OBJECT TAGS. ASCENT tags frames with RAM++ swin-large
+#    (ram_out.py:22,38-40) -- ~5.6 GB of weights, several thousand categories.
+#    This uses YOLOE over the 41-word DEFAULT_VOCABULARY, so area descriptions
+#    are sparser than the ones ASCENT's prompts were written for.
+#
+# 3. LOCOMOTION. ASCENT hands waypoints to a learned PointNav policy
+#    (pointnav_weights.pth). This drives habitat's own navmesh, which is
+#    PRIVILEGED information -- ground-truth geometry the agent should not have.
+#    Any number from this preset is therefore NOT comparable to ASCENT's
+#    published SR; it is an upper bound. See S8 in the plan.
+#
+# 4. TEXT MODEL. ASCENT runs Qwen2.5-7B locally (qwen25_out.py:31). NVIDIA
+#    retired the configured NIM text model on 2026-08-26, and the successors
+#    return 404 for this key, so both LLM levels run on the one text-capable
+#    endpoint this account can reach.

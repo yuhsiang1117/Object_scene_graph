@@ -21,4 +21,4 @@ vlm_model: meta/llama-3.2-11b-vision-instruct
 min_bbox_px: 1200
 min_obs: 2
 min_evidence: 0.5
-min_score: 0.35
+min_score: 0.70

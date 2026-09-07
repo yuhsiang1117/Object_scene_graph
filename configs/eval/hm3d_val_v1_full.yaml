@@ -1,0 +1,19 @@
+defaults:
+  - base_hm3d
+
+# FULL HM3D ObjectNav v1 val split (~2000 episodes) with habitat's own
+# scene grouping -- the exact evaluation ASCENT reports 63% on
+# (ascent/experiments/eval_ascent_hm3d.yaml: test_episode_count: -1).
+#
+# Deliberately does NOT set max_scene_repeat_episodes: on the full split every
+# episode runs anyway, so forcing scene rotation only changes the order. The
+# 50-episode dev splits (dev50 / dev50_mf) are the ones that need spreading.
+#
+# Episode/scene layout is identical to hm3d_val_v1 (v1 episodes paired with
+# v0.2 scenes via the data/scene_datasets/hm3d symlink -- see that file).
+split: val
+dataset_version: v1
+episodes_path: data/datasets/objectnav/hm3d/v1/{split}/{split}.json.gz
+num_episodes: -1
+max_scene_repeat_episodes: -1
+content_scenes: null

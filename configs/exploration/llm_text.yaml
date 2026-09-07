@@ -1,5 +1,5 @@
 defaults:
   - base_vlm
 
-scorer: llm_text
+frontier_text_scorer: llm_text
 max_frontiers_per_call: 8

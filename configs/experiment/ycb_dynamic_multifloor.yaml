@@ -1,0 +1,39 @@
+# @package _global_
+#
+# Combined stale-map + multi-storey benchmark.  Only relocations whose prior
+# and destination navmesh floors differ are emitted, and every deterministic
+# start is sampled on the object's prior/static floor.  Build schema-v2 maps
+# with ycb.map_out first, then run the moved layouts with ycb.map_in.
+defaults:
+  - ycb_dynamic_best
+
+agent:
+  navigation: navmesh
+  policy: nav_agent
+  use_habitat_navmesh: true
+  navmesh_3d_goals: true
+
+floor:
+  enabled: true
+  estimate_only: false
+  per_floor_costmap: true
+  cross_floor: true
+
+exploration:
+  frontier_cost_free_cell: true
+
+ycb:
+  scenes:
+    - 00808-y9hTuugGdiq
+    - 00821-eF36g7L6Z9M
+    - 00823-7MXmsvcQjpJ
+    - 00839-zt1RVoi7PcG
+    - 00844-q5QZSEeHe5g
+  layout_types: [static, in_anchor, cross_anchor]
+  cross_floor_relocations_only: true
+  relocation_directions: [upward, downward]
+  start_on_prior_floor: true
+  skip_incomplete_layouts: true
+  # 00844's prior-floor component has no point 3 m geodesically from its
+  # downstairs destination; 1 m retains a deterministic valid start there.
+  start_min_geodesic_m: 1.0

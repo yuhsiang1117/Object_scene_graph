@@ -12,6 +12,7 @@ from __future__ import annotations
 from ..exploration.async_scorer import AsyncScorer
 from ..exploration.llm_scorer import LLMTextScorer
 from ..llm.client import ChatClient
+from ..core.config import resolve_navigation, resolve_policy
 
 
 def build_env(cfg):
@@ -57,9 +58,14 @@ def build_scorer(cfg) -> AsyncScorer:
     # Geometric-only exploration (no LLM): nearest frontier weighted by
     # exploration range (info gain). select_frontier falls back to
     # unscored_prior for every frontier.
-    if cfg.exploration.scorer in ("nearest", "geometric", "none"):
+    mode = str(getattr(cfg.exploration, "frontier_text_scorer", "disabled"))
+    if mode == "disabled":
         from ..exploration.scorer import NullScorer
         return AsyncScorer(NullScorer())
+    if mode != "llm_text":
+        raise ValueError(
+            f"exploration.frontier_text_scorer={mode!r} is not recognised"
+        )
     # Old-algorithm pipeline: text-LLM frontier ranking over the scene-graph
     # subgraphs (ObjectSceneGraph_old frontiers_ranking).
     client = ChatClient(
@@ -69,6 +75,103 @@ def build_scorer(cfg) -> AsyncScorer:
     inner = LLMTextScorer(client, cfg.exploration.subgraph_radius_m,
                           cfg.exploration.max_frontiers_per_call)
     return AsyncScorer(inner)
+
+
+def build_ranker(cfg):
+    if str(getattr(cfg.exploration, "ranker", "none")) != "ascent":
+        return None
+    from ..exploration.ascent_ranker import AscentFrontierRanker
+
+    client = ChatClient(
+        cfg.llm.base_url, cfg.llm.text_model, cfg.llm.api_key,
+        cfg.llm.timeout_s, cfg.llm.max_image_px, cfg.llm.send_response_format,
+    )
+    return AscentFrontierRanker(
+        client, topk=int(cfg.exploration.ranker_topk),
+        subgraph_radius_m=float(cfg.exploration.subgraph_radius_m),
+    )
+
+
+def build_floor_planner(cfg):
+    if not bool(getattr(cfg.exploration, "floor_llm", False)):
+        return None
+    from ..exploration.floor_planner import FloorDecisionPlanner
+    from ..exploration.knowledge_prior import FloorPrior, KnowledgeGraph
+
+    client = ChatClient(
+        cfg.llm.base_url, cfg.llm.text_model, cfg.llm.api_key,
+        cfg.llm.timeout_s, cfg.llm.max_image_px, cfg.llm.send_response_format,
+    )
+    try:
+        floor_prior = FloorPrior.load()
+    except OSError:
+        floor_prior = None
+    try:
+        knowledge = KnowledgeGraph.load()
+    except OSError:
+        knowledge = None
+    return FloorDecisionPlanner(
+        client, floor_prior=floor_prior, kg=knowledge,
+        ask_every_steps=int(cfg.exploration.floor_ask_every),
+        min_steps_on_floor=int(cfg.exploration.floor_min_steps),
+    )
+
+
+def build_run_components(cfg) -> dict:
+    """Construct heavyweight, shareable components once per evaluation run."""
+    from ..perception.image_text import build_image_text_scorer
+    from ..perception.room_classifier import build_room_classifier
+    from ..perception.stair_seg import build_stair_segmenter
+
+    navigation = resolve_navigation(cfg.agent)
+    pointnav = None
+    if navigation == "pointnav":
+        from ..planning.pointnav_driver import build_pointnav
+
+        pointnav = build_pointnav(cfg)
+    return {
+        "navigation": navigation,
+        "policy": resolve_policy(cfg.agent),
+        "pointnav": pointnav,
+        "detector": build_detector(cfg),
+        "scorer": build_scorer(cfg),
+        "verifier": build_verifier(cfg),
+        "ranker": build_ranker(cfg),
+        "floor_planner": build_floor_planner(cfg),
+        "room_classifier": build_room_classifier(cfg),
+        "image_text": build_image_text_scorer(cfg),
+        "stair_segmenter": build_stair_segmenter(cfg),
+    }
+
+
+def build_agent(
+    cfg, components: dict, target: str, *, keyframe_dir=None, profiler=None,
+    nav_fn=None, reachable_fn=None,
+):
+    """Build one policy behind the common ``act(frame)`` contract."""
+    policy = components["policy"]
+    if policy == "nav_agent":
+        from ..agent.nav_agent import NavAgent
+
+        agent_cls = NavAgent
+    elif policy == "ascent":
+        from ..agent.ascent_agent import AscentAgent
+
+        agent_cls = AscentAgent
+    else:
+        from ascentnav.agent import AscentNavAgent
+
+        agent_cls = AscentNavAgent
+    return agent_cls(
+        cfg, components["detector"], components["scorer"],
+        components["verifier"], target, keyframe_dir=keyframe_dir,
+        profiler=profiler, nav_fn=nav_fn, reachable_fn=reachable_fn,
+        pointnav=components["pointnav"], ranker=components["ranker"],
+        floor_planner=components["floor_planner"],
+        room_classifier=components["room_classifier"],
+        image_text=components["image_text"],
+        stair_segmenter=components["stair_segmenter"],
+    )
 
 
 def build_verifier(cfg):

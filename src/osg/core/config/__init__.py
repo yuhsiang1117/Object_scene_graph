@@ -32,8 +32,44 @@ __all__ = [
     "AgentConfig", "DetectorConfig", "EvalConfig", "ExplorationConfig",
     "FloorConfig", "LLMConfig", "MappingConfig", "OSGConfig", "PresenceConfig",
     "SceneGraphConfig", "VerificationConfig", "YCBAuthoredConfig",
-    "DEFAULT_VOCABULARY", "YCB_TARGET_LABELS", "register_configs",
+    "DEFAULT_VOCABULARY", "YCB_TARGET_LABELS", "NAVIGATION_MODES",
+    "POLICY_MODES", "resolve_navigation", "resolve_policy", "register_configs",
 ]
+
+NAVIGATION_MODES = ("costmap", "navmesh", "pointnav")
+POLICY_MODES = ("nav_agent", "ascent", "ascentnav")
+
+
+def resolve_navigation(agent_cfg) -> str:
+    """Resolve the canonical mover while preserving the old navmesh flag.
+
+    ``navigation=None`` delegates to ``use_habitat_navmesh``.  Supplying both
+    is accepted only when they agree, so old experiment files keep composing
+    while contradictory command-line overrides fail before model startup.
+    """
+    mode = getattr(agent_cfg, "navigation", None)
+    legacy_navmesh = bool(getattr(agent_cfg, "use_habitat_navmesh", False))
+    if mode is None:
+        return "navmesh" if legacy_navmesh else "costmap"
+    mode = str(mode).lower()
+    if mode not in NAVIGATION_MODES:
+        raise ValueError(
+            f"agent.navigation={mode!r} is not one of {NAVIGATION_MODES}"
+        )
+    if legacy_navmesh and mode != "navmesh":
+        raise ValueError(
+            f"agent.navigation={mode!r} contradicts "
+            "agent.use_habitat_navmesh=true; use navigation=navmesh or "
+            "remove the legacy flag"
+        )
+    return mode
+
+
+def resolve_policy(agent_cfg) -> str:
+    policy = str(getattr(agent_cfg, "policy", "nav_agent")).lower()
+    if policy not in POLICY_MODES:
+        raise ValueError(f"agent.policy={policy!r} is not one of {POLICY_MODES}")
+    return policy
 
 
 @dataclass

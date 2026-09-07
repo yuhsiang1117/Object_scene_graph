@@ -1,0 +1,14 @@
+defaults:
+  - value
+
+# Coarse level of the cascade: an LLM decides WHICH STOREY, and the existing
+# stair machinery executes the direction. This is the job ASCENT gives its LLM;
+# the frontier-level ranker is a job it does not, and measured net -3 on dev50.
+#
+# Needs multi_floor and stairs, or there is only ever one floor to choose from.
+knowledge_prior: false
+stair_prior: 0.6
+floor_llm: true
+floor_ask_every: 60
+floor_min_steps: 100
+floor_llm_boost: 5.0

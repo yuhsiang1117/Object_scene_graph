@@ -1,0 +1,23 @@
+{
+  "generated_by": "scripts/make_dev_split.py",
+  "seed": 42,
+  "floor_gap_threshold_m": 1.0,
+  "n_cross_floor_in_split_source": 376,
+  "split_kind": "cross_floor",
+  "header": "# Cross-floor A/B split: 50 episodes whose goal sits more than 1.0 m above/below the start, drawn from the 13 scenes that contain such episodes. Selected per episode.",
+  "episode_ids": [
+    "4ok3usBNeis.basis.glb:31", "4ok3usBNeis.basis.glb:61", "4ok3usBNeis.basis.glb:80", "4ok3usBNeis.basis.glb:91",
+    "6s7QHgap2fW.basis.glb:18", "6s7QHgap2fW.basis.glb:21", "6s7QHgap2fW.basis.glb:62", "6s7QHgap2fW.basis.glb:73",
+    "DYehNKdT76V.basis.glb:22", "DYehNKdT76V.basis.glb:33", "DYehNKdT76V.basis.glb:53", "DYehNKdT76V.basis.glb:89",
+    "TEEsavR23oF.basis.glb:14", "TEEsavR23oF.basis.glb:15", "TEEsavR23oF.basis.glb:38", "TEEsavR23oF.basis.glb:4",
+    "XB4GS9ShBRE.basis.glb:21", "XB4GS9ShBRE.basis.glb:26", "XB4GS9ShBRE.basis.glb:68", "XB4GS9ShBRE.basis.glb:73",
+    "bxsVRursffK.basis.glb:11", "bxsVRursffK.basis.glb:28", "bxsVRursffK.basis.glb:74", "bxsVRursffK.basis.glb:91",
+    "cvZr5TUy5C5.basis.glb:1", "cvZr5TUy5C5.basis.glb:16", "cvZr5TUy5C5.basis.glb:29", "cvZr5TUy5C5.basis.glb:92",
+    "mL8ThkuaVTM.basis.glb:32", "mL8ThkuaVTM.basis.glb:36", "mL8ThkuaVTM.basis.glb:50", "mL8ThkuaVTM.basis.glb:74",
+    "p53SfW6mjZe.basis.glb:19", "p53SfW6mjZe.basis.glb:38", "p53SfW6mjZe.basis.glb:84", "p53SfW6mjZe.basis.glb:95",
+    "q3zU7Yy5E5s.basis.glb:47", "q3zU7Yy5E5s.basis.glb:52", "q3zU7Yy5E5s.basis.glb:80", "q3zU7Yy5E5s.basis.glb:9",
+    "qyAac8rV8Zk.basis.glb:34", "qyAac8rV8Zk.basis.glb:42", "qyAac8rV8Zk.basis.glb:78", "qyAac8rV8Zk.basis.glb:91",
+    "wcojb4TFT35.basis.glb:3", "wcojb4TFT35.basis.glb:66", "wcojb4TFT35.basis.glb:89",
+    "zt1RVoi7PcG.basis.glb:18", "zt1RVoi7PcG.basis.glb:52", "zt1RVoi7PcG.basis.glb:59"
+  ]
+}

@@ -1,0 +1,21 @@
+defaults:
+  - base_vlm
+
+# Semantic value map: rank frontiers by how much the direction LOOKS like the
+# target's habitat, instead of by a flat prior. Everything else matches `sweep`
+# so the A/B isolates the value signal.
+frontier_text_scorer: disabled
+info_gain_weight: 2.0
+info_gain_radius_m: 2.5
+continuity_weight: 2.0
+
+value_map: true
+value_model: clip
+value_stride: 1
+value_weight: 4.0
+value_argmax: false
+
+# Room prior over already-mapped nearby objects (LLM-free; needs data/priors).
+knowledge_prior: true
+knowledge_weight: 1.0
+knowledge_radius_m: 3.0

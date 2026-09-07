@@ -1,0 +1,46 @@
+# @package _global_
+#
+# THE protocol baseline. Every experiment preset that wants a number comparable
+# to ASCENT (63% SR on HM3D ObjectNav v1 val) must inherit from this, so a
+# protocol setting cannot silently drift in one preset and not another:
+#
+#   defaults:
+#     - ascent_matched
+#     - override /exploration: ...
+#
+# Verified line-by-line against ascent/experiments/eval_ascent_hm3d.yaml plus
+# the habitat configs it composes (benchmark/nav/objectnav/objectnav_hm3d.yaml,
+# habitat/task/objectnav.yaml). Settings that already matched by inheritance --
+# 640x480 @ hfov 79, camera [0, 0.88, 0], agent height 0.88 / radius 0.18,
+# forward_step_size 0.25, turn_angle 30, look_up/look_down tilt 30, depth
+# min 0.5 / max 5.0, HM3D ObjectNav v1 -- are asserted by run_eval's
+# summary["config"] rather than restated here.
+#
+# The three that did NOT match, and are corrected by this preset + the
+# EvalConfig defaults it relies on:
+#   success_distance         0.18 -> 0.10   (habitat/task/objectnav.yaml:41)
+#   iterator.shuffle         True -> False  (eval_ascent_hm3d.yaml:21)
+#   iterator.max_scene_...   1e4  -> 50000  (eval_ascent_hm3d.yaml:20)
+#
+# This preset owns the PROTOCOL only. It deliberately does not pick a detector
+# or any other compute knob -- those belong to configs/profile/*, so that a
+# protocol fix lands in one place and a hardware change in another. Always
+# stack a profile, and say which one produced a number when quoting it:
+#
+#   python scripts/run_eval.py +experiment=ascent_matched +profile=report
+defaults:
+  - override /eval: hm3d_val_v1_full
+
+agent:
+  # habitat's ObjectNav default, and what ascent evaluates at. The 0.18 used by
+  # the earlier matched_* presets came from the old ROS stack and is LOOSER --
+  # numbers taken at 0.18 are not comparable to ascent's 63%.
+  success_distance: 0.1
+  max_steps: 500
+
+eval:
+  # Pinned rather than inherited so a protocol drift is a config diff, not a
+  # silent behaviour change. See EvalConfig in src/osg/core/config.py.
+  shuffle_episodes: false
+  max_scene_repeat_steps: 50000
+  allow_sliding: false

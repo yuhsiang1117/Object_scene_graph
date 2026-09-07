@@ -1,0 +1,38 @@
+defaults:
+  - base_hm3d
+
+# The 21 cross-floor episodes of scenes20_ep0to4, for iterating on stair
+# behaviour without paying for the 79 single-floor episodes that cannot exercise
+# it. Measured on that split: reaching the goal's storey predicts success 5/6,
+# and never reaching it predicts failure 15/15 -- so this subset carries the
+# whole cross-floor signal.
+#
+# NOT an A/B split in its own right: numbers here are not comparable to the
+# 100-episode headline, only to each other.
+split: val
+dataset_version: v1
+episodes_path: data/datasets/objectnav/hm3d/v1/{split}/{split}.json.gz
+num_episodes: -1
+max_scene_repeat_episodes: -1
+episode_ids:
+    - 6s7QHgap2fW.basis.glb:2
+    - TEEsavR23oF.basis.glb:0
+    - TEEsavR23oF.basis.glb:3
+    - TEEsavR23oF.basis.glb:4
+    - XB4GS9ShBRE.basis.glb:0
+    - bxsVRursffK.basis.glb:0
+    - bxsVRursffK.basis.glb:1
+    - cvZr5TUy5C5.basis.glb:1
+    - cvZr5TUy5C5.basis.glb:2
+    - cvZr5TUy5C5.basis.glb:3
+    - cvZr5TUy5C5.basis.glb:4
+    - mL8ThkuaVTM.basis.glb:0
+    - mL8ThkuaVTM.basis.glb:1
+    - mL8ThkuaVTM.basis.glb:2
+    - mL8ThkuaVTM.basis.glb:3
+    - p53SfW6mjZe.basis.glb:0
+    - p53SfW6mjZe.basis.glb:4
+    - qyAac8rV8Zk.basis.glb:1
+    - qyAac8rV8Zk.basis.glb:3
+    - qyAac8rV8Zk.basis.glb:4
+    - wcojb4TFT35.basis.glb:3

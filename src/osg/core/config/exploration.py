@@ -8,11 +8,12 @@ object could have been moved to, and what a look at a surface is worth. See
 from __future__ import annotations
 
 from dataclasses import dataclass
+from typing import Optional
 
 
 @dataclass
 class ExplorationConfig:
-    scorer: str = "vlm"  # vlm | llm_text | nearest | random
+    frontier_text_scorer: str = "disabled"  # disabled | llm_text
     top_n_frontiers: int = 5
     # HybridVoronoiPlanner navigates the medial axis and stops at the graph node
     # nearest the goal, within this radius -- it stops NEAR a goal, not on it.
@@ -23,7 +24,23 @@ class ExplorationConfig:
     voronoi_goal_near_m: float = 0.7
     frontier_dedup_m: float = 1.0
     frontier_min_cells: int = 8
+    extractor: str = "wfd"  # wfd | contour
+    area_thresh_m2: float = 1.5
+    selector: str = "utility"  # utility | ascent
+    nearby_distance_m: float = 3.0
+    frontier_commit: bool = False
+    ranker: str = "none"  # none | ascent
+    ranker_topk: int = 3
+    ranker_every_steps: int = 20
+    floor_llm: bool = False
+    floor_ask_every: int = 60
+    floor_min_steps: int = 100
+    floor_llm_boost: float = 5.0
     subgraph_radius_m: float = 3.0
+    select_every: int = 5
+    reselect_every: int = 0
+    frontier_desc: str = "graph"  # graph | frame_objects | frame
+    frontier_desc_match_m: float = 1.0
     images_per_frontier: int = 1  # each image costs ~1-2k ctx tokens
     max_frontiers_per_call: int = 4
     unscored_prior: float = 0.3
@@ -219,5 +236,23 @@ class ExplorationConfig:
     # that moving the drive goal causes -- see select_frontier.
     frontier_cost_free_cell: bool = False
     los_visibility_penalty: float = 1.0
-
-
+    stair_prior: float = 0.6
+    stair_explored_boost: float = 3.0
+    stair_explored_rule: str = "no_frontiers"  # no_frontiers | steps
+    floor_exp_steps: int = 100
+    stair_min_hits: int = 1
+    stair_min_cells: int = 25
+    stair_retire_cells: bool = False
+    value_map: bool = False
+    value_model: str = "clip"  # clip | constant
+    value_clip_name: str = "ViT-B/32"
+    value_clip_root: str = "data/clip"
+    value_stride: int = 1
+    value_weight: float = 4.0
+    value_argmax: bool = False
+    value_radius_m: float = 0.5
+    value_prompt: str = "Seems like there is a {target} ahead."
+    knowledge_prior: bool = False
+    knowledge_prior_path: Optional[str] = None
+    knowledge_radius_m: float = 3.0
+    knowledge_weight: float = 1.0

@@ -125,4 +125,12 @@ class FloorConfig:
     # not a staircase landing. See FloorEstimator; 0 disables.
     min_horizontal_run_m: float = 2.5
 
+    # Stable-key floor stack controls.  The older fields above remain valid;
+    # combined presets opt into this stack through ``mapping.multi_floor`` or
+    # ``per_floor_costmap``.  Both spellings are supported by the factory.
+    band_m: float = 0.9
+    commit_steps: int = 4
+    settle_m: float = 0.2
+    freeze_in_climb: bool = False
+    freeze_on_stairs: bool = False
 

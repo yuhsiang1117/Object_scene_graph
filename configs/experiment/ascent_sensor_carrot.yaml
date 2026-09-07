@@ -1,0 +1,29 @@
+# @package _global_
+#
+# S31: `ascent_sensor` plus ASCENT's carrot-waypoint stair traversal.
+#
+#   python scripts/run_eval.py +experiment=ascent_sensor_carrot eval=scenes20_ep0to4
+#
+# The one variable on top of the S30 arm. Its pair is
+# `+experiment=ascent_sensor` on the same split.
+#
+# Why this is the next thing to try: on `scenes20_ep0to4` the pointnav arm made
+# ONE climb attempt in 100 episodes against the navmesh arm's 22, and 21 of the
+# 100 episodes need a floor change. OSG drives at a fixed point 1.5 m past the
+# staircase centroid, which for a stairwell that turns is a straight line
+# through a wall. ASCENT re-aims every step at the farthest depth return, which
+# on a flight points along the well (ascent_policy.py:1075-1112).
+#
+# NOT ported, and why:
+#   * ASCENT's phase 1 (pointnav to the stair centroid until the network stops,
+#     :1046-1058) is subsumed -- OSG only enters CLIMB once it is already within
+#     `stair_reach_m` (0.6 m) of the centroid.
+#   * ASCENT's phase 2 tilts the camera down for descents (:1069-1073). OSG
+#     never emits look_up/look_down at all, so there is no pitch to correct.
+
+defaults:
+  - ascent_sensor
+
+agent:
+  climb_carrot: true
+  climb_carrot_m: 0.8

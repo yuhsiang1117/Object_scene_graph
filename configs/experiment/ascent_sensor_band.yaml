@@ -1,0 +1,47 @@
+# @package _global_
+#
+# S35: `ascent_sensor` with ASCENT's obstacle band. One variable.
+#
+#   python scripts/run_eval.py +experiment=ascent_sensor_band eval=scenes20_ep0to4
+#
+# ---------------------------------------------------------------- the deviation
+#
+# ASCENT marks a cell as obstacle only for points in [0.61, 0.88] m above the
+# floor (`VLFMConfig`, base_objectnav_policy.py:385-386; its yaml overrides only
+# `obstacle_map_area_threshold`). OSG uses [0.15, 1.5] -- a band 4.5x taller
+# starting 0.46 m lower, so low furniture, thresholds, rug edges and table tops
+# are all obstacles that ASCENT never sees.
+#
+# ------------------------------------------------- why the prior objection holds less
+#
+# MappingConfig records an A/B where narrowing "the FULL band to the old
+# [0.15, 0.88] regressed SR 40% -> 28.6%". Two reasons that does not settle this:
+#
+#   1. It tested [0.15, 0.88] -- the conservative 0.15 floor kept, the ceiling
+#      dropped. ASCENT's band raises the FLOOR to 0.61 and that half has never
+#      been measured. Dropping the ceiling alone is the worst of both: still
+#      marking every low object, while missing tall ones.
+#   2. It was measured on an arm where the costmap DRIVES. Under
+#      `navigation=pointnav` it no longer does -- `_follow_path` takes the driver
+#      branch and never reads `_current_path`, and obstacle avoidance is the
+#      PointNav policy reacting to raw depth. The band now only shapes frontier
+#      extraction, which is exactly the role it plays in ASCENT.
+#
+# ------------------------------------------------------------- what it targets
+#
+# Measured decomposition of the 21-episode sensor-only deficit (s30_fix1 vs
+# s27_graph): 18 of it is SAME-FLOOR, and 18 of 23 gross same-floor losses are
+# budget -- 11 timed out holding a candidate, 7 never found one. A conservative
+# obstacle band inflates into doorways and shrinks the free component, which is
+# what frontier goals are placed on; opening it should shorten pursuits.
+#
+# Prediction: mean steps 315 -> under 290, timeouts 43 -> under 35. If steps do
+# not fall, the band is not what is costing the budget and this is a null
+# regardless of what SR does.
+
+defaults:
+  - ascent_sensor
+
+mapping:
+  obstacle_low_m: 0.61   # ascent: VLFMConfig.min_obstacle_height
+  obstacle_high_m: 0.88  # ascent: VLFMConfig.max_obstacle_height

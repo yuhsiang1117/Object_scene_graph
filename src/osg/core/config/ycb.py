@@ -49,6 +49,18 @@ class YCBAuthoredConfig:
     # measure asset coverage rather than dynamic-scene handling. The layouts
     # themselves are DualMap's original data and are never edited.
     targets: List[str] = field(default_factory=list)
+    # Combined dynamic/multi-floor benchmark selectors.  Disabled by default so
+    # every existing authored manifest and experiment keeps its source behavior.
+    cross_floor_relocations_only: bool = False
+    relocation_directions: List[str] = field(
+        default_factory=lambda: ["upward", "downward"]
+    )
+    start_on_prior_floor: bool = False
+    relocation_floor_tolerance_m: float = 0.5
+    # Explicit scene lists normally fail on any absent requested slot. Combined
+    # campaigns span heterogeneous authoring coverage and opt into recording
+    # those gaps while keeping every available layout.
+    skip_incomplete_layouts: bool = False
     starts_per_target: int = 1
     seed: int = 42
     manifest_cache_dir: str = "outputs/ycb_manifests"
@@ -86,5 +98,3 @@ class YCBAuthoredConfig:
     viewpoint_min_visible_pixels: int = 20
     start_min_geodesic_m: float = 3.0
     start_sample_attempts: int = 2000
-
-

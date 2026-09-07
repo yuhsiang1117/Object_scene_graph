@@ -1,0 +1,18 @@
+# @package _global_
+#
+# Report-quality hardware profile (>= 12 GB VRAM).
+#
+# A profile ONLY trades compute for quality. It must never touch a task or
+# simulator setting (success_distance, max_steps, allow_sliding, shuffle,
+# episode selection, ...) -- those live in experiment/ascent_matched.yaml and
+# changing them here would silently break comparability with the ASCENT
+# baseline. Stack it on top of an experiment:
+#
+#   python scripts/run_eval.py +experiment=ascent_matched +profile=report
+defaults:
+  - override /detector: yoloe          # 11l @ 640px
+
+# Additional per-stage knobs are appended here as those stages land:
+#   S4  exploration.value_stride: 1      (CLIP value map every step)
+#   S5  scene_graph.target_every_step: true
+#   S6  scene_graph.cloud_stride: 4

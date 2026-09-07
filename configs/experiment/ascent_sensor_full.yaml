@@ -1,0 +1,81 @@
+# @package _global_
+#
+# S34: ASCENT's exploration cadence, plus both stair mechanisms.
+#
+# MEASURED NEGATIVE: 35.0% against ascent_sensor's 42.0% (net -7, p = 0.23).
+# The cadence was ported without ASCENT's damping -- 4002 target switches across
+# 100 episodes -- and bought no exploration budget back (GOTO_FRONTIER 24025 ->
+# 24411). Kept for reproducibility; see docs/AB_RESULTS.md S34. Re-testing means
+# porting `_force_frontier` (llm_planner.py:239-271) first, not tuning the
+# interval.
+#
+#   python scripts/download_weights.py --pointnav --rednet   # once
+#   python scripts/run_eval.py +experiment=ascent_sensor_full eval=scenes20_ep0to4
+#
+# ---------------------------------------------------------------- the new part
+#
+# ASCENT rebuilds its frontier list (`map_controller.py:528`) and re-runs the
+# whole selection (`ascent_policy.py:684`) on EVERY step. Its "commitment" is
+# bookkeeping inside the selector -- a sticky counter and a forced frontier --
+# not an FSM state the agent is stuck in. OSG commits for a median 23 steps.
+#
+# Measured on 100 paired episodes (s30_fix1 vs s27_graph), per frontier pursuit:
+#
+#                       navmesh   pointnav
+#   median path cost      3.67 m     3.23 m
+#   median steps spent      16         23
+#   detour factor         1.35       1.67
+#   p90 steps               52         92
+#   closes distance at   0.076      0.046  m/step
+#
+# The pursuits START from the same place (median 2.72 vs 2.77 m out) and close a
+# similar fraction, so the CHOICES are not what differs -- the mover is slower,
+# and ASCENT shares that mover. What OSG adds on top is holding a target picked
+# from a map two dozen steps out of date, and moving AWAY from it on 9% of
+# pursuits against the navmesh arm's 0%.
+#
+# `reselect_every: 1` is affordable only with the reachability gate off:
+# selection runs A* over the top-N candidates, and ASCENT's does not.
+#
+# --------------------------------------------------------- the bundled parts
+#
+# Both stair mechanisms measured NULL on their own, and both failed for the same
+# reason -- their mechanism never fired, because the agent never reached a
+# staircase (S31: 1 climb attempt in 100 episodes; S33: RedNet lifted up-stair
+# detection 10% -> 54% and climb_attempt stayed at 1). They are here because
+# this is the arm where that precondition might finally hold: if the exploration
+# fix buys back budget, the agent can reach staircases, and only then can either
+# stair mechanism show anything.
+#
+# So attribution is asymmetric and worth stating up front. A win is attributable
+# to `reselect_every` -- it is the only component not already measured null
+# alone. A win in CROSS-FLOOR specifically, with `climb_attempt` finally moving
+# off 1, is the carrot and RedNet becoming testable rather than the exploration
+# fix acting directly.
+
+defaults:
+  - ascent_sensor
+
+exploration:
+  # ASCENT reconsiders every step. Measured here, `select_every: 1` costs 3.3x
+  # the control loop (2.64 -> 0.81 fps, i.e. ~11 h for 100 episodes) because
+  # OSG's selection re-runs contour extraction, stair extraction and ranking,
+  # while ASCENT gets its frontier list for free as a by-product of the obstacle
+  # map update it already does every step (`map_controller.py:526-528`).
+  #
+  # So this is a forced deviation, not a choice: reconsider every 5 steps rather
+  # than every 1. It still replaces "hold one target for a median of 23 steps"
+  # with "reconsider ~5x per pursuit", which is the substance of the difference,
+  # at roughly a quarter of the added cost. `select_every` stays at its default,
+  # so mid-pursuit reconsideration is the ONLY new behaviour and the arm keeps a
+  # single new variable.
+  reselect_every: 5
+
+agent:
+  # Per-step selection with an A* gate over the top-N would be unaffordable, and
+  # the gate is measured null anyway (S30 run C).
+  frontier_reachability_gate: false
+  # S31 / S33: null alone, retested here on top of a working explorer.
+  climb_carrot: true
+  rednet_stairs: true
+  stair_up_mode: rednet

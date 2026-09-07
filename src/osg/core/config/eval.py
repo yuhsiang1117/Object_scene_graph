@@ -32,11 +32,15 @@ class EvalConfig:
     # fixed-size subset spans the split instead of draining one scene first.
     # -1 = habitat default (group by scene, ~10000-step budget per scene).
     max_scene_repeat_episodes: int = -1
+    shuffle_episodes: bool = False
+    max_scene_repeat_steps: int = 50_000
+    allow_sliding: bool = False
     episode_ids: Optional[List[str]] = None
     # Restrict the eval to specific scene ids (None/["*"] = all). Used by the
     # single-floor preset since the 2D scene graph cannot represent stairs.
     content_scenes: Optional[List[str]] = None
     save_viz: bool = True
+    save_costmap: bool = False
     # Per-step debug video: for each episode write viz/debug/ep<ID>.mp4 whose
     # frames are [live RGB + YOLOE segmentation overlay | top-down costmap] at
     # every step. The detector is re-run per step FOR VISUALIZATION ONLY (it
@@ -53,5 +57,6 @@ class EvalConfig:
     rgb_width: int = 640
     rgb_height: int = 480
     hfov_deg: float = 79.0
-
+    depth_min_m: float = 0.5
+    depth_max_m: float = 5.0
 
