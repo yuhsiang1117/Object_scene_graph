@@ -3100,6 +3100,76 @@ Footnote worth keeping: this episode never needed the stairs. The reachable bed
 is 7.89 m away on the starting floor, and the agent spent 246 of 500 steps
 trying to climb to a storey it did not need.
 
+### S43 — the stair region was painted at max_depth, not at its own range
+
+The purple stair region on the debug maps sat along the right bearing at the
+wrong distance. S41 had blamed pitch routing; that was wrong. Synthetic geometry
+-- a fronto-parallel wall at a known range with a known patch marked as stairs
+-- pins it exactly:
+
+| camera pose | centroid error before | after |
+|---|---|---|
+| level, centre patch | 2.00 m | 0.004 m |
+| level, off-centre patch | 2.30 m | 0.004 m |
+| translated + rotated 90 deg | 2.00 m | 0.004 m |
+| pitched down 30 deg | 1.75 m | 0.004 m |
+
+A 3.0 m staircase was painted at 5.0 m; a 2.0 m one, also at 5.0 m. The
+displacement was radial and scaled as `max_depth / true_depth`.
+
+**Cause** (`obstacle_map.py:519-540`):
+
+```python
+fusion_stair_mask = stair_mask & stair_map        # uint8 & bool -> uint8
+stair_depth = np.full_like(depth, max_depth)
+stair_depth[fusion_stair_mask] = scaled_depth[fusion_stair_mask]
+```
+
+`stair_mask` arrives as uint8 here -- ASCENT's comes from GroundingDINO as bool
+-- and `uint8 & bool` promotes to uint8, which turns that assignment into
+INTEGER ROW indexing rather than boolean masking: rows 0-1 are clobbered and
+every stair pixel keeps `max_depth`. `np.where` inside `get_point_cloud` treats
+uint8 as nonzero, so the pixel SELECTION was right the whole time and only the
+range was wrong. That is why it read as a calibration shift rather than as
+garbage, and why the agent still climbed sometimes: the bearing was correct, so
+walking at it eventually arrived.
+
+The down-stair map was never affected -- it comes from the pitch-independent
+inverted-depth path -- which is exactly the 0.14 m vs 1.54 m accuracy gap S41
+measured and misattributed.
+
+**Measured on the 10-episode viz split** (`outputs/s48_viz_fixed` against
+`outputs/s44_viz`, same episodes, same config apart from the fix):
+
+| | pre-fix | post-fix |
+|---|---|---|
+| SR | 6/10 | 6/10 |
+| climbs attempted | 16 | **11** |
+| climbs completed | 1 | **4** |
+| floor switches | 1 | **4** |
+| conversion | 6% | **36%** |
+
+And on `mL8ThkuaVTM:2`, where the painted centroid can be compared against where
+the agent actually changed height:
+
+| | pre-fix | post-fix |
+|---|---|---|
+| up-stair centroid error | 1.54 m | 0.63 m |
+| up-stair centroid **wander** | 7.9 x 4.4 m | **0.3 x 0.2 m** |
+| episode length | 418 steps | **196 steps** (SPL 0.31 -> 0.58) |
+
+The wander is the number that matters: a staircase does not move, and before the
+fix its estimate swept an 8 x 4 m box as the agent walked. Cross-floor episodes
+finish roughly twice as fast (`p53SfW6mjZe:0` 209 -> 110 steps, SPL 0.28 ->
+0.55); the four same-floor episodes are bit-identical, as they should be.
+
+Three regression tests: painted at true range, uint8 and bool masks agreeing,
+and a 2 m and a 3.5 m wall landing in different places -- the specific signature
+of the old bug.
+
+**This invalidates the stair numbers in S41 and the in-flight full-split run**
+(`outputs/s47_full_v1`), both of which ran with the defect.
+
 ### S26 — ASCENT's dense approach re-check
 
 S23/S25 closed the mover, the aim point and the commit gate as explanations for
