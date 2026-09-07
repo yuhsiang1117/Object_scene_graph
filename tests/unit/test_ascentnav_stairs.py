@@ -450,3 +450,94 @@ def test_the_range_error_scaled_with_max_depth_not_the_scene():
     assert near == pytest.approx(2.0, abs=0.1)
     assert far == pytest.approx(3.5, abs=0.1)
     assert far - near > 1.0
+
+
+# ================================================== direction, and the probe
+#
+# The strict descent split ran 148 climb steps and every one was an ascent, on
+# episodes whose goal is below the start. These pin the three pieces that fix
+# that: the up/down discriminator, the tie-break that uses it, and the probe.
+
+def test_upper_half_discriminator():
+    from ascentnav.stairs import stairs_in_upper_half
+    m = np.zeros((100, 100), bool)
+    m[10:40] = True
+    assert stairs_in_upper_half(m) is True          # treads above the horizon
+    m2 = np.zeros((100, 100), bool)
+    m2[60:90] = True
+    assert stairs_in_upper_half(m2) is False        # a flight going down
+    assert stairs_in_upper_half(None) is False
+    assert stairs_in_upper_half(np.zeros((10, 10), bool)) is False
+
+
+def test_down_is_preferred_when_the_treads_are_below_the_horizon():
+    a = _agent()
+    _paint_stairs(a, direction=1, xy=(2.0, 0.0))
+    _paint_stairs(a, direction=2, xy=(-2.0, 0.0))
+    a._seg_upper = False                            # stairs seen low in frame
+    assert a._maybe_start_climb() is True
+    assert a.climb.direction == 2
+
+
+def test_up_still_wins_when_the_treads_are_above_the_horizon():
+    a = _agent()
+    _paint_stairs(a, direction=1, xy=(2.0, 0.0))
+    _paint_stairs(a, direction=2, xy=(-2.0, 0.0))
+    a._seg_upper = True
+    assert a._maybe_start_climb() is True
+    assert a.climb.direction == 1
+
+
+def test_one_available_direction_is_taken_regardless_of_the_discriminator():
+    a = _agent()
+    _paint_stairs(a, direction=2, xy=(-2.0, 0.0))
+    a._seg_upper = True                             # would prefer up, but there is none
+    assert a._maybe_start_climb() is True
+    assert a.climb.direction == 2
+
+
+def test_the_downstair_probe_tilts_before_it_drives():
+    a = _agent()
+    a.obstacle_map._potential_stair_centroid = np.array([[3.0, 0.0]])
+    assert a._look_for_downstair(np.zeros(2), 0.0, pitch_deg=0.0) == "look_down"
+    assert a.stats["down_look"] == 1
+
+
+def test_a_network_stop_on_the_probe_retires_the_suspicion():
+    """`ascent_policy.py:632-643` -- the mover refusing to go is the evidence
+    that there was no staircase there."""
+    a = _agent(driver=_Driver(reason="policy_stop", action=None))
+    om = a.obstacle_map
+    om._potential_stair_centroid = np.array([[3.0, 0.0]])
+    om._down_stair_map[100:110, 100:110] = 1
+    om._has_down_stair = True
+    om._look_for_downstair_flag = True
+    assert a._look_for_downstair(np.zeros(2), 0.0, pitch_deg=-30.0) == "look_up"
+    assert om._has_down_stair is False and om._down_stair_map.sum() == 0
+    assert om._disabled_stair_map.sum() > 0 and om._look_for_downstair_flag is False
+
+
+def test_standing_on_the_candidate_also_retires_it():
+    a = _agent()
+    a.obstacle_map._potential_stair_centroid = np.array([[0.1, 0.0]])
+    a.obstacle_map._look_for_downstair_flag = True
+    assert a._look_for_downstair(np.zeros(2), 0.0, pitch_deg=-30.0) == "look_up"
+    assert a.stats["downstair_reject"] == 1
+
+
+def test_the_camera_is_returned_to_level_when_not_on_stairs():
+    """A tilt left standing would relabel every later staircase, because the map
+    routes stair pixels by the SIGN of the pitch."""
+    a = _agent()
+    assert a._level_camera(-30.0) == "look_up"
+    assert a._level_camera(30.0) == "look_down"
+    assert a._level_camera(0.0) is None
+
+
+def test_levelling_never_fights_the_climb_or_the_probe():
+    a = _agent()
+    a.climb.start(2)
+    assert a._level_camera(-60.0) is None
+    a.climb.reset()
+    a.obstacle_map._look_for_downstair_flag = True
+    assert a._level_camera(-60.0) is None

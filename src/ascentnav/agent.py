@@ -64,6 +64,7 @@ from .mapping.obstacle_map import ObstacleMap
 from .mapping.value_map import ValueMap
 from .stairs import (
     CLIMB_PAUSED_ABANDON,
+    stairs_in_upper_half,
     ClimbState,
     carrot_waypoint,
     ratchet_carrot,
@@ -155,6 +156,7 @@ class AscentNavAgent:
         self._nav_goal: Optional[np.ndarray] = None
         self._last_dets: list = []
         self._pn_goal: Optional[np.ndarray] = None
+        self._seg_upper = False
         self._stick_steps = 0
         self._last_frontier_dist = 0.0
         self.escape.reset()
@@ -285,6 +287,7 @@ class AscentNavAgent:
         # is what left the first run with no floor-transition capability at all.
         seg = self._stair_seg(frame)
         stair_mask = self._stair_det_mask(raw, seg)
+        self._seg_upper = stairs_in_upper_half(None if seg is None else seg == STAIR_CLASS_ID)
         self.obstacle_map.update_map(
             depth_n, tf, self.min_depth, self.max_depth, self.fx, self.fy, self.hfov,
             {}, zeros,
@@ -309,11 +312,24 @@ class AscentNavAgent:
             self._state = "climb"
             return self._do_climb(depth_n, robot_xy, heading, pitch_deg)
 
+        # Camera back to level before anything else, exactly as ASCENT does
+        # when it is not on a staircase (`ascent_policy.py:556-563`). Without
+        # this a single descent probe left the camera down for the rest of the
+        # episode, and the map routes stair pixels BY THE SIGN OF THE PITCH --
+        # so every staircase after the first probe was filed as a descent.
+        level = self._level_camera(pitch_deg)
+        if level is not None:
+            return level
+
         if self._init_left > 0:
             self._init_left -= 1
             self._state = "explore"
             return LEFT
         if goal is None:
+            # A suspected descent outranks exploring (`ascent_policy.py:569-571`).
+            if self.obstacle_map._look_for_downstair_flag:
+                self._state = "look_down"
+                return self._look_for_downstair(robot_xy, heading, pitch_deg)
             self._state = "explore"
             self._navigate_steps = 0
             return self._explore(robot_xy, heading, depth_n, pitch_deg)
@@ -604,6 +620,57 @@ class AscentNavAgent:
 
     # ---------------------------------------------------------------- stairs
 
+    def _level_camera(self, pitch_deg) -> Optional[str]:
+        """Return the tilt action needed to get back to level, or None.
+
+        `ascent_policy.py:556-563`, and it is not cosmetic: `update_map` routes
+        every fused stair pixel by `agent_pitch_angle >= 0`, so a camera left
+        tilted silently relabels every later staircase.
+        """
+        if self.climb.climbing or self.obstacle_map._look_for_downstair_flag:
+            return None
+        if pitch_deg > 5.0:
+            return "look_down"
+        if pitch_deg < -5.0:
+            return "look_up"
+        return None
+
+    def _look_for_downstair(self, robot_xy, heading, pitch_deg) -> str:
+        """Go and check whether that suspected drop-off is really a staircase.
+
+        `ascent_policy.py:623-658`. The map raises `_look_for_downstair_flag`
+        when it holds down-stair pixels that never grew into a frontier
+        (`obstacle_map.py:737-739`); this is the active probe that resolves it:
+        tilt down so the treads are in view, drive at the candidate centroid,
+        and if the mover refuses or we are already on top of it, call it a false
+        positive and retire it.
+        """
+        om = self.obstacle_map
+        if pitch_deg > -25.0:                     # tilt down first
+            self.stats["down_look"] = self.stats.get("down_look", 0) + 1
+            return "look_down"
+        c = np.asarray(om._potential_stair_centroid).reshape(-1, 2)
+        if len(c) == 0:
+            om._look_for_downstair_flag = False
+            return LEFT
+        if float(np.linalg.norm(c[0] - robot_xy)) <= 0.2:
+            return self._reject_downstair()
+        action = self._pointnav(robot_xy, heading, c[0], stop_radius=0.0)
+        if action is None:                        # `:632-643`
+            return self._reject_downstair()
+        return action
+
+    def _reject_downstair(self) -> str:
+        om = self.obstacle_map
+        om._disabled_stair_map[om._down_stair_map == 1] = 1
+        om._down_stair_map.fill(0)
+        om._has_down_stair = False
+        om._look_for_downstair_flag = False
+        om._potential_stair_centroid = np.array([])
+        self.stats["downstair_reject"] = self.stats.get("downstair_reject", 0) + 1
+        self._state = "explore"
+        return "look_up"
+
     def _robot_px(self, robot_xy):
         return self.obstacle_map._xy_to_px(np.atleast_2d(robot_xy))
 
@@ -622,8 +689,18 @@ class AscentNavAgent:
         down, and a direction already climbed is skipped -- `:670-674`.
         """
         om = self.obstacle_map
-        for direction, has, done in ((1, om._has_up_stair, om._explored_up_stair),
-                                     (2, om._has_down_stair, om._explored_down_stair)):
+        order = ((1, om._has_up_stair, om._explored_up_stair),
+                 (2, om._has_down_stair, om._explored_down_stair))
+        # ASCENT tries up first (`:670-674`). That is only sound once the two
+        # maps disagree -- and at a level camera they do not: both writers fire
+        # on the same pixels, so up-first took every descent as an ascent (0 of
+        # 148 climb steps went down on the strict descent split). The
+        # segmentation's own up/down discriminator breaks the tie: treads you
+        # must climb project into the TOP half of the frame
+        # (`check_stairs_in_upper_50_percent`, ascent/utils.py:163).
+        if om._has_up_stair and om._has_down_stair and not self._seg_upper:
+            order = order[::-1]
+        for direction, has, done in order:
             if not has or done:
                 continue
             f = (om._up_stair_frontiers if direction == 1 else om._down_stair_frontiers)

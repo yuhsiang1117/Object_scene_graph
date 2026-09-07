@@ -99,6 +99,21 @@ class ClimbState:
         return self.stick_steps >= 30 or self.get_close_steps >= GET_CLOSE_MAX_STEPS
 
 
+def stairs_in_upper_half(seg_stair_mask) -> bool:
+    """Does the stair segmentation sit in the TOP half of the frame?
+
+    Port of `check_stairs_in_upper_50_percent` (`ascent/utils.py:163-183`). This
+    is ASCENT's only image-space discriminator between a flight that goes up and
+    one that goes down: treads you must climb project above the horizon, treads
+    you must descend project below it. It matters here because at a level camera
+    BOTH stair writers fire on the same pixels, so "up" carries no information
+    until something separates the two.
+    """
+    if seg_stair_mask is None or not np.any(seg_stair_mask):
+        return False
+    return bool(np.any(seg_stair_mask[: seg_stair_mask.shape[0] // 2]))
+
+
 def carrot_waypoint(
     depth_normalised: np.ndarray,
     robot_xy: np.ndarray,

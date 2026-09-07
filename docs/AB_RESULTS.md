@@ -3170,6 +3170,71 @@ of the old bug.
 **This invalidates the stair numbers in S41 and the in-flight full-split run**
 (`outputs/s47_full_v1`), both of which ran with the defect.
 
+### S44 — down-stairs: the detector was fine, the direction preference was not
+
+A strict descent split (`configs/eval/downstairs5.yaml` -- every view-point of
+every goal instance more than a metre BELOW the start, so the episode cannot be
+solved by climbing) exposed a clean failure:
+
+**Before: 148 climb steps across the split, every one an ascent.** Detection was
+not the problem -- the down-stair map was often LARGER than the up map (1257 px
+vs 690; 1219 vs 537) and a down frontier was published on most steps.
+
+Three causes, all in the port rather than in ASCENT:
+
+1. **The camera never tilted** (pitch 0.0 on every step of all five episodes).
+   ASCENT's direction disambiguation IS the pitch: `update_map` routes fused
+   stair pixels by `agent_pitch_angle >= 0`, so at level pitch the fused writer
+   and the drop-off writer both fire on the same pixels and one staircase is
+   filed as both up and down.
+2. **`_maybe_start_climb` preferred up unconditionally**, returning on the first
+   viable direction. With the up map essentially never empty at level pitch,
+   direction 2 was unreachable in practice.
+3. **`_look_for_downstair` was not ported.** The map raises
+   `_look_for_downstair_flag` when it holds down-stair pixels that never grew
+   into a frontier (`obstacle_map.py:737-739`) and nothing read it.
+
+**Implemented:** the probe (`ascent_policy.py:623-658`), camera levelling when
+not on stairs (`:556-563` -- without it a single probe leaves the camera down
+and relabels every later staircase), and a direction tie-break using ASCENT's
+own image-space discriminator, `check_stairs_in_upper_50_percent`
+(`ascent/utils.py:163`): treads you must climb project into the top half of the
+frame, treads you must descend do not. Up-first is kept whenever only one
+direction is available.
+
+**Measured** (`outputs/s50_down_strict` -> `outputs/s51_down_fixed`, same 5
+episodes, same config apart from these three changes):
+
+| | before | after |
+|---|---|---|
+| SR | 1/5 | **2/5** |
+| UP climb steps | 148 | 73 |
+| DOWN climb steps | **0** | **67** |
+| probe steps | 0 | 6 |
+| steps with the camera tilted | 0 | 23 |
+
+The decisive episode is `qyAac8rV8Zk:62`, whose goal is 1.52 m below the start:
+
+| | before | after |
+|---|---|---|
+| outcome | fail, 500 steps | **success, 102 steps** |
+| net height change | **+1.50 m** | **-1.70 m** |
+| distance to goal | 11.87 m | 0.03 m |
+| climb steps | 75 up, 0 down | 0 up, 18 down |
+
+It was climbing the wrong way, completing the ascent, and timing out on the
+wrong storey. Now it descends.
+
+**Not uniformly better, and worth recording as such.** `q3zU7Yy5E5s:96` gained
+49 down-climb steps and got WORSE on time (392 -> 500 steps, a timeout), though
+it ends closer (dtg 12.98 -> 11.00). `XB4GS9ShBRE:43` improved slightly
+(249 -> 220 steps, dtg 11.44 -> 11.32) and still fails. `6s7QHgap2fW:50` is
+untouched by any of this: it stops after 35 steps on a false-positive commit
+16.4 m from the goal, which is the S13 commit-gate failure, not a stair one.
+
+n=5 measures nothing on its own; the mechanism counters (148/0 -> 73/67) are
+what this run establishes, not the SR.
+
 ### S26 — ASCENT's dense approach re-check
 
 S23/S25 closed the mover, the aim point and the commit gate as explanations for
