@@ -1,0 +1,47 @@
+defaults:
+  - base_hm3d
+
+# Ten DESCENT episodes: every view-point of every goal instance is more than a
+# metre BELOW the start, so none of them can be solved by climbing. 105 such
+# episodes exist in the v1 val split; these ten span all eight scenes that have
+# any, and drops from -1.20 m to -3.01 m.
+#
+#   python scripts/run_eval.py +experiment=ascentnav eval=downstairs10 \
+#       eval.debug_frames=true output_dir=outputs/s54_down10
+#
+# The first five are `downstairs5.yaml` unchanged, so the S44/S45 numbers stay
+# comparable; the last five are new.
+#
+# Selected by INDEX -- habitat reassigns `episode.episode_id = str(i)` per
+# content file and every stored id in this split is the string "0".
+#
+#   scene          ep   target       drop    geodesic
+#   DYehNKdT76V    63   sofa       -1.60 m     3.9 m   \
+#   qyAac8rV8Zk    62   sofa       -1.52 m     5.4 m    |
+#   XB4GS9ShBRE    43   sofa       -2.61 m     7.1 m    > downstairs5
+#   q3zU7Yy5E5s    96   sofa       -2.49 m     8.7 m    |
+#   6s7QHgap2fW    50   sofa       -2.80 m    12.8 m   /
+#   mL8ThkuaVTM    42   sofa       -1.20 m     5.5 m
+#   q3zU7Yy5E5s     9   sofa       -2.53 m     8.8 m
+#   XB4GS9ShBRE    13   sofa       -2.61 m     8.4 m
+#   qyAac8rV8Zk     1   sofa       -3.01 m    10.3 m
+#   cvZr5TUy5C5    43   tv_monitor -3.00 m    12.3 m
+#
+# Ten episodes still measure very little on their own -- read the mechanism
+# counters (up vs down climb steps, steps to finish), not the SR.
+split: val
+dataset_version: v1
+episodes_path: data/datasets/objectnav/hm3d/v1/{split}/{split}.json.gz
+num_episodes: -1
+max_scene_repeat_episodes: -1
+episode_ids:
+    - DYehNKdT76V.basis.glb:63
+    - qyAac8rV8Zk.basis.glb:62
+    - XB4GS9ShBRE.basis.glb:43
+    - q3zU7Yy5E5s.basis.glb:96
+    - 6s7QHgap2fW.basis.glb:50
+    - mL8ThkuaVTM.basis.glb:42
+    - q3zU7Yy5E5s.basis.glb:9
+    - XB4GS9ShBRE.basis.glb:13
+    - qyAac8rV8Zk.basis.glb:1
+    - cvZr5TUy5C5.basis.glb:43
