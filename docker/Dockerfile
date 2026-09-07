@@ -37,7 +37,7 @@ RUN pip install --no-cache-dir torch==2.4.1 torchvision==0.19.1 \
       --index-url https://download.pytorch.org/whl/cu121 \
     && pip install --no-cache-dir \
       "numpy<2" "ultralytics==8.3.*" openai "hydra-core>=1.3" omegaconf \
-      scipy scikit-image opencv-python-headless pytest pytest-timeout \
+      scipy scikit-learn scikit-image opencv-python-headless pytest pytest-timeout \
       imageio matplotlib anthropic
 
 # Headless EGL on NVIDIA

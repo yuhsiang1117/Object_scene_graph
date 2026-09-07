@@ -10,6 +10,7 @@ requires-python = ">=3.9"
 dependencies = [
     "numpy<2",
     "scipy",
+    "scikit-learn",
     "scikit-image",
     "opencv-python-headless",
     "hydra-core>=1.3",
