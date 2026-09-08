@@ -120,6 +120,7 @@
   "detector.weights": "data/weights/yoloe-11s-seg.pt",
   "eval.allow_sliding": false,
   "eval.attempts": 1,
+  "eval.behaviour_log": false,
   "eval.content_scenes": null,
   "eval.dataset_version": "v2",
   "eval.debug_frames": false,

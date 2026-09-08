@@ -49,6 +49,7 @@ import numpy as np
 
 from osg.core.types import Detection, FrameData
 from osg.graph.scene_graph import SceneGraph
+from osg.eval.behaviour_log import BehaviourLog
 from osg.planning.escape import ActionHistoryEscape
 
 from .constants import STAIR_CLASS_ID
@@ -187,7 +188,11 @@ class AscentNavAgent:
         self.approach_recheck_max = 0.0
         self._approach_itm_n = 0
         self.steps_to_first_candidate: Optional[int] = None
-        self.step_trace: list = []
+        # The behaviour recorder. `step_trace` stays as the wire format the
+        # analysis scripts already read; the log owns the schema and the
+        # realised-motion bookkeeping the hand-rolled version never had.
+        self.behaviour = BehaviourLog(enabled=True)
+        self.step_trace = self.behaviour.rows
         self._state = "init"
 
     def _new_floor(self) -> dict:
@@ -273,6 +278,7 @@ class AscentNavAgent:
             self.state_log.append((self.step_count, self._state))
         if self._state != "done":
             action = self.escape(action)
+        self.behaviour.annotate(act=action, state=self._state)
         self.step_count += 1
         return action
 
@@ -312,6 +318,8 @@ class AscentNavAgent:
         )
         self._stair_diag(seg, stair_mask)
         self._trace(frame, robot_xy, heading, pitch_deg, seg, stair_mask)
+        self.behaviour.annotate(nfront=int(np.atleast_2d(
+            np.asarray(self.obstacle_map.frontiers)).reshape(-1, 2).shape[0]))
         self.obstacle_map.update_agent_traj(robot_xy, heading)
         # Same base-class bookkeeping, so the value map can draw the trajectory
         # too (`base_map.py:31`). Viz only -- nothing reads it for decisions.
@@ -359,51 +367,51 @@ class AscentNavAgent:
                 if d.label.lower().replace("_", " ").strip() == target]
 
     def _trace(self, frame, robot_xy, heading, pitch_deg, seg, stair_mask) -> None:
-        """One row per step, for offline diagnosis of a stuck episode.
-
-        Cheap (about 20 numbers) and always collected; the runner only writes it
-        out when `eval.debug_frames` is on. The whole point is to separate "the
-        stairs were never seen" from "the stairs were seen and not climbed",
-        which the aggregate counters cannot do.
-        """
+        """Feed the behaviour recorder. See `osg/eval/behaviour_log.py`."""
         om = self.obstacle_map
         f = None
         if self.climb.climbing:
             fr = self._stair_frontier()
             f = None if fr is None else [round(float(v), 2) for v in fr]
-        self.step_trace.append({
-            "s": self.step_count,
-            "state": self._state,
-            "xy": [round(float(v), 2) for v in robot_xy],
-            "h": round(float(frame.camera_position[1]), 2),
-            "yaw": round(float(heading), 2),
-            "pitch": round(pitch_deg, 1),
-            "floor": self._floor_idx,
-            "nfront": int(np.atleast_2d(np.asarray(om.frontiers)).reshape(-1, 2).shape[0]),
-            "seg_px": int(np.count_nonzero(seg == STAIR_CLASS_ID)) if seg is not None else 0,
-            "det_px": int(np.count_nonzero(stair_mask)) if stair_mask is not None else 0,
-            "up_px": int(om._up_stair_map.sum()),
-            "dn_px": int(om._down_stair_map.sum()),
-            "up_f": [round(float(v), 2) for v in np.asarray(om._up_stair_frontiers).reshape(-1, 2)[0]]
-                    if np.size(om._up_stair_frontiers) else None,
-            "dn_f": [round(float(v), 2) for v in np.asarray(om._down_stair_frontiers).reshape(-1, 2)[0]]
-                    if np.size(om._down_stair_frontiers) else None,
-            "climb": (self.climb.direction if self.climb.climbing else 0),
-            "reach": int(self.climb.reached),
-            "cent": int(self.climb.reached_centroid),
-            "paused": self.climb.paused,
-            "stair_f": f,
-            "ndet": len(self._last_dets),
-            "det": (round(max(d.score for d in self._last_dets), 2)
-                    if self._last_dets else 0.0),
-            "pn_goal": (None if getattr(self, "_pn_goal", None) is None
-                        else [round(float(v), 2) for v in self._pn_goal]),
-            "pn_resets": int(getattr(self.pointnav, "n_resets", 0)) if self.pointnav else 0,
-            "on_stairs": int(robot_on_stairs(
+        self.behaviour.step(
+            n=self.step_count, xy=robot_xy, yaw=heading,
+            height=float(frame.camera_position[1]), pitch=pitch_deg,
+            state=self._state, action=None,
+            floor=self._floor_idx,
+            # perception
+            ndet=len(self._last_dets),
+            det=max((d.score for d in self._last_dets), default=0.0),
+            det_px=max((float((d.bbox_xyxy[2] - d.bbox_xyxy[0])
+                              * (d.bbox_xyxy[3] - d.bbox_xyxy[1]))
+                        for d in self._last_dets), default=0.0),
+            seg_px=int(np.count_nonzero(seg == STAIR_CLASS_ID)) if seg is not None else 0,
+            stair_det_px=int(np.count_nonzero(stair_mask)) if stair_mask is not None else 0,
+            # maps
+            explored_m2=float(om.explored_area.sum()) / (om.pixels_per_meter ** 2),
+            up_px=int(om._up_stair_map.sum()), dn_px=int(om._down_stair_map.sum()),
+            up_f=[round(float(v), 2) for v in np.asarray(om._up_stair_frontiers).reshape(-1, 2)[0]]
+                 if np.size(om._up_stair_frontiers) else None,
+            dn_f=[round(float(v), 2) for v in np.asarray(om._down_stair_frontiers).reshape(-1, 2)[0]]
+                 if np.size(om._down_stair_frontiers) else None,
+            # decision
+            sel=None if self._selected_frontier is None
+                else [round(float(v), 2) for v in self._selected_frontier],
+            pn_goal=None if self._pn_goal is None
+                    else [round(float(v), 2) for v in self._pn_goal],
+            rho=getattr(self.pointnav, "last_rho", None) if self.pointnav else None,
+            theta=getattr(self.pointnav, "last_theta", None) if self.pointnav else None,
+            pn_resets=int(getattr(self.pointnav, "n_resets", 0)) if self.pointnav else 0,
+            # commit
+            obs=self._accepted_obs, verified=int(self._verified),
+            # stairs
+            climb=(self.climb.direction if self.climb.climbing else 0),
+            reach=int(self.climb.reached), cent=int(self.climb.reached_centroid),
+            paused=self.climb.paused, stair_f=f,
+            on_stairs=int(robot_on_stairs(
                 om._up_stair_map if self.climb.direction != 2 else om._down_stair_map,
                 self._robot_px(robot_xy),
                 self.cfg.agent.agent_radius * om.pixels_per_meter)),
-        })
+        )
 
     def _stair_diag(self, seg, stair_mask) -> None:
         """Counters for the two ways the stair path can be silently dead: the

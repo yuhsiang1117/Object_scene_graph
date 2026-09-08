@@ -745,3 +745,56 @@ def test_the_scan_is_off_by_default():
     a.obstacle_map.frontiers = np.array([[0.5, 0.0]])
     a._explore(np.zeros(2), 0.0)
     assert "scans" not in a.stats and a.scan_on_arrival == 0
+
+
+# ============================================================= behaviour log
+
+def test_the_log_attributes_motion_to_the_action_that_caused_it():
+    """`moved` is the realised displacement of the PREVIOUS row's action. A
+    forward that moved nothing is the single most diagnostic event in the log,
+    and the hand-rolled trace it replaces never recorded it."""
+    from osg.eval.behaviour_log import BehaviourLog
+    b = BehaviourLog()
+    b.step(n=0, xy=[0, 0], yaw=0.0, height=0.9, action="move_forward")
+    b.step(n=1, xy=[0.25, 0], yaw=0.0, height=0.9, action="move_forward")
+    b.step(n=2, xy=[0.25, 0], yaw=0.0, height=0.9, action="turn_left")
+    assert b.rows[0]["moved"] == 0.25 and "blocked" not in b.rows[0]
+    assert b.rows[1]["moved"] == 0.0 and b.rows[1]["blocked"] == 1
+    assert b.summary()["blocked_forwards"] == 1
+    assert b.summary()["forwards"] == 2
+
+
+def test_a_turn_is_not_counted_as_a_blocked_forward():
+    from osg.eval.behaviour_log import BehaviourLog
+    b = BehaviourLog()
+    b.step(n=0, xy=[0, 0], yaw=0.0, height=0.9, action="turn_left")
+    b.step(n=1, xy=[0, 0], yaw=float(np.radians(30)), height=0.9, action="turn_left")
+    assert "blocked" not in b.rows[0]
+    assert b.rows[0]["turned"] == pytest.approx(30.0, abs=0.1)
+    assert b.summary()["blocked_forwards"] == 0
+
+
+def test_absent_and_zero_stay_different():
+    """An agent with no stair machinery must leave those keys ABSENT: absent
+    and zero mean different things when you are counting opportunities."""
+    from osg.eval.behaviour_log import BehaviourLog
+    b = BehaviourLog()
+    b.step(n=0, xy=[0, 0], yaw=0.0, height=0.9, action="stop", up_px=None, ndet=0)
+    assert "up_px" not in b.rows[0] and b.rows[0]["ndet"] == 0
+
+
+def test_the_log_can_be_switched_off_entirely():
+    from osg.eval.behaviour_log import BehaviourLog
+    b = BehaviourLog(enabled=False)
+    b.step(n=0, xy=[0, 0], yaw=0.0, height=0.9, action="stop")
+    assert b.rows == [] and b.summary() == {}
+
+
+def test_the_agent_feeds_the_log_through_a_real_step():
+    a = _agent()
+    f = _wall_frame([0, 0.88, 0], [1, 0.88, 0])
+    a.act(f)
+    row = a.behaviour.rows[-1]
+    for key in ("n", "xy", "yaw", "h", "state", "act", "ndet", "explored_m2", "on_stairs"):
+        assert key in row, f"{key} missing from the behaviour row"
+    assert a.step_trace is a.behaviour.rows, "the wire format must stay the same list"
