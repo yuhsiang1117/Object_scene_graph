@@ -171,7 +171,20 @@ verification:
 agent:
   max_steps: 500
   success_distance: 0.18
-  use_habitat_navmesh: true
+  # SENSOR-ONLY. This used to be `use_habitat_navmesh: true`, which handed the
+  # agent two channels no sensor-only system has: habitat's ShortestPathFollower
+  # planning on the ground-truth navmesh, and `is_reachable`, an oracle that
+  # says whether a target sits on a connected navmesh island. `pointnav` is the
+  # frozen PointNav ResNet policy ASCENT itself drives with -- (rho, theta) plus
+  # a 224x224 depth image, nothing else.
+  #
+  # The cost is known and large: on HM3D the same agent scores 63.0% with the
+  # navmesh and 42.0% with this mover (S8/S30). Every ycb_dynamic number
+  # measured before this change was taken WITH the navmesh and is not
+  # comparable to anything measured after it. `+experiment=ycb_authored_navmesh`
+  # restores the old arm for reproducing them.
+  navigation: pointnav
+  use_habitat_navmesh: false
   # Stop at a view point, not at a depth threshold. Success here is measured
   # from the final pose to the nearest sampled goal viewpoint, and those sit on
   # rings at 0.8/1.2/1.5/2.0 m; closing until the target's depth reaches 1.0 m

@@ -8,9 +8,10 @@ defaults:
   - ycb_dynamic_best
 
 agent:
-  navigation: navmesh
+  # sensor-only, like the rest of the ycb line (see ycb_authored_nav)
+  navigation: pointnav
   policy: nav_agent
-  use_habitat_navmesh: true
+  use_habitat_navmesh: false
   navmesh_3d_goals: true
 
 mapping:

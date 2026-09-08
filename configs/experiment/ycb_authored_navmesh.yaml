@@ -1,0 +1,22 @@
+# @package _global_
+#
+# The ycb line as it was BEFORE the sensor-only switch: habitat's ground-truth
+# navmesh follower plus the `is_reachable` oracle.
+#
+#   python scripts/run_eval.py +experiment=ycb_authored_navmesh eval=ycb_authored
+#
+# Kept so every ycb_dynamic result measured up to that point stays reproducible
+# by name. It is NOT a comparable arm: the navmesh is privileged information,
+# and on HM3D the same agent scores 63.0% with it against 42.0% without (S8).
+# Stack it under a dynamic preset to restore that preset's original mover, e.g.
+#
+#   +experiment=ycb_dynamic_best +experiment@_global_=ycb_authored_navmesh
+#
+# or simply override `agent.navigation=navmesh agent.use_habitat_navmesh=true`.
+
+defaults:
+  - ycb_authored_nav
+
+agent:
+  navigation: navmesh
+  use_habitat_navmesh: true

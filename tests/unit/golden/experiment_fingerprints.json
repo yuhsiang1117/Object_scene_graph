@@ -22,11 +22,12 @@
   "matched_terminal_verify": "d883951c4495aeeac943b3770e10846bd0a810b7283b8125f17144975ee99ed0",
   "matched_verify": "8cd44092da5a17b881a2361e76c97a8d674d93d884a8bf205689651be8d9c715",
   "single_floor_navgoal": "7bb38fe81821acdce09f8a667fdbf6938eae31c7564d109dcd734a823d63075f",
-  "ycb_authored_nav": "6c5e4a23b7917fb420efc71a3329926048f24d7c5c06277766a62f5709facd66",
-  "ycb_dynamic_best": "ca6ede93a423eb5d734d0fab0253b08582193a9f3d8f2eee50335970f711c0a8",
-  "ycb_dynamic_cross": "667aec79df1e2ae5b6c59827fee1acb7517323e468514167fdca9f1d9247221f",
-  "ycb_dynamic_foveate": "222067c568d0b1edbd2e5efebe662a02e16226d51606e8c7e720872eb39e46d5",
-  "ycb_dynamic_grounded": "1bb1a85ccaa89cde499581dee0816ce3f537beef2af7e23799722295730b6764",
-  "ycb_dynamic_multifloor": "37a82d809a5e69bad42f5b860c0b480916f32745b9db91f75b5126eecc9ce527",
-  "ycb_dynamic_sat": "13fe30a3a6b8e8841ae106e313e180593d1fa56d48bdf35770dda06a8f83439f"
+  "ycb_authored_nav": "c0dbac23feffbd7583c3ce07cd532142718bb60bff47b359afdafcd1bbbcd81d",
+  "ycb_authored_navmesh": "cbf2b314cee4ba8f8474f9f46a596418fdd89a040625a7ca5a567107262605e2",
+  "ycb_dynamic_best": "3cd5c2b78ab9fd98fcbfea1453f85d6aa524681196d5474ff8da6e5d45e0c300",
+  "ycb_dynamic_cross": "e0bde89fd639a823a7f0eea890c892aeba56ef6a1f588565b58745f97402a866",
+  "ycb_dynamic_foveate": "2d4b766a22fefadedfccd6096d23753527f5d567ee2d052c7e5247dd62e809da",
+  "ycb_dynamic_grounded": "d07a3c6e7f7dbfeeeb9b74542362753a678bf7d78600a502dde635b19873d317",
+  "ycb_dynamic_multifloor": "9bf0cf88e1b07642dd59990a1bb8ba108c5f87ab56b0cde52723bb3a666dcbd6",
+  "ycb_dynamic_sat": "507f901a706e78d5b304d647d394b8891472aa54222ef6cf895993e1f99c3d7b"
 }
