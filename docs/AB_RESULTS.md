@@ -3526,6 +3526,80 @@ see the right one.
 Next arm: `+experiment=ascentnav_gate60`, the same gate at the knee of the
 curve, pre-registered in that file.
 
+### S50 — the agent is facing the wrong way, and looking around does not pay
+
+S49 measured ~12% detection recall while traversing. S50 asks whether that is
+the detector's fault, and the answer is no.
+
+**Three detector configurations, same measurement** (steps with a goal
+view-point within 3 m and in the central 40 degrees, on the 16-episode
+diagnostic split):
+
+| detector | recall | control (nothing in frame) |
+|---|---|---|
+| YOLOE-11s @ 512, 42-class vocabulary | **11.8%** | 3.3% |
+| YOLOE-11l @ 640, 42-class vocabulary | **8.4%** | 1.5% |
+| YOLOE-11s @ 512, target-only prompt | **11.8%** | 4.0% |
+
+The larger model is WORSE -- it fires less on everything -- and prompting it with
+the target alone changes nothing. That closes the detector as a lever, and it
+does so for the cost of two 16-episode diagnostics rather than two 100-episode
+A/Bs.
+
+**The detector is fine when it is actually looking.** In the last 15 steps of
+successful episodes, with the object close, centred and being approached, recall
+is **66%** (59 of 89 in-frame steps). The geometry proxy is therefore sound --
+66% against 14% is not a measurement artefact -- and the low traverse number is
+about FRAMING.
+
+**Decomposing the 2809 steps spent within 3 m of the target object:**
+
+| | share |
+|---|---|
+| object OUTSIDE the 79-degree FOV -- facing the wrong way | **62%** |
+| in frame, not detected | 33% |
+| detected | 5% |
+
+A 79-degree camera bolted to the direction of travel sees a fifth of a room, and
+after the opening scan nothing makes the agent look around again.
+
+**So: scan on arriving at a frontier** (`agent.scan_on_arrival: 12`, at most
+once per 1.5 m cell -- ASCENT's own `_initialize` scan applied at every vantage
+point instead of only on entering a floor). Pre-registered: SR above the
+control's 56.0%.
+
+| | SR | SPL | steps | timeouts | same | cross |
+|---|---|---|---|---|---|---|
+| `s56_fixed100` control | 56.0% | 0.285 | 199 | 17 | 65.4% | 22.7% |
+| `s63_scan100` | 54.0% | 0.284 | 190 | **11** | 62.8% | 22.7% |
+
+4 wins, 6 losses, net -2, p = 0.754. **Prediction NOT met -- a null.** 288 scans
+consumed 3297 steps, **17% of every step taken**, and bought nothing:
+`steps_to_first_candidate` got WORSE (median 54 -> 63). The looking is paid for
+out of forward progress at par, exactly the failure mode the preset named.
+
+#### Four nulls in a row, and what that actually means
+
+| change | mechanism moved? | SR effect | p |
+|---|---|---|---|
+| stair fixes S43-S46 | yes: climb conversion 11% -> 30% | -2 | 0.79 |
+| commit gate @ 0.70 | yes: far-commits 22 -> 8 | -2 | 0.82 |
+| commit gate @ 0.60 | yes: far-commits 22 -> 15 | +0 | 1.00 |
+| scan on arrival | yes: 288 scans, 17% of steps | -2 | 0.75 |
+
+Every mechanism does its job locally and none moves SR. Before reading that as
+"none of this matters", look at what these A/Bs can resolve. They produce 10-20
+discordant pairs; with 10 discordant pairs the smallest detectable effect at
+p < 0.05 is **9 wins against 1 loss, a net of +8 episodes**. An intervention
+worth a genuine +2 or +3 is INVISIBLE at n=100 -- it cannot be distinguished
+from these results no matter how many times it is run.
+
+The gap to ASCENT is 11 points at n=2000. The mechanisms above plausibly carry
+1-3 points each. **The 100-episode split is the wrong instrument for them**, and
+running a fifth arm on it would be spending an hour to learn nothing again. The
+next measurement that can actually settle any of this is the full 2000-episode
+split against `outputs/s47_full_v1` (52.15%), which has 20x the paired power.
+
 ### S26 — ASCENT's dense approach re-check
 
 S23/S25 closed the mover, the aim point and the commit gate as explanations for
