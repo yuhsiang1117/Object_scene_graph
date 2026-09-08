@@ -3600,6 +3600,65 @@ running a fifth arm on it would be spending an hour to learn nothing again. The
 next measurement that can actually settle any of this is the full 2000-episode
 split against `outputs/s47_full_v1` (52.15%), which has 20x the paired power.
 
+### S51 — the behaviour recorder on 100 episodes, and a correction to S49
+
+`outputs/s68_behaviour100` is the first run with `osg/eval/behaviour_log.py` on,
+and `scripts/analyse_behaviour.py` reads it against the dataset's own goal
+geometry. 54.0% SR / 0.28 SPL, 65.4% same-floor, 13.6% cross-floor.
+
+| | |
+|---|---|
+| blocked forwards | **793** (10% of every forward commanded) |
+| detector recall, goal view-point in frame | **23.0%** |
+| detector recall, OBJECT in frame | **32.2%** |
+| framing rate (object within 3 m AND in view) | **34.0%** |
+| failures that reached a goal anyway | 37 |
+| failures that passed the goal, then committed elsewhere | 22 |
+| taxonomy | 25 wrong-object stops, 17 timeouts, 4 near misses |
+
+**Correction to S49/S50.** Those measured ~12% recall and I described it as the
+rate at which the pipeline notices the target. On the full split it is **32%**.
+The 12% came from `missed16`, a split selected precisely BECAUSE the agent had
+walked past a goal there -- an adverse subset, and I should have said so when
+quoting it as a general figure. The direction of the S50 conclusion survives
+(framing, at 34%, is the larger factor and the detector is not the lever), but
+the magnitude of the recall problem was overstated by a factor of two and a half.
+
+That correction is exactly what the recorder was built to prevent: the number
+now comes from an unselected 100-episode run with the denominator computed the
+same way every time, rather than from whichever episodes a bespoke script
+happened to be pointed at.
+
+#### Native ASCENT: attempted, not achieved
+
+Two environments were built to run the reference implementation head to head.
+Neither reached a running state. What worked: a from-scratch env to ASCENT's own
+README spec (python 3.9, torch 2.1.0+cu118, habitat-sim 0.3.1, habitat-lab and
+habitat-baselines, transformers 4.37.0 -- which is ASCENT's own override of
+lavis's `<4.27` pin, so the conflict I first reported as needing a second
+environment does not exist). BLIP-2 ITM loads and MobileSAM installs.
+
+What blocked it, in order of severity:
+
+* **No CUDA compiler on the image.** GroundingDINO's fused attention kernel
+  cannot build: installing nvcc leaves conda mixing runtime and dev components
+  across CUDA 11.8/12.4/13.3 in both environments. The repo's own
+  `multi_scale_deformable_attn_pytorch` is the same operator and runs on GPU, so
+  the patch is sound, but it is a deviation and it is slower.
+* **A 2023 research stack on a 2026 container.** `salesforce-lavis` declares
+  dependencies unsatisfiable on python 3.9 (`spacy -> thinc>=8.3.12` needs
+  3.10+); duplicate opencv builds; packages compiled against numpy 2 loading
+  under the numpy 1.23 that habitat-sim pins. Each fix revealed the next.
+* **Still outstanding:** RAM++ (not on PyPI, needs its GitHub repo), ~20 GB of
+  weights, and wiring ASCENT's habitat-baselines config to THIS split so the
+  comparison is paired rather than approximate.
+
+The judgement recorded here for whoever picks this up: a comparison built on a
+patched attention kernel, a quantised planner and whatever further substitutions
+the remaining models demand would need every one of those footnoted, and would
+be weaker evidence than reading `ascent_policy.py` directly -- which is what
+S36-S50 did.
+
 ### S26 — ASCENT's dense approach re-check
 
 S23/S25 closed the mover, the aim point and the commit gate as explanations for
