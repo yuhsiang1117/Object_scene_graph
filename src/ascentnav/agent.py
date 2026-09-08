@@ -119,6 +119,7 @@ class AscentNavAgent:
         # OSG's own, already in this preset and until now read by nobody here.
         v = cfg.verification
         self.commit_gate = bool(getattr(a, "commit_gate", False))
+        self.scan_on_arrival = int(getattr(a, "scan_on_arrival", 0) or 0)
         self.commit_min_score = float(getattr(v, "min_score", 0.70))
         self.commit_min_obs = int(getattr(v, "min_obs", 2))
         self.commit_min_bbox_px = float(getattr(v, "min_bbox_px", 1200))
@@ -156,6 +157,8 @@ class AscentNavAgent:
         self._navigate_steps = 0
         self._min_dist_seen = np.inf
         self._accepted_obs = 0
+        self._scan_left = 0
+        self._scanned = set()
         self._verified = False
         self._verify_after = 0
         self._disabled_frontiers: set = set()
@@ -163,6 +166,8 @@ class AscentNavAgent:
         # What this step decided, for viz only (`ascentnav/viz.py`). Kept on the
         # agent rather than passed around because the renderer runs after `act`.
         self._selected_frontier: Optional[np.ndarray] = None
+        self._scan_left = 0
+        self._scanned: set = set()
         self._nav_goal: Optional[np.ndarray] = None
         self._last_dets: list = []
         self._pn_goal: Optional[np.ndarray] = None
@@ -563,6 +568,23 @@ class AscentNavAgent:
         self._selected_frontier = best
         if best is None:
             return LEFT
+
+        # Arrived somewhere new: look around before moving on. The agent
+        # otherwise only ever sees the direction it is travelling, and 62% of
+        # the steps it spends within 3 m of the target have the target outside
+        # the FOV (S50).
+        if self.scan_on_arrival:
+            if self._scan_left > 0:
+                self._scan_left -= 1
+                self.stats["scan_steps"] = self.stats.get("scan_steps", 0) + 1
+                return LEFT
+            key = tuple(np.round(robot_xy / 1.5).astype(int))
+            if float(np.linalg.norm(best - robot_xy)) <= 1.0 and key not in self._scanned:
+                self._scanned.add(key)
+                self._scan_left = self.scan_on_arrival - 1
+                self.stats["scans"] = self.stats.get("scans", 0) + 1
+                self.stats["scan_steps"] = self.stats.get("scan_steps", 0) + 1
+                return LEFT
         self._sticky(best, robot_xy)
         self.frontier_select_log.append((
             self.step_count, [round(float(v), 2) for v in robot_xy],

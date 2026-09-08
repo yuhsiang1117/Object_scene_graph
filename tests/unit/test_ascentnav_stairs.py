@@ -701,3 +701,47 @@ def test_with_the_gate_off_nothing_is_filtered():
     a.object_map.clouds = {a.target: np.zeros((5, 3))}
     assert a._object_goal(np.zeros(2)) is not None or True   # no gate-driven None
     assert "commit_gate_wait" not in a.stats
+
+
+# ============================================================ scan on arrival
+
+def _scan_agent(n=12):
+    a = _agent(scan_on_arrival=n)
+    a.obstacle_map.frontiers = np.array([[0.5, 0.0]])   # a frontier 0.5 m away
+    a.obstacle_map.explored_area[:] = 1
+    return a
+
+
+def test_arriving_at_a_frontier_starts_a_scan():
+    a = _scan_agent(4)
+    acts = [a._explore(np.zeros(2), 0.0) for _ in range(4)]
+    assert acts == ["turn_left"] * 4
+    assert a.stats["scans"] == 1 and a.stats["scan_steps"] == 4
+
+
+def test_the_scan_ends_and_the_agent_moves_on():
+    a = _scan_agent(2)
+    a._explore(np.zeros(2), 0.0); a._explore(np.zeros(2), 0.0)
+    assert a._scan_left == 0
+    assert a._explore(np.zeros(2), 0.0) == "move_forward"    # the stub driver
+
+
+def test_the_same_place_is_not_rescanned():
+    a = _scan_agent(2)
+    for _ in range(4):
+        a._explore(np.zeros(2), 0.0)
+    assert a.stats["scans"] == 1, "standing in the same 1.5 m cell must not re-trigger"
+
+
+def test_a_distant_frontier_does_not_trigger_a_scan():
+    a = _scan_agent(4)
+    a.obstacle_map.frontiers = np.array([[6.0, 0.0]])
+    a._explore(np.zeros(2), 0.0)
+    assert "scans" not in a.stats
+
+
+def test_the_scan_is_off_by_default():
+    a = _agent()
+    a.obstacle_map.frontiers = np.array([[0.5, 0.0]])
+    a._explore(np.zeros(2), 0.0)
+    assert "scans" not in a.stats and a.scan_on_arrival == 0

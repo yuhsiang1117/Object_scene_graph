@@ -161,6 +161,13 @@ class AgentConfig:
     # detector's own conf into its object cloud and treats a cloud as a goal,
     # and 373 of 601 same-floor failures on the full v1 val split were commit
     # stops more than 3 m from any instance of the category.
+    # S50: turn in place on ARRIVING at a frontier, before picking the next one.
+    # Of the steps the agent spends within 3 m of the target object, 62% have it
+    # outside the 79-degree FOV -- it walks past without ever pointing the
+    # camera at it. ASCENT scans 360 degrees on entering a floor
+    # (`_initialize`); this is the same idea at every vantage point. Number of
+    # turn actions; 0 is off, 12 is a full circle at 30 degrees.
+    scan_on_arrival: int = 0
     commit_gate: bool = False
     terminal_requires_detection: bool = True
     # 2. Does a PointNav STOP short of the goal retire the frontier? ASCENT

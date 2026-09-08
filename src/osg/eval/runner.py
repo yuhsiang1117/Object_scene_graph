@@ -671,6 +671,7 @@ def run_eval(cfg) -> dict:
                 getattr(cfg.agent, "approach_abandon_steps", 0)),
             "escape_window": int(getattr(cfg.agent, "escape_window", 0)),
             "commit_gate": bool(getattr(cfg.agent, "commit_gate", False)),
+            "scan_on_arrival": int(getattr(cfg.agent, "scan_on_arrival", 0)),
             "terminal_requires_detection": bool(
                 getattr(cfg.agent, "terminal_requires_detection", True)),
             "pointnav_stop_means_blocked": bool(
