@@ -1,0 +1,36 @@
+defaults:
+  - base_hm3d
+
+# Sixteen same-floor FAILURES from `outputs/s47_full_v1` that walked within 2 m
+# of a goal view-point BEFORE committing to something else -- 221 episodes do
+# this, and they are 37% of all same-floor failures.
+#
+#   python scripts/run_eval.py +experiment=ascentnav eval=missed16 \
+#       eval.debug_frames=true output_dir=outputs/s59_missed
+#
+# A DIAGNOSTIC split, not an A/B. The question it answers: when the agent stood
+# where the object is visible, did the detector miss it, or was the object never
+# in frame? The per-step trace carries pose and detection count, so both can be
+# checked against the dataset's own view-points offline.
+split: val
+dataset_version: v1
+episodes_path: data/datasets/objectnav/hm3d/v1/{split}/{split}.json.gz
+num_episodes: -1
+max_scene_repeat_episodes: -1
+episode_ids:
+    - DYehNKdT76V.basis.glb:46
+    - DYehNKdT76V.basis.glb:54
+    - mv2HUxq3B53.basis.glb:11
+    - bxsVRursffK.basis.glb:14
+    - 4ok3usBNeis.basis.glb:81
+    - cvZr5TUy5C5.basis.glb:64
+    - p53SfW6mjZe.basis.glb:49
+    - p53SfW6mjZe.basis.glb:83
+    - zt1RVoi7PcG.basis.glb:54
+    - bxsVRursffK.basis.glb:88
+    - q3zU7Yy5E5s.basis.glb:95
+    - TEEsavR23oF.basis.glb:98
+    - XB4GS9ShBRE.basis.glb:19
+    - XB4GS9ShBRE.basis.glb:66
+    - svBbv1Pavdk.basis.glb:19
+    - 6s7QHgap2fW.basis.glb:6

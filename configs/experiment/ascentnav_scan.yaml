@@ -1,0 +1,31 @@
+# @package _global_
+#
+# S50: `ascentnav` plus a look-around on arriving at a frontier.
+#
+#   python scripts/run_eval.py +experiment=ascentnav_scan eval=scenes20_ep0to4
+#
+# Control: `+experiment=ascentnav` (`outputs/s56_fixed100`), one field apart.
+#
+# Why. Of the steps the agent spends within 3 m of the TARGET OBJECT:
+#     62%  the object is outside the 79-degree FOV -- facing the wrong way
+#     33%  in frame and not detected
+#      5%  detected
+# and the detector is not the lever: 11s@512 11.8% recall, 11l@640 8.4%,
+# target-only prompting 11.8%. What it can do is 66% when the object is close,
+# centred and being approached (the endgame of successes), so the framing is
+# what is missing, not the model.
+#
+# 12 turns at 30 degrees is a full circle, the same scan ASCENT runs on entering
+# a floor (`_initialize`), here repeated at each new vantage point and at most
+# once per 1.5 m cell.
+#
+# The cost is steps, and steps are not free: timeouts are already 17 of 100.
+# Falsifiable prediction: SR above the control's 56.0%. If SR does not move, the
+# extra looking is being paid for out of the step budget at par, and the answer
+# is a cheaper scan (6 turns) or none.
+
+defaults:
+  - ascentnav
+
+agent:
+  scan_on_arrival: 12

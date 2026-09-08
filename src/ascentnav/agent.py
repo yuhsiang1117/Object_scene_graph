@@ -64,6 +64,7 @@ from .mapping.obstacle_map import ObstacleMap
 from .mapping.value_map import ValueMap
 from .stairs import (
     CLIMB_PAUSED_ABANDON,
+    stairs_in_upper_half,
     ClimbState,
     carrot_waypoint,
     ratchet_carrot,
@@ -113,6 +114,16 @@ class AscentNavAgent:
         self.abandon_steps = int(getattr(a, "approach_abandon_steps", 100) or 100)
         self.escape = ActionHistoryEscape(int(getattr(a, "escape_window", 30) or 30))
 
+        # S47's commit gate. Off by default: it changes what the agent is
+        # willing to walk to, so it is an A/B, not a bug fix. The thresholds are
+        # OSG's own, already in this preset and until now read by nobody here.
+        v = cfg.verification
+        self.commit_gate = bool(getattr(a, "commit_gate", False))
+        self.scan_on_arrival = int(getattr(a, "scan_on_arrival", 0) or 0)
+        self.commit_min_score = float(getattr(v, "min_score", 0.70))
+        self.commit_min_obs = int(getattr(v, "min_obs", 2))
+        self.commit_min_bbox_px = float(getattr(v, "min_bbox_px", 1200))
+
         self.scene_graph = SceneGraph()
         self.reset(target_category)
 
@@ -145,6 +156,9 @@ class AscentNavAgent:
         self._init_left = int(round(360.0 / self.turn_deg)) if self.cfg.agent.initial_scan else 0
         self._navigate_steps = 0
         self._min_dist_seen = np.inf
+        self._accepted_obs = 0
+        self._scan_left = 0
+        self._scanned = set()
         self._verified = False
         self._verify_after = 0
         self._disabled_frontiers: set = set()
@@ -152,9 +166,12 @@ class AscentNavAgent:
         # What this step decided, for viz only (`ascentnav/viz.py`). Kept on the
         # agent rather than passed around because the renderer runs after `act`.
         self._selected_frontier: Optional[np.ndarray] = None
+        self._scan_left = 0
+        self._scanned: set = set()
         self._nav_goal: Optional[np.ndarray] = None
         self._last_dets: list = []
         self._pn_goal: Optional[np.ndarray] = None
+        self._seg_upper = False
         self._stick_steps = 0
         self._last_frontier_dist = 0.0
         self.escape.reset()
@@ -285,6 +302,7 @@ class AscentNavAgent:
         # is what left the first run with no floor-transition capability at all.
         seg = self._stair_seg(frame)
         stair_mask = self._stair_det_mask(raw, seg)
+        self._seg_upper = stairs_in_upper_half(None if seg is None else seg == STAIR_CLASS_ID)
         self.obstacle_map.update_map(
             depth_n, tf, self.min_depth, self.max_depth, self.fx, self.fy, self.hfov,
             {}, zeros,
@@ -309,11 +327,24 @@ class AscentNavAgent:
             self._state = "climb"
             return self._do_climb(depth_n, robot_xy, heading, pitch_deg)
 
+        # Camera back to level before anything else, exactly as ASCENT does
+        # when it is not on a staircase (`ascent_policy.py:556-563`). Without
+        # this a single descent probe left the camera down for the rest of the
+        # episode, and the map routes stair pixels BY THE SIGN OF THE PITCH --
+        # so every staircase after the first probe was filed as a descent.
+        level = self._level_camera(pitch_deg)
+        if level is not None:
+            return level
+
         if self._init_left > 0:
             self._init_left -= 1
             self._state = "explore"
             return LEFT
         if goal is None:
+            # A suspected descent outranks exploring (`ascent_policy.py:569-571`).
+            if self.obstacle_map._look_for_downstair_flag:
+                self._state = "look_down"
+                return self._look_for_downstair(robot_xy, heading, pitch_deg)
             self._state = "explore"
             self._navigate_steps = 0
             return self._explore(robot_xy, heading, depth_n, pitch_deg)
@@ -362,6 +393,9 @@ class AscentNavAgent:
             "cent": int(self.climb.reached_centroid),
             "paused": self.climb.paused,
             "stair_f": f,
+            "ndet": len(self._last_dets),
+            "det": (round(max(d.score for d in self._last_dets), 2)
+                    if self._last_dets else 0.0),
             "pn_goal": (None if getattr(self, "_pn_goal", None) is None
                         else [round(float(v), 2) for v in self._pn_goal]),
             "pn_resets": int(getattr(self.pointnav, "n_resets", 0)) if self.pointnav else 0,
@@ -424,10 +458,36 @@ class AscentNavAgent:
             return None
         return np.where(m, STAIR_CLASS_ID, 0).astype(np.uint8)
 
+    def _bbox_px(self, det) -> float:
+        x0, y0, x1, y1 = [float(v) for v in det.bbox_xyxy]
+        return max(0.0, x1 - x0) * max(0.0, y1 - y0)
+
+    def _passes_commit_gate(self, det) -> bool:
+        """The evidence bar OSG applies before it will walk to a detection
+        (`object_layer.candidates`, `object_layer.py:367`).
+
+        Without it this agent writes anything the detector emits above its own
+        `conf` (0.3) into the object cloud and treats a cloud as a goal. S47:
+        373 of 601 same-floor failures on the full v1 val split were commit
+        stops more than 3 m from any instance of the category, median 6.51 m,
+        at a median step 69 of a 500-step budget -- the agent was not running
+        out of anything, it stopped on the wrong object.
+
+        `min_evidence` is not ported: it accumulates over an OSG track, and this
+        agent has no track layer. The observation count is the stand-in.
+        """
+        return (det.score >= self.commit_min_score
+                and self._bbox_px(det) >= self.commit_min_bbox_px)
+
     def _update_object_map(self, frame, dets, tf, depth_n) -> None:
         cone = 2 * np.arctan(frame.depth.shape[1] / (2 * self.fx))
+        if dets and self.commit_gate:
+            dets = [d for d in dets if self._passes_commit_gate(d)]
+            if not dets:
+                self.stats["commit_gate_blocked"] = self.stats.get("commit_gate_blocked", 0) + 1
         if dets:
             best = max(dets, key=lambda d: d.score)
+            self._accepted_obs += 1
             if self.steps_to_first_candidate is None:
                 self.steps_to_first_candidate = self.step_count
             self._maybe_verify(frame, best)
@@ -460,6 +520,13 @@ class AscentNavAgent:
 
     def _object_goal(self, robot_xy) -> Optional[np.ndarray]:
         if not self.object_map.has_object(self.target):
+            return None
+        # One glimpse is not a target. OSG requires `min_obs` sightings before a
+        # track becomes a candidate; the same bar here costs a step or two of
+        # delay and refuses the single-frame false positives that end 6.5 m from
+        # anything.
+        if self.commit_gate and self._accepted_obs < self.commit_min_obs:
+            self.stats["commit_gate_wait"] = self.stats.get("commit_gate_wait", 0) + 1
             return None
         # 2D, as ASCENT passes (`ascent_policy.py:441` hands it `robot_xy`).
         # `get_best_object` subtracts this from a 2D point for its hysteresis
@@ -501,6 +568,23 @@ class AscentNavAgent:
         self._selected_frontier = best
         if best is None:
             return LEFT
+
+        # Arrived somewhere new: look around before moving on. The agent
+        # otherwise only ever sees the direction it is travelling, and 62% of
+        # the steps it spends within 3 m of the target have the target outside
+        # the FOV (S50).
+        if self.scan_on_arrival:
+            if self._scan_left > 0:
+                self._scan_left -= 1
+                self.stats["scan_steps"] = self.stats.get("scan_steps", 0) + 1
+                return LEFT
+            key = tuple(np.round(robot_xy / 1.5).astype(int))
+            if float(np.linalg.norm(best - robot_xy)) <= 1.0 and key not in self._scanned:
+                self._scanned.add(key)
+                self._scan_left = self.scan_on_arrival - 1
+                self.stats["scans"] = self.stats.get("scans", 0) + 1
+                self.stats["scan_steps"] = self.stats.get("scan_steps", 0) + 1
+                return LEFT
         self._sticky(best, robot_xy)
         self.frontier_select_log.append((
             self.step_count, [round(float(v), 2) for v in robot_xy],
@@ -596,6 +680,7 @@ class AscentNavAgent:
         self.object_map._map.fill(0)
         self._navigate_steps = 0
         self._nav_goal = None
+        self._accepted_obs = 0
         self._min_dist_seen = np.inf
         self._verified = False
         self._verify_after = self.step_count
@@ -603,6 +688,57 @@ class AscentNavAgent:
         self.stats[f"give_up_{why}"] = self.stats.get(f"give_up_{why}", 0) + 1
 
     # ---------------------------------------------------------------- stairs
+
+    def _level_camera(self, pitch_deg) -> Optional[str]:
+        """Return the tilt action needed to get back to level, or None.
+
+        `ascent_policy.py:556-563`, and it is not cosmetic: `update_map` routes
+        every fused stair pixel by `agent_pitch_angle >= 0`, so a camera left
+        tilted silently relabels every later staircase.
+        """
+        if self.climb.climbing or self.obstacle_map._look_for_downstair_flag:
+            return None
+        if pitch_deg > 5.0:
+            return "look_down"
+        if pitch_deg < -5.0:
+            return "look_up"
+        return None
+
+    def _look_for_downstair(self, robot_xy, heading, pitch_deg) -> str:
+        """Go and check whether that suspected drop-off is really a staircase.
+
+        `ascent_policy.py:623-658`. The map raises `_look_for_downstair_flag`
+        when it holds down-stair pixels that never grew into a frontier
+        (`obstacle_map.py:737-739`); this is the active probe that resolves it:
+        tilt down so the treads are in view, drive at the candidate centroid,
+        and if the mover refuses or we are already on top of it, call it a false
+        positive and retire it.
+        """
+        om = self.obstacle_map
+        if pitch_deg > -25.0:                     # tilt down first
+            self.stats["down_look"] = self.stats.get("down_look", 0) + 1
+            return "look_down"
+        c = np.asarray(om._potential_stair_centroid).reshape(-1, 2)
+        if len(c) == 0:
+            om._look_for_downstair_flag = False
+            return LEFT
+        if float(np.linalg.norm(c[0] - robot_xy)) <= 0.2:
+            return self._reject_downstair()
+        action = self._pointnav(robot_xy, heading, c[0], stop_radius=0.0)
+        if action is None:                        # `:632-643`
+            return self._reject_downstair()
+        return action
+
+    def _reject_downstair(self) -> str:
+        om = self.obstacle_map
+        om._disabled_stair_map[om._down_stair_map == 1] = 1
+        om._down_stair_map.fill(0)
+        om._has_down_stair = False
+        om._look_for_downstair_flag = False
+        om._potential_stair_centroid = np.array([])
+        self.stats["downstair_reject"] = self.stats.get("downstair_reject", 0) + 1
+        self._state = "explore"
+        return "look_up"
 
     def _robot_px(self, robot_xy):
         return self.obstacle_map._xy_to_px(np.atleast_2d(robot_xy))
@@ -622,8 +758,18 @@ class AscentNavAgent:
         down, and a direction already climbed is skipped -- `:670-674`.
         """
         om = self.obstacle_map
-        for direction, has, done in ((1, om._has_up_stair, om._explored_up_stair),
-                                     (2, om._has_down_stair, om._explored_down_stair)):
+        order = ((1, om._has_up_stair, om._explored_up_stair),
+                 (2, om._has_down_stair, om._explored_down_stair))
+        # ASCENT tries up first (`:670-674`). That is only sound once the two
+        # maps disagree -- and at a level camera they do not: both writers fire
+        # on the same pixels, so up-first took every descent as an ascent (0 of
+        # 148 climb steps went down on the strict descent split). The
+        # segmentation's own up/down discriminator breaks the tie: treads you
+        # must climb project into the TOP half of the frame
+        # (`check_stairs_in_upper_50_percent`, ascent/utils.py:163).
+        if om._has_up_stair and om._has_down_stair and not self._seg_upper:
+            order = order[::-1]
+        for direction, has, done in order:
             if not has or done:
                 continue
             f = (om._up_stair_frontiers if direction == 1 else om._down_stair_frontiers)

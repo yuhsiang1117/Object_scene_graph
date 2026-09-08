@@ -197,6 +197,11 @@ def build_episode_record(
         # Phase 2 dynamic-scene evidence: when beliefs flipped, what the agent
         # believed when it committed to a goal, and what it still believed about
         # the target at the end.
+        # Per-step trace, only when debug frames are on: ~20 numbers a step,
+        # which would bloat every normal run's episodes.jsonl. It is what the
+        # S49/S50 detector-recall and framing measurements were built from.
+        **({"step_trace": agent.step_trace}
+           if cfg.eval.debug_frames and hasattr(agent, "step_trace") else {}),
         "prior_map": outcome.map_note,
         "attempts_used": outcome.attempts_used,
         "attempt_log": outcome.attempt_log,

@@ -3100,6 +3100,506 @@ Footnote worth keeping: this episode never needed the stairs. The reachable bed
 is 7.89 m away on the starting floor, and the agent spent 246 of 500 steps
 trying to climb to a storey it did not need.
 
+### S43 — the stair region was painted at max_depth, not at its own range
+
+The purple stair region on the debug maps sat along the right bearing at the
+wrong distance. S41 had blamed pitch routing; that was wrong. Synthetic geometry
+-- a fronto-parallel wall at a known range with a known patch marked as stairs
+-- pins it exactly:
+
+| camera pose | centroid error before | after |
+|---|---|---|
+| level, centre patch | 2.00 m | 0.004 m |
+| level, off-centre patch | 2.30 m | 0.004 m |
+| translated + rotated 90 deg | 2.00 m | 0.004 m |
+| pitched down 30 deg | 1.75 m | 0.004 m |
+
+A 3.0 m staircase was painted at 5.0 m; a 2.0 m one, also at 5.0 m. The
+displacement was radial and scaled as `max_depth / true_depth`.
+
+**Cause** (`obstacle_map.py:519-540`):
+
+```python
+fusion_stair_mask = stair_mask & stair_map        # uint8 & bool -> uint8
+stair_depth = np.full_like(depth, max_depth)
+stair_depth[fusion_stair_mask] = scaled_depth[fusion_stair_mask]
+```
+
+`stair_mask` arrives as uint8 here -- ASCENT's comes from GroundingDINO as bool
+-- and `uint8 & bool` promotes to uint8, which turns that assignment into
+INTEGER ROW indexing rather than boolean masking: rows 0-1 are clobbered and
+every stair pixel keeps `max_depth`. `np.where` inside `get_point_cloud` treats
+uint8 as nonzero, so the pixel SELECTION was right the whole time and only the
+range was wrong. That is why it read as a calibration shift rather than as
+garbage, and why the agent still climbed sometimes: the bearing was correct, so
+walking at it eventually arrived.
+
+The down-stair map was never affected -- it comes from the pitch-independent
+inverted-depth path -- which is exactly the 0.14 m vs 1.54 m accuracy gap S41
+measured and misattributed.
+
+**Measured on the 10-episode viz split** (`outputs/s48_viz_fixed` against
+`outputs/s44_viz`, same episodes, same config apart from the fix):
+
+| | pre-fix | post-fix |
+|---|---|---|
+| SR | 6/10 | 6/10 |
+| climbs attempted | 16 | **11** |
+| climbs completed | 1 | **4** |
+| floor switches | 1 | **4** |
+| conversion | 6% | **36%** |
+
+And on `mL8ThkuaVTM:2`, where the painted centroid can be compared against where
+the agent actually changed height:
+
+| | pre-fix | post-fix |
+|---|---|---|
+| up-stair centroid error | 1.54 m | 0.63 m |
+| up-stair centroid **wander** | 7.9 x 4.4 m | **0.3 x 0.2 m** |
+| episode length | 418 steps | **196 steps** (SPL 0.31 -> 0.58) |
+
+The wander is the number that matters: a staircase does not move, and before the
+fix its estimate swept an 8 x 4 m box as the agent walked. Cross-floor episodes
+finish roughly twice as fast (`p53SfW6mjZe:0` 209 -> 110 steps, SPL 0.28 ->
+0.55); the four same-floor episodes are bit-identical, as they should be.
+
+Three regression tests: painted at true range, uint8 and bool masks agreeing,
+and a 2 m and a 3.5 m wall landing in different places -- the specific signature
+of the old bug.
+
+**This invalidates the stair numbers in S41 and the in-flight full-split run**
+(`outputs/s47_full_v1`), both of which ran with the defect.
+
+### S44 — down-stairs: the detector was fine, the direction preference was not
+
+A strict descent split (`configs/eval/downstairs5.yaml` -- every view-point of
+every goal instance more than a metre BELOW the start, so the episode cannot be
+solved by climbing) exposed a clean failure:
+
+**Before: 148 climb steps across the split, every one an ascent.** Detection was
+not the problem -- the down-stair map was often LARGER than the up map (1257 px
+vs 690; 1219 vs 537) and a down frontier was published on most steps.
+
+Three causes, all in the port rather than in ASCENT:
+
+1. **The camera never tilted** (pitch 0.0 on every step of all five episodes).
+   ASCENT's direction disambiguation IS the pitch: `update_map` routes fused
+   stair pixels by `agent_pitch_angle >= 0`, so at level pitch the fused writer
+   and the drop-off writer both fire on the same pixels and one staircase is
+   filed as both up and down.
+2. **`_maybe_start_climb` preferred up unconditionally**, returning on the first
+   viable direction. With the up map essentially never empty at level pitch,
+   direction 2 was unreachable in practice.
+3. **`_look_for_downstair` was not ported.** The map raises
+   `_look_for_downstair_flag` when it holds down-stair pixels that never grew
+   into a frontier (`obstacle_map.py:737-739`) and nothing read it.
+
+**Implemented:** the probe (`ascent_policy.py:623-658`), camera levelling when
+not on stairs (`:556-563` -- without it a single probe leaves the camera down
+and relabels every later staircase), and a direction tie-break using ASCENT's
+own image-space discriminator, `check_stairs_in_upper_50_percent`
+(`ascent/utils.py:163`): treads you must climb project into the top half of the
+frame, treads you must descend do not. Up-first is kept whenever only one
+direction is available.
+
+**Measured** (`outputs/s50_down_strict` -> `outputs/s51_down_fixed`, same 5
+episodes, same config apart from these three changes):
+
+| | before | after |
+|---|---|---|
+| SR | 1/5 | **2/5** |
+| UP climb steps | 148 | 73 |
+| DOWN climb steps | **0** | **67** |
+| probe steps | 0 | 6 |
+| steps with the camera tilted | 0 | 23 |
+
+The decisive episode is `qyAac8rV8Zk:62`, whose goal is 1.52 m below the start:
+
+| | before | after |
+|---|---|---|
+| outcome | fail, 500 steps | **success, 102 steps** |
+| net height change | **+1.50 m** | **-1.70 m** |
+| distance to goal | 11.87 m | 0.03 m |
+| climb steps | 75 up, 0 down | 0 up, 18 down |
+
+It was climbing the wrong way, completing the ascent, and timing out on the
+wrong storey. Now it descends.
+
+**Not uniformly better, and worth recording as such.** `q3zU7Yy5E5s:96` gained
+49 down-climb steps and got WORSE on time (392 -> 500 steps, a timeout), though
+it ends closer (dtg 12.98 -> 11.00). `XB4GS9ShBRE:43` improved slightly
+(249 -> 220 steps, dtg 11.44 -> 11.32) and still fails. `6s7QHgap2fW:50` is
+untouched by any of this: it stops after 35 steps on a false-positive commit
+16.4 m from the goal, which is the S13 commit-gate failure, not a stair one.
+
+n=5 measures nothing on its own; the mechanism counters (148/0 -> 73/67) are
+what this run establishes, not the SR.
+
+### S45 — the down-stair region was placed by what is visible THROUGH the hole
+
+S43 fixed the up-stair range. The down-stair region was still displaced, and for
+a completely different reason: it is not written by the fused detector at all but
+by the vendored inverted-depth trick (`obstacle_map.py:561-573`), which mirrors
+depth about `(max+min)/2`, keeps rays whose true range exceeds 3.5 m, and paints
+whatever lands below the floor plane **at the mirrored range**.
+
+Synthetic geometry -- a floor that stops at a known distance, with the lower
+floor visible 3.8 m away through the hole:
+
+| true lip | painted at (old) |
+|---|---|
+| 1.0 m | 1.70 m |
+| 1.5 m | 1.70 m |
+| 2.0 m | nothing |
+| 2.5 m | nothing |
+| 3.0 m | nothing |
+
+1.70 m is `5.5 - 3.8`: the position was set by the range of the surface seen
+THROUGH the hole, not by where the hole is. Two different lips landed in the same
+cell, and anything at 2 m or beyond was invisible -- the below-ground test can
+only fire in a narrow band of ray angles (true range 3.5-4.1 m, bottom rows of
+the frame). ASCENT's own comment concedes the trick is weak for short flights.
+
+**Replaced with the geometric test.** Every pixel is a ray with a known
+direction; a downward ray must meet the floor plane at a known forward distance;
+if the measured depth runs half a metre past that, the floor is missing along
+that ray, and the lip is where it should have been. Measured on the same
+geometry, the marked region now begins at the lip:
+
+| true lip | marked from | on an unbroken floor | tilted 30 deg down |
+|---|---|---|---|
+| 1.5 m | 1.50 m | nothing | — |
+| 2.0 m | 2.00 m | nothing | 2.00 m |
+| 2.5 m | 2.50 m | nothing | — |
+| 3.0 m | 3.00 m | nothing | — |
+
+One guard is load-bearing: a return at the sensor's far clip is "nothing came
+back", not "the floor is missing". Without it every near-horizon ray in a room
+wider than `max_depth` reads as a drop-off -- the first cut of this change grew
+the down-stair map from ~1.2k cells to ~21k, i.e. the whole room, and the agent
+chased it (`qyAac8rV8Zk:62` regressed from success to a 6 m miss). With the
+guard the map stays at hundreds to a few thousand cells.
+
+**Measured on the strict descent split** (5 episodes; n=5 measures nothing on
+its own, the mechanism counters do):
+
+| | SR | UP / DOWN climb steps | total steps |
+|---|---|---|---|
+| S44 baseline | 1/5 | 148 / 0 | 1249 |
+| + direction preference (S44) | 2/5 | 73 / 67 | 930 |
+| **+ lip fix** | **2/5** | 73 / 53 | **682** |
+
+SR does not move beyond what the direction preference already bought, but the
+split finishes in **45% fewer steps** than the baseline, and the two episodes
+that were merely slow get much faster: `XB4GS9ShBRE:43` 249 -> 123 steps,
+`q3zU7Yy5E5s:96` 392 -> 338. Against S44's own numbers `q3zU7Yy5E5s:96` ends
+farther out (11.00 -> 15.98 m) while taking fewer steps, so this is not a
+uniform win either.
+
+Known limitation, unchanged: a stairwell whose visible return is beyond
+`max_depth` still cannot be detected by this path.
+
+### S46 — the drop-off marking filled the whole void, not the edge
+
+S45 moved the down-stair marking from a mirrored depth to the geometric
+missing-floor test. It put the near edge in exactly the right place, and then
+kept going: every ray past the lip also misses the floor, so the marked region
+was the entire VISIBLE VOID -- on synthetic geometry a band from the lip out to
+3.30 m, and in episodes a blob averaging 2296 cells (5.7 m^2) and peaking at
+8808 (22 m^2), spilling across the lower floor and out through whatever the
+stairwell overlooks.
+
+That matters beyond tidiness: the stair frontier is the centroid of the largest
+component, so a void-shaped region aims the agent at the middle of the hole
+rather than at the lip, and `robot_on_stairs` -- a footprint test against the
+same map -- only fires once the agent is over the drop.
+
+**Fix:** mark one point per image column, the NEAREST missing-floor sample along
+that bearing, and only for columns with a real run of missing pixels (8) rather
+than a single noisy one. That is the lip, and it cannot spread into the void.
+
+| true lip | marked band (before) | marked band (after) |
+|---|---|---|
+| 1.5 m | 1.50 .. 3.30 m | **1.50 .. 1.50 m** |
+| 2.0 m | 2.00 .. 3.30 m | **2.00 .. 2.00 m** |
+| 2.5 m | 2.50 .. 3.30 m | **2.50 .. 2.50 m** |
+| 3.0 m | 3.00 .. 3.30 m | **3.00 .. 3.00 m** |
+
+Still nothing on an unbroken floor, still pitch-invariant, and the per-frame
+cost drops from thousands of points to at most one per column.
+
+**Measured on the 10-episode strict descent split:**
+
+| | SR | UP / DOWN climb steps | mean down-stair cells |
+|---|---|---|---|
+| whole void (S45) | 3/10 | 0 / 194 | 2296 |
+| **lip only** | **4/10** | 0 / **309** | **1273** |
+
+`q3zU7Yy5E5s:9` flips to a success (dtg 12.82 -> 0.06 m), and `XB4GS9ShBRE:13`
+gets from 11.40 m to **4.90 m** of its goal while still failing. Total steps rise
+1377 -> 1768, which is the right direction: episodes that used to stop early on
+the starting floor now go down.
+
+The residual cells are not bleed. A one-pixel lip curve is thickened by
+ASCENT's own `MORPH_CLOSE` with the agent-radius kernel (`obstacle_map.py:673`),
+which is what makes the lip wide enough to stand on, and the curve accumulates
+as the agent moves and sees more of the edge.
+
+### S47 — the same-floor gap is one failure, and it is not navigation
+
+`s47_full_v1` (2000 episodes, full v1 val, sensor-only, pre-stair-fixes) scored
+**52.15% SR / 0.270 SPL**, split **62.2% same-floor (n=1589)** and 13.4%
+cross-floor (n=411). ASCENT reports **72.6% same-floor** on the same split, so
+the same-floor gap is 10.4 points -- about 165 episodes.
+
+**Every one of those 165 could come from a single failure mode.** Taxonomy of
+the 601 same-floor failures:
+
+| | n | share |
+|---|---|---|
+| committed, stopped, and was wrong | **509** | **85%** |
+| ran out of steps | 92 | 15% |
+| ended some other way | 0 | 0% |
+
+Of the 509 stops, only **40** were near misses within 1 m. **373 were more than
+3 m from any instance of the category** -- median **6.51 m**, p75 9.76 m, p90
+13.06 m. HM3D scores success against a view-point of ANY instance, so ending
+6.5 m out does not mean a bad approach; it means the thing the agent walked to
+was not an instance at all.
+
+**It is a commit failure, not a navigation failure**, and three measurements say
+so:
+
+* Far-commits happen EARLY. First `approach` at median step **22**, against 45
+  for successes; 47% commit inside the first 20 steps against 27%.
+* They are cheap in time and fatal anyway. Median 11 steps walking to the false
+  positive, median episode length **69 steps of a 500-step budget**. The agent
+  is not running out of anything -- it stops, and in ObjectNav STOP is
+  irreversible.
+* The VLM verifier does not separate them. It rejects at least once in **46% of
+  successes** and **37% of far-commits** -- pointing the wrong way, with
+  ~2 calls per episode either way. As a gate on commit correctness it is noise.
+
+**Arithmetic.** Far-commits are 23.5% of all same-floor episodes. Converting 44%
+of them into episodes that keep exploring and eventually succeed closes the
+entire 10.4-point gap; converting half would put same-floor at 73.9%, just past
+ASCENT's 72.6%.
+
+**What is missing is the commit gate.** OSG's `NavAgent` requires a track to
+clear `verification.min_score` 0.70, `min_obs` 2, `min_bbox_px` 1200 and
+`min_evidence` 0.5 before it will walk to it (`object_layer.py:367`, called from
+`nav_agent.py:2145-2151`). All four are SET in this preset and `ascentnav` reads
+none of them: it writes any detection above the detector's own `conf: 0.3` into
+the object cloud and treats a cloud as a goal. S13 measured the `min_score`
+raise alone at net +3 episodes on 100 navmesh episodes, for exactly this failure
+-- there, 30 far-commit failures reached what they aimed at (median 0.43 m)
+while sitting a median 7.48 m from any real goal.
+
+This run cannot say WHICH threshold would have blocked which commit:
+`cand_best_score` and `cand_n_obs` come from OSG's object layer, and
+`ascentnav`'s view of it returns no tracks, so both are null for all 2000
+episodes. Instrumenting the commit (score, observation count, bbox at commit)
+is the prerequisite for calibrating the gate rather than guessing it.
+
+### S48 — the commit gate: prediction met, SR null, and the reason is instructive
+
+S47 predicted the same-floor gap was false-positive commits. The gate
+(`agent.commit_gate`: detection score >= 0.70, bbox >= 1200 px, and 2 accepted
+sightings before a cloud counts as a goal) was pre-registered with a falsifiable
+prediction: *far-commits fall by at least a third, and SR rises; if far-commits
+fall while SR does not, the blocked episodes were failing for another reason and
+the gate is a null.*
+
+**100 paired episodes on `scenes20_ep0to4`, one fingerprint field apart:**
+
+| | SR | SPL | steps | timeouts | same | cross | far-commits |
+|---|---|---|---|---|---|---|---|
+| `s56_fixed100` (control) | 56.0% | 0.285 | 199 | 17 | 65.4% | 22.7% | 22 |
+| `s57_gate100` (gate) | 54.0% | 0.258 | 270 | **34** | 65.4% | 13.6% | **8** |
+
+Far-commits fell **22 -> 8 (-64%)**, well past the pre-registered third. SR did
+not follow: 9 wins, 11 losses, **net -2, McNemar p = 0.82**. By the
+pre-registration this is a **null**, and the mechanism says why.
+
+**Following the 22 episodes that far-committed without the gate:**
+
+| with the gate they | n |
+|---|---|
+| became a success | **7** |
+| ran out of steps | **11** |
+| far-committed anyway | 4 |
+
+The gate does exactly what it was built to do -- 7 of the 22 recover -- and then
+the same conservatism costs 11 episodes that used to succeed (5 of them
+timeouts). Mean steps 199 -> 270 and timeouts 17 -> 34: withholding a goal until
+a second sighting at 0.70 leaves the agent exploring, and the budget runs out.
+
+**The lesson is not "commits are fine".** Blocking a bad commit does not produce
+a good one: half the blocked episodes simply never found the target. The failure
+S47 measured is real, but it is not one bad decision away from a success -- the
+agent that commits at step 22 to the wrong sofa mostly has not seen the right
+one either.
+
+**Calibration, not abandonment, is the next move.** These thresholds are OSG's,
+tuned for `NavAgent`, whose track layer accumulates evidence across frames with
+a different detector pipeline. Ported wholesale onto an agent that has no track
+layer they are too strict. The obvious cheaper variants -- `min_obs` alone with
+no score raise, or `min_score` at 0.5 -- are one flag each, and the counters
+needed to choose between them (how many blocks were score failures vs bbox
+failures) are not yet split apart.
+
+#### S48b — the stair fixes at n=100: mechanism yes, SR no
+
+The same control run is also the first n=100 measurement of S43-S46 (stair
+projection, direction preference, `_look_for_downstair`, lip marking), against
+`s41_stairs` which predates all four:
+
+| | SR | climb attempts | completed | conversion | floor switches |
+|---|---|---|---|---|---|
+| `s41_stairs` | 58.0% | 37 | 4 | 11% | 4 |
+| `s56_fixed100` | 56.0% | 53 | **16** | **30%** | **16** |
+
+Climb conversion nearly triples and floor switches quadruple -- the fixes do
+what the synthetic geometry said they would. SR moves -2 (6 wins, 8 losses,
+p = 0.79): a null. The cross-floor cell is 22 episodes here, so it cannot
+resolve a change of this size; the full-split re-run is what would.
+
+### S49 — the agent walks past the target, and the detector is why
+
+S48 left a puzzle: blocking bad commits recovered 7 episodes and cost 11. S49
+asks what those episodes were doing instead, using the 2000-episode run plus the
+dataset's own goal view-points.
+
+**Most same-floor failures reach the goal region and leave.** Taking each
+episode's logged explore positions and measuring the closest approach to any
+goal view-point:
+
+| | successes | failures |
+|---|---|---|
+| p25 | 0.04 m | **0.18 m** |
+| p50 | 0.61 m | 1.86 m |
+| never within 3 m | 12% | 37% |
+
+A quarter of same-floor FAILURES pass within 18 cm of a view-point of the
+target. And of the 318 failures whose explore track came within 3 m, **265
+passed the goal BEFORE committing elsewhere**, a median 27 steps before.
+
+**Why: the detector fires on about one in nine of the frames where it should.**
+16 of those episodes were re-run with per-step pose and detection logging, and
+scored against the view-points offline:
+
+| criterion | steps with a goal view-point in frame | detector fired | rate | rate when NOT in frame |
+|---|---|---|---|---|
+| < 5 m, full FOV | 2694 | 284 | **10.5%** | 1.2% |
+| < 3 m, central 40 deg | 2013 | 237 | **11.8%** | 3.3% |
+
+The control is what makes this readable: 3-9x more firing when a view-point is
+in frame than when none is, so the proxy carries real signal -- and the absolute
+rate is ~12%. A view-point is a standing position rather than the object itself,
+so occlusion and objects behind the agent mean 12% is a LOWER bound on true
+recall; it is not a measurement of YOLOE's accuracy on a clean crop. It is a
+measurement of how often this pipeline notices the target while walking past it.
+
+**And that calibrates S48's null exactly.** Scoring those detections by whether
+a view-point was in frame:
+
+| `min_score` | keeps of likely-TRUE | keeps of likely-FALSE |
+|---|---|---|
+| 0.50 | 69.2% | 45.0% |
+| **0.60** | **49.4%** | **13.3%** |
+| 0.70 (S48) | **32.5%** | 5.0% |
+
+At 0.70 the gate throws away two thirds of the real sightings. Combined with
+~12% per-step recall and `min_obs` = 2, a correct commit needs roughly
+0.12 x 0.325 = 4% per step, twice -- which is why 11 previously-successful
+episodes turned into timeouts. The gate was not wrong in kind, it was set for a
+detector with better recall than this one.
+
+**Consequence for the gap.** S15 measured YOLOE-11s vs 11l as worth nothing and
+concluded "the detector is worth zero". That conclusion was about FALSE
+positives -- far-commits went 30 -> 32 across a 2.5x larger model -- and it does
+not cover recall on the true object, which nothing had measured until now. The
+two findings are compatible: a bigger YOLOE does not stop the agent walking to
+the wrong sofa, and the reason the agent needs a sofa at all is that it did not
+see the right one.
+
+Next arm: `+experiment=ascentnav_gate60`, the same gate at the knee of the
+curve, pre-registered in that file.
+
+### S50 — the agent is facing the wrong way, and looking around does not pay
+
+S49 measured ~12% detection recall while traversing. S50 asks whether that is
+the detector's fault, and the answer is no.
+
+**Three detector configurations, same measurement** (steps with a goal
+view-point within 3 m and in the central 40 degrees, on the 16-episode
+diagnostic split):
+
+| detector | recall | control (nothing in frame) |
+|---|---|---|
+| YOLOE-11s @ 512, 42-class vocabulary | **11.8%** | 3.3% |
+| YOLOE-11l @ 640, 42-class vocabulary | **8.4%** | 1.5% |
+| YOLOE-11s @ 512, target-only prompt | **11.8%** | 4.0% |
+
+The larger model is WORSE -- it fires less on everything -- and prompting it with
+the target alone changes nothing. That closes the detector as a lever, and it
+does so for the cost of two 16-episode diagnostics rather than two 100-episode
+A/Bs.
+
+**The detector is fine when it is actually looking.** In the last 15 steps of
+successful episodes, with the object close, centred and being approached, recall
+is **66%** (59 of 89 in-frame steps). The geometry proxy is therefore sound --
+66% against 14% is not a measurement artefact -- and the low traverse number is
+about FRAMING.
+
+**Decomposing the 2809 steps spent within 3 m of the target object:**
+
+| | share |
+|---|---|
+| object OUTSIDE the 79-degree FOV -- facing the wrong way | **62%** |
+| in frame, not detected | 33% |
+| detected | 5% |
+
+A 79-degree camera bolted to the direction of travel sees a fifth of a room, and
+after the opening scan nothing makes the agent look around again.
+
+**So: scan on arriving at a frontier** (`agent.scan_on_arrival: 12`, at most
+once per 1.5 m cell -- ASCENT's own `_initialize` scan applied at every vantage
+point instead of only on entering a floor). Pre-registered: SR above the
+control's 56.0%.
+
+| | SR | SPL | steps | timeouts | same | cross |
+|---|---|---|---|---|---|---|
+| `s56_fixed100` control | 56.0% | 0.285 | 199 | 17 | 65.4% | 22.7% |
+| `s63_scan100` | 54.0% | 0.284 | 190 | **11** | 62.8% | 22.7% |
+
+4 wins, 6 losses, net -2, p = 0.754. **Prediction NOT met -- a null.** 288 scans
+consumed 3297 steps, **17% of every step taken**, and bought nothing:
+`steps_to_first_candidate` got WORSE (median 54 -> 63). The looking is paid for
+out of forward progress at par, exactly the failure mode the preset named.
+
+#### Four nulls in a row, and what that actually means
+
+| change | mechanism moved? | SR effect | p |
+|---|---|---|---|
+| stair fixes S43-S46 | yes: climb conversion 11% -> 30% | -2 | 0.79 |
+| commit gate @ 0.70 | yes: far-commits 22 -> 8 | -2 | 0.82 |
+| commit gate @ 0.60 | yes: far-commits 22 -> 15 | +0 | 1.00 |
+| scan on arrival | yes: 288 scans, 17% of steps | -2 | 0.75 |
+
+Every mechanism does its job locally and none moves SR. Before reading that as
+"none of this matters", look at what these A/Bs can resolve. They produce 10-20
+discordant pairs; with 10 discordant pairs the smallest detectable effect at
+p < 0.05 is **9 wins against 1 loss, a net of +8 episodes**. An intervention
+worth a genuine +2 or +3 is INVISIBLE at n=100 -- it cannot be distinguished
+from these results no matter how many times it is run.
+
+The gap to ASCENT is 11 points at n=2000. The mechanisms above plausibly carry
+1-3 points each. **The 100-episode split is the wrong instrument for them**, and
+running a fifth arm on it would be spending an hour to learn nothing again. The
+next measurement that can actually settle any of this is the full 2000-episode
+split against `outputs/s47_full_v1` (52.15%), which has 20x the paired power.
+
 ### S26 — ASCENT's dense approach re-check
 
 S23/S25 closed the mover, the aim point and the commit gate as explanations for

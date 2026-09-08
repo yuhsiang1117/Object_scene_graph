@@ -1,0 +1,33 @@
+# @package _global_
+#
+# S49: the commit gate, calibrated.
+#
+#   python scripts/run_eval.py +experiment=ascentnav_gate60 eval=scenes20_ep0to4
+#
+# S48 ran the gate at OSG's own `min_score` of 0.70 and it was a null: far
+# commits fell 22 -> 8, SR fell 56.0% -> 54.0%, timeouts doubled. S49 measured
+# why. Scoring 297 detections by whether a goal view-point was in frame at the
+# time:
+#
+#   min_score   keeps of likely-TRUE   keeps of likely-FALSE
+#     0.50            69.2%                  45.0%
+#     0.60            49.4%                  13.3%
+#     0.70            32.5%                   5.0%
+#
+# At 0.70 the gate discards two thirds of the real sightings. With per-step
+# recall on the true object already at ~12%, and `min_obs` = 2 demanding two
+# ACCEPTED sightings, a correct commit needs about 0.12 x 0.325 = 4% per step --
+# which is why 11 previously-successful episodes timed out.
+#
+# 0.60 is the knee: half the true sightings kept against an eighth of the false.
+#
+# Falsifiable prediction: SR at or above the no-gate arm's 56.0% AND far-commits
+# below 15 (they are 22 without the gate, 8 at 0.70). If SR still does not beat
+# the no-gate arm, the gate family is a dead end at this detector's recall and
+# the lever is recall itself.
+
+defaults:
+  - ascentnav_gate
+
+verification:
+  min_score: 0.60

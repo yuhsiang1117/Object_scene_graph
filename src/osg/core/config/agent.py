@@ -203,6 +203,18 @@ class AgentConfig:
     frontier_stick_steps: int = 15
     frontier_stick_rule: str = "displacement"  # displacement | closing
     escape_window: int = 0
+    # S47/S48: refuse to walk to a detection until it clears the evidence bar
+    # `object_layer.candidates` applies (verification.min_score / min_obs /
+    # min_bbox_px). `ascentnav` otherwise writes every detection above the
+    # detector's own conf into its object cloud and treats a cloud as a goal.
+    # MEASURED NULL on SR at both 0.70 and 0.60 (S48, S49) -- far-commits fall
+    # 22 -> 8 and SR does not move -- so it stays off; the flag is kept because
+    # the mechanism is real and n=100 cannot resolve a 2-3 episode effect.
+    commit_gate: bool = False
+    # S50: turn in place on ARRIVING at a frontier. 62% of the steps the agent
+    # spends within 3 m of the target object have it outside the FOV. MEASURED
+    # NULL: 288 scans cost 17% of all steps and SR moved -2 (p = 0.75).
+    scan_on_arrival: int = 0
     terminal_requires_detection: bool = True
     frontier_reachability_gate: bool = True
     check_candidates_all_states: bool = False

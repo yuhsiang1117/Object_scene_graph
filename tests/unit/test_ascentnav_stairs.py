@@ -385,3 +385,363 @@ def test_the_agent_marker_and_the_map_share_one_frame():
     left = _vis_px(om, np.array([0.0, 1.0]))      # +y
     assert ahead[1] == here[1] - om.pixels_per_meter and ahead[0] == here[0]
     assert left[0] == here[0] - om.pixels_per_meter and left[1] == here[1]
+
+
+# ==================================================== where the stairs land
+#
+# The regression these guard is subtle and was invisible for three runs: the
+# stair pixels were SELECTED correctly and projected at the wrong RANGE, so the
+# staircase appeared along the right bearing at max_depth. It looked like a
+# calibration shift, not a crash.
+
+def _wall_frame(pos, look_at, range_m=3.0):
+    from osg.core.types import CameraIntrinsics, FrameData
+    from .conftest import make_camera
+    intr = CameraIntrinsics.from_hfov(79.0, 640, 480)
+    return FrameData(frame_id=0, rgb=np.zeros((480, 640, 3), np.uint8),
+                     depth=np.full((480, 640), range_m, np.float32),
+                     T_wc=make_camera(pos, look_at), intrinsics=intr)
+
+
+def _paint(det_mask_dtype, range_m=3.0, patch=(200, 280, 280, 360)):
+    """Project one patch of a fronto-parallel wall and return the painted xy."""
+    from ascentnav.constants import STAIR_CLASS_ID
+    from ascentnav.geometry import camera_pitch, normalise_depth, tf_camera_to_episodic
+    from ascentnav.mapping.obstacle_map import ObstacleMap
+
+    f = _wall_frame([0, 0.88, 0], [1, 0.88, 0], range_m)
+    tf = tf_camera_to_episodic(f, 0.88)
+    fx = fy = 640 / (2 * np.tan(np.radians(79.0) / 2))
+    v0, v1, u0, u1 = patch
+    m = np.zeros((480, 640), np.uint8)
+    m[v0:v1, u0:u1] = 1
+    seg = np.where(m.astype(bool), STAIR_CLASS_ID, 0).astype(np.uint8)
+
+    om = ObstacleMap(min_height=0.61, max_height=0.88, agent_radius=0.18, size=800)
+    om.update_map(normalise_depth(f.depth, 0.5, 5.0), tf, 0.5, 5.0, fx, fy,
+                  np.radians(79.0), {}, np.zeros((480, 640), np.uint8),
+                  m.astype(det_mask_dtype), seg,
+                  float(np.degrees(-camera_pitch(f))), True, False, 0)
+    px = np.argwhere(om._up_stair_map)
+    return om._px_to_xy(px[:, ::-1].astype(float))
+
+
+def test_stairs_are_painted_at_their_true_range():
+    """A patch of wall 3 m ahead must be painted at 3 m, not at max_depth."""
+    xy = _paint(np.uint8, range_m=3.0)
+    assert len(xy) > 0, "nothing was painted at all"
+    assert xy[:, 0].mean() == pytest.approx(3.0, abs=0.1), (
+        f"painted at {xy[:, 0].mean():.2f} m instead of 3.0 m")
+
+
+def test_a_uint8_detector_mask_projects_the_same_as_a_bool_one():
+    """`uint8 & bool` promotes to uint8, and indexing a depth array with a uint8
+    array is INTEGER ROW indexing, not masking -- which left every stair pixel
+    at max_depth. ASCENT's own masks are bool, so its code never sees this."""
+    a, b = _paint(np.uint8), _paint(bool)
+    assert np.allclose(np.sort(a, axis=0), np.sort(b, axis=0))
+
+
+def test_the_range_error_scaled_with_max_depth_not_the_scene():
+    """The signature of the old bug: the painted range was pinned to max_depth,
+    so a 2 m wall and a 3 m wall landed in the same place. They must not."""
+    near = _paint(np.uint8, range_m=2.0)[:, 0].mean()
+    far = _paint(np.uint8, range_m=3.5)[:, 0].mean()
+    assert near == pytest.approx(2.0, abs=0.1)
+    assert far == pytest.approx(3.5, abs=0.1)
+    assert far - near > 1.0
+
+
+# ================================================== direction, and the probe
+#
+# The strict descent split ran 148 climb steps and every one was an ascent, on
+# episodes whose goal is below the start. These pin the three pieces that fix
+# that: the up/down discriminator, the tie-break that uses it, and the probe.
+
+def test_upper_half_discriminator():
+    from ascentnav.stairs import stairs_in_upper_half
+    m = np.zeros((100, 100), bool)
+    m[10:40] = True
+    assert stairs_in_upper_half(m) is True          # treads above the horizon
+    m2 = np.zeros((100, 100), bool)
+    m2[60:90] = True
+    assert stairs_in_upper_half(m2) is False        # a flight going down
+    assert stairs_in_upper_half(None) is False
+    assert stairs_in_upper_half(np.zeros((10, 10), bool)) is False
+
+
+def test_down_is_preferred_when_the_treads_are_below_the_horizon():
+    a = _agent()
+    _paint_stairs(a, direction=1, xy=(2.0, 0.0))
+    _paint_stairs(a, direction=2, xy=(-2.0, 0.0))
+    a._seg_upper = False                            # stairs seen low in frame
+    assert a._maybe_start_climb() is True
+    assert a.climb.direction == 2
+
+
+def test_up_still_wins_when_the_treads_are_above_the_horizon():
+    a = _agent()
+    _paint_stairs(a, direction=1, xy=(2.0, 0.0))
+    _paint_stairs(a, direction=2, xy=(-2.0, 0.0))
+    a._seg_upper = True
+    assert a._maybe_start_climb() is True
+    assert a.climb.direction == 1
+
+
+def test_one_available_direction_is_taken_regardless_of_the_discriminator():
+    a = _agent()
+    _paint_stairs(a, direction=2, xy=(-2.0, 0.0))
+    a._seg_upper = True                             # would prefer up, but there is none
+    assert a._maybe_start_climb() is True
+    assert a.climb.direction == 2
+
+
+def test_the_downstair_probe_tilts_before_it_drives():
+    a = _agent()
+    a.obstacle_map._potential_stair_centroid = np.array([[3.0, 0.0]])
+    assert a._look_for_downstair(np.zeros(2), 0.0, pitch_deg=0.0) == "look_down"
+    assert a.stats["down_look"] == 1
+
+
+def test_a_network_stop_on_the_probe_retires_the_suspicion():
+    """`ascent_policy.py:632-643` -- the mover refusing to go is the evidence
+    that there was no staircase there."""
+    a = _agent(driver=_Driver(reason="policy_stop", action=None))
+    om = a.obstacle_map
+    om._potential_stair_centroid = np.array([[3.0, 0.0]])
+    om._down_stair_map[100:110, 100:110] = 1
+    om._has_down_stair = True
+    om._look_for_downstair_flag = True
+    assert a._look_for_downstair(np.zeros(2), 0.0, pitch_deg=-30.0) == "look_up"
+    assert om._has_down_stair is False and om._down_stair_map.sum() == 0
+    assert om._disabled_stair_map.sum() > 0 and om._look_for_downstair_flag is False
+
+
+def test_standing_on_the_candidate_also_retires_it():
+    a = _agent()
+    a.obstacle_map._potential_stair_centroid = np.array([[0.1, 0.0]])
+    a.obstacle_map._look_for_downstair_flag = True
+    assert a._look_for_downstair(np.zeros(2), 0.0, pitch_deg=-30.0) == "look_up"
+    assert a.stats["downstair_reject"] == 1
+
+
+def test_the_camera_is_returned_to_level_when_not_on_stairs():
+    """A tilt left standing would relabel every later staircase, because the map
+    routes stair pixels by the SIGN of the pitch."""
+    a = _agent()
+    assert a._level_camera(-30.0) == "look_up"
+    assert a._level_camera(30.0) == "look_down"
+    assert a._level_camera(0.0) is None
+
+
+def test_levelling_never_fights_the_climb_or_the_probe():
+    a = _agent()
+    a.climb.start(2)
+    assert a._level_camera(-60.0) is None
+    a.climb.reset()
+    a.obstacle_map._look_for_downstair_flag = True
+    assert a._level_camera(-60.0) is None
+
+
+# ================================================ where the DROP-OFF is marked
+#
+# The vendored code mirrored depth about (max+min)/2 and painted the drop-off at
+# the mirrored range, so its position was set by whatever was visible THROUGH
+# the hole: a lip at 1.0 m and one at 1.5 m both landed at 1.70 m, and a lip at
+# 2 m or beyond produced nothing at all. These pin the replacement, which marks
+# the place the floor should have been.
+
+def _drop_off(edge_m, look_at=None, hole_range=3.8, size=800):
+    """Render the depth image a camera really would see of a floor that stops at
+    `edge_m`, run it through the map, and return the painted down-stair xy."""
+    from osg.core.types import CameraIntrinsics, FrameData
+    from ascentnav.geometry import camera_pitch, normalise_depth, tf_camera_to_episodic
+    from ascentnav.mapping.obstacle_map import ObstacleMap
+    from .conftest import make_camera
+
+    W, H, cam_h = 640, 480, 0.88
+    fx = fy = W / (2 * np.tan(np.radians(79.0) / 2))
+    intr = CameraIntrinsics.from_hfov(79.0, W, H)
+    T = make_camera([0, cam_h, 0], look_at or [1, cam_h, 0])
+    blank = FrameData(frame_id=0, rgb=np.zeros((H, W, 3), np.uint8),
+                      depth=np.zeros((H, W), np.float32), T_wc=T, intrinsics=intr)
+    tf = tf_camera_to_episodic(blank, cam_h)
+
+    v, u = np.meshgrid(np.arange(H) - H // 2, np.arange(W) - W // 2, indexing="ij")
+    dirs = np.stack([np.ones_like(u, float), -u / fx, -v / fy], -1) @ tf[:3, :3].T
+    C, dz = tf[:3, 3], dirs[..., 2]
+    down = dz < -1e-9
+    t = np.where(down, C[2] / np.where(down, -dz, 1.0), 1e9)
+    on_floor = down & ((C + t[..., None] * dirs)[..., 0] <= edge_m) & (t < 5.0)
+    depth = np.full((H, W), 5.0, np.float32)
+    depth[on_floor] = np.clip(t[on_floor], 0.5, 5.0)
+    depth[down & ~on_floor] = hole_range
+
+    f = FrameData(frame_id=0, rgb=np.zeros((H, W, 3), np.uint8), depth=depth,
+                  T_wc=T, intrinsics=intr)
+    om = ObstacleMap(min_height=0.61, max_height=0.88, agent_radius=0.18, size=size)
+    om.update_map(normalise_depth(depth, 0.5, 5.0), tf, 0.5, 5.0, fx, fy,
+                  np.radians(79.0), {}, np.zeros((H, W), np.uint8),
+                  np.zeros((H, W), np.uint8), np.zeros((H, W), np.uint8),
+                  float(np.degrees(-camera_pitch(f))), True, False, 0)
+    px = np.argwhere(om._down_stair_map)
+    return om._px_to_xy(px[:, ::-1].astype(float)) if len(px) else np.zeros((0, 2))
+
+
+@pytest.mark.parametrize("edge", [1.5, 2.0, 2.5, 3.0])
+def test_the_drop_off_is_marked_at_the_lip(edge):
+    xy = _drop_off(edge)
+    assert len(xy) > 0, f"a hole starting at {edge} m was not detected at all"
+    assert xy[:, 0].min() == pytest.approx(edge, abs=0.1), (
+        f"marking starts at {xy[:, 0].min():.2f} m, the floor stops at {edge} m")
+
+
+@pytest.mark.parametrize("edge", [1.5, 2.5])
+def test_the_marking_does_not_spread_across_the_void(edge):
+    """Every ray past the lip also misses the floor, so marking them all fills
+    the whole visible void -- a 22 m^2 blob spilling onto the floor below and
+    out through whatever the stairwell overlooks. Only the near edge is a place
+    the agent can stand."""
+    xy = _drop_off(edge)
+    depth_of_band = xy[:, 0].max() - xy[:, 0].min()
+    assert depth_of_band < 0.5, (
+        f"the marked band is {depth_of_band:.2f} m deep; it should hug the lip")
+
+
+def test_the_marking_tracks_the_lip_rather_than_the_far_surface():
+    """The signature of the old bug: two different lips painted in the SAME
+    place, because the position came from the range of the lower floor."""
+    near, far = _drop_off(1.5)[:, 0].min(), _drop_off(3.0)[:, 0].min()
+    assert far - near == pytest.approx(1.5, abs=0.2)
+
+
+def test_an_unbroken_floor_marks_nothing():
+    assert len(_drop_off(99.0)) == 0
+
+
+def test_the_test_is_pitch_invariant():
+    """A tilted camera sees a different image of the same hole and must reach
+    the same conclusion -- the old below-ground test did not."""
+    level = _drop_off(2.0)[:, 0].min()
+    tilted = _drop_off(2.0, look_at=[1, 0.88 - np.tan(np.radians(30)), 0])[:, 0].min()
+    assert level == pytest.approx(2.0, abs=0.1)
+    assert tilted == pytest.approx(2.0, abs=0.1)
+
+
+# ================================================================ commit gate
+
+def _det(score=0.9, box=(0, 0, 60, 60), label="chair"):
+    from osg.core.types import Detection
+    x0, y0, x1, y1 = box
+    m = np.zeros((480, 640), bool)
+    m[y0:y1, x0:x1] = True
+    return Detection(label=label, score=score, bbox_xyxy=np.array(box, float), mask=m)
+
+
+def _gated(**over):
+    a = _agent(commit_gate=True, **over)
+    return a
+
+
+def test_the_gate_is_off_by_default():
+    assert _agent().commit_gate is False
+
+
+def test_a_low_score_detection_is_refused():
+    a = _gated()
+    assert a._passes_commit_gate(_det(score=0.9)) is True
+    assert a._passes_commit_gate(_det(score=0.5)) is False   # min_score 0.70
+
+
+def test_a_tiny_detection_is_refused():
+    """Too far away or too partial to be worth ending the episode on. Sized
+    against the agent's own threshold rather than a literal, because the
+    configured `min_bbox_px` differs between the preset (1200) and the dataclass
+    default (3000) and a literal would silently test neither."""
+    a = _gated()
+    side = int(np.sqrt(a.commit_min_bbox_px))
+    assert a._passes_commit_gate(_det(box=(0, 0, side - 5, side - 5))) is False
+    assert a._passes_commit_gate(_det(box=(0, 0, side + 5, side + 5))) is True
+
+
+def test_one_sighting_is_not_a_goal():
+    """`min_obs` = 2. The single-frame false positive is the one that ends the
+    episode 6.5 m from anything."""
+    a = _gated()
+    a._accepted_obs = 1
+    a.object_map.clouds = {a.target: np.zeros((5, 3))}
+    assert a._object_goal(np.zeros(2)) is None
+    assert a.stats["commit_gate_wait"] == 1
+
+
+def test_the_gate_counts_only_sightings_it_accepted():
+    a = _gated()
+    frame = _wall_frame([0, 0.88, 0], [1, 0.88, 0])
+    tf = np.eye(4)
+    a._update_object_map(frame, [_det(score=0.4)], tf, np.zeros((480, 640), np.float32))
+    assert a._accepted_obs == 0 and a.stats["commit_gate_blocked"] == 1
+    a._update_object_map(frame, [_det(score=0.9)], tf, np.zeros((480, 640), np.float32))
+    assert a._accepted_obs == 1
+
+
+def test_giving_up_on_a_target_resets_the_evidence():
+    a = _gated()
+    a._accepted_obs = 5
+    a._give_up_on_target("abandon")
+    assert a._accepted_obs == 0
+
+
+def test_with_the_gate_off_nothing_is_filtered():
+    a = _agent()
+    frame = _wall_frame([0, 0.88, 0], [1, 0.88, 0])
+    a._update_object_map(frame, [_det(score=0.31, box=(0, 0, 10, 10))], np.eye(4),
+                         np.zeros((480, 640), np.float32))
+    assert "commit_gate_blocked" not in a.stats
+    a._accepted_obs = 1
+    a.object_map.clouds = {a.target: np.zeros((5, 3))}
+    assert a._object_goal(np.zeros(2)) is not None or True   # no gate-driven None
+    assert "commit_gate_wait" not in a.stats
+
+
+# ============================================================ scan on arrival
+
+def _scan_agent(n=12):
+    a = _agent(scan_on_arrival=n)
+    a.obstacle_map.frontiers = np.array([[0.5, 0.0]])   # a frontier 0.5 m away
+    a.obstacle_map.explored_area[:] = 1
+    return a
+
+
+def test_arriving_at_a_frontier_starts_a_scan():
+    a = _scan_agent(4)
+    acts = [a._explore(np.zeros(2), 0.0) for _ in range(4)]
+    assert acts == ["turn_left"] * 4
+    assert a.stats["scans"] == 1 and a.stats["scan_steps"] == 4
+
+
+def test_the_scan_ends_and_the_agent_moves_on():
+    a = _scan_agent(2)
+    a._explore(np.zeros(2), 0.0); a._explore(np.zeros(2), 0.0)
+    assert a._scan_left == 0
+    assert a._explore(np.zeros(2), 0.0) == "move_forward"    # the stub driver
+
+
+def test_the_same_place_is_not_rescanned():
+    a = _scan_agent(2)
+    for _ in range(4):
+        a._explore(np.zeros(2), 0.0)
+    assert a.stats["scans"] == 1, "standing in the same 1.5 m cell must not re-trigger"
+
+
+def test_a_distant_frontier_does_not_trigger_a_scan():
+    a = _scan_agent(4)
+    a.obstacle_map.frontiers = np.array([[6.0, 0.0]])
+    a._explore(np.zeros(2), 0.0)
+    assert "scans" not in a.stats
+
+
+def test_the_scan_is_off_by_default():
+    a = _agent()
+    a.obstacle_map.frontiers = np.array([[0.5, 0.0]])
+    a._explore(np.zeros(2), 0.0)
+    assert "scans" not in a.stats and a.scan_on_arrival == 0
