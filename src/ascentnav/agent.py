@@ -388,6 +388,9 @@ class AscentNavAgent:
             "cent": int(self.climb.reached_centroid),
             "paused": self.climb.paused,
             "stair_f": f,
+            "ndet": len(self._last_dets),
+            "det": (round(max(d.score for d in self._last_dets), 2)
+                    if self._last_dets else 0.0),
             "pn_goal": (None if getattr(self, "_pn_goal", None) is None
                         else [round(float(v), 2) for v in self._pn_goal]),
             "pn_resets": int(getattr(self.pointnav, "n_resets", 0)) if self.pointnav else 0,

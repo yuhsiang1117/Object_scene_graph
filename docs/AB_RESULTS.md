@@ -3464,6 +3464,68 @@ what the synthetic geometry said they would. SR moves -2 (6 wins, 8 losses,
 p = 0.79): a null. The cross-floor cell is 22 episodes here, so it cannot
 resolve a change of this size; the full-split re-run is what would.
 
+### S49 — the agent walks past the target, and the detector is why
+
+S48 left a puzzle: blocking bad commits recovered 7 episodes and cost 11. S49
+asks what those episodes were doing instead, using the 2000-episode run plus the
+dataset's own goal view-points.
+
+**Most same-floor failures reach the goal region and leave.** Taking each
+episode's logged explore positions and measuring the closest approach to any
+goal view-point:
+
+| | successes | failures |
+|---|---|---|
+| p25 | 0.04 m | **0.18 m** |
+| p50 | 0.61 m | 1.86 m |
+| never within 3 m | 12% | 37% |
+
+A quarter of same-floor FAILURES pass within 18 cm of a view-point of the
+target. And of the 318 failures whose explore track came within 3 m, **265
+passed the goal BEFORE committing elsewhere**, a median 27 steps before.
+
+**Why: the detector fires on about one in nine of the frames where it should.**
+16 of those episodes were re-run with per-step pose and detection logging, and
+scored against the view-points offline:
+
+| criterion | steps with a goal view-point in frame | detector fired | rate | rate when NOT in frame |
+|---|---|---|---|---|
+| < 5 m, full FOV | 2694 | 284 | **10.5%** | 1.2% |
+| < 3 m, central 40 deg | 2013 | 237 | **11.8%** | 3.3% |
+
+The control is what makes this readable: 3-9x more firing when a view-point is
+in frame than when none is, so the proxy carries real signal -- and the absolute
+rate is ~12%. A view-point is a standing position rather than the object itself,
+so occlusion and objects behind the agent mean 12% is a LOWER bound on true
+recall; it is not a measurement of YOLOE's accuracy on a clean crop. It is a
+measurement of how often this pipeline notices the target while walking past it.
+
+**And that calibrates S48's null exactly.** Scoring those detections by whether
+a view-point was in frame:
+
+| `min_score` | keeps of likely-TRUE | keeps of likely-FALSE |
+|---|---|---|
+| 0.50 | 69.2% | 45.0% |
+| **0.60** | **49.4%** | **13.3%** |
+| 0.70 (S48) | **32.5%** | 5.0% |
+
+At 0.70 the gate throws away two thirds of the real sightings. Combined with
+~12% per-step recall and `min_obs` = 2, a correct commit needs roughly
+0.12 x 0.325 = 4% per step, twice -- which is why 11 previously-successful
+episodes turned into timeouts. The gate was not wrong in kind, it was set for a
+detector with better recall than this one.
+
+**Consequence for the gap.** S15 measured YOLOE-11s vs 11l as worth nothing and
+concluded "the detector is worth zero". That conclusion was about FALSE
+positives -- far-commits went 30 -> 32 across a 2.5x larger model -- and it does
+not cover recall on the true object, which nothing had measured until now. The
+two findings are compatible: a bigger YOLOE does not stop the agent walking to
+the wrong sofa, and the reason the agent needs a sofa at all is that it did not
+see the right one.
+
+Next arm: `+experiment=ascentnav_gate60`, the same gate at the knee of the
+curve, pre-registered in that file.
+
 ### S26 — ASCENT's dense approach re-check
 
 S23/S25 closed the mover, the aim point and the commit gate as explanations for
