@@ -3401,6 +3401,69 @@ This run cannot say WHICH threshold would have blocked which commit:
 episodes. Instrumenting the commit (score, observation count, bbox at commit)
 is the prerequisite for calibrating the gate rather than guessing it.
 
+### S48 — the commit gate: prediction met, SR null, and the reason is instructive
+
+S47 predicted the same-floor gap was false-positive commits. The gate
+(`agent.commit_gate`: detection score >= 0.70, bbox >= 1200 px, and 2 accepted
+sightings before a cloud counts as a goal) was pre-registered with a falsifiable
+prediction: *far-commits fall by at least a third, and SR rises; if far-commits
+fall while SR does not, the blocked episodes were failing for another reason and
+the gate is a null.*
+
+**100 paired episodes on `scenes20_ep0to4`, one fingerprint field apart:**
+
+| | SR | SPL | steps | timeouts | same | cross | far-commits |
+|---|---|---|---|---|---|---|---|
+| `s56_fixed100` (control) | 56.0% | 0.285 | 199 | 17 | 65.4% | 22.7% | 22 |
+| `s57_gate100` (gate) | 54.0% | 0.258 | 270 | **34** | 65.4% | 13.6% | **8** |
+
+Far-commits fell **22 -> 8 (-64%)**, well past the pre-registered third. SR did
+not follow: 9 wins, 11 losses, **net -2, McNemar p = 0.82**. By the
+pre-registration this is a **null**, and the mechanism says why.
+
+**Following the 22 episodes that far-committed without the gate:**
+
+| with the gate they | n |
+|---|---|
+| became a success | **7** |
+| ran out of steps | **11** |
+| far-committed anyway | 4 |
+
+The gate does exactly what it was built to do -- 7 of the 22 recover -- and then
+the same conservatism costs 11 episodes that used to succeed (5 of them
+timeouts). Mean steps 199 -> 270 and timeouts 17 -> 34: withholding a goal until
+a second sighting at 0.70 leaves the agent exploring, and the budget runs out.
+
+**The lesson is not "commits are fine".** Blocking a bad commit does not produce
+a good one: half the blocked episodes simply never found the target. The failure
+S47 measured is real, but it is not one bad decision away from a success -- the
+agent that commits at step 22 to the wrong sofa mostly has not seen the right
+one either.
+
+**Calibration, not abandonment, is the next move.** These thresholds are OSG's,
+tuned for `NavAgent`, whose track layer accumulates evidence across frames with
+a different detector pipeline. Ported wholesale onto an agent that has no track
+layer they are too strict. The obvious cheaper variants -- `min_obs` alone with
+no score raise, or `min_score` at 0.5 -- are one flag each, and the counters
+needed to choose between them (how many blocks were score failures vs bbox
+failures) are not yet split apart.
+
+#### S48b — the stair fixes at n=100: mechanism yes, SR no
+
+The same control run is also the first n=100 measurement of S43-S46 (stair
+projection, direction preference, `_look_for_downstair`, lip marking), against
+`s41_stairs` which predates all four:
+
+| | SR | climb attempts | completed | conversion | floor switches |
+|---|---|---|---|---|---|
+| `s41_stairs` | 58.0% | 37 | 4 | 11% | 4 |
+| `s56_fixed100` | 56.0% | 53 | **16** | **30%** | **16** |
+
+Climb conversion nearly triples and floor switches quadruple -- the fixes do
+what the synthetic geometry said they would. SR moves -2 (6 wins, 8 losses,
+p = 0.79): a null. The cross-floor cell is 22 episodes here, so it cannot
+resolve a change of this size; the full-split re-run is what would.
+
 ### S26 — ASCENT's dense approach re-check
 
 S23/S25 closed the mover, the aim point and the commit gate as explanations for
