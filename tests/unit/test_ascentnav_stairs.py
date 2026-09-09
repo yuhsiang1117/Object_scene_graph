@@ -868,3 +868,84 @@ def test_the_agent_measures_displacement_the_way_the_recorder_does():
     a.act(f1); a.act(f2)
     assert a._last_moved == pytest.approx(0.25, abs=1e-6)
     assert a.stuck.patience == 3
+
+
+# ==================================================== ASCENT's LLM frontier pick
+
+class _Ranker:
+    """Stands in for AscentFrontierRanker."""
+    def __init__(self, choice=1, boom=False):
+        self.choice, self.boom, self.seen = choice, boom, []
+    def pick(self, frontiers, target, sg=None, semantics=None, mode="frame"):
+        if self.boom:
+            raise RuntimeError("model unavailable")
+        self.seen.append((len(frontiers), target))
+        return self.choice
+
+
+def _ranked(choice=1, every=20, boom=False):
+    a = _agent()
+    a.ranker = _Ranker(choice, boom)
+    a.llm_rank_every, a.llm_topk = every, 3
+    return a
+
+
+def test_a_single_frontier_never_reaches_the_model():
+    """`llm_planner.py:79-81` returns immediately -- there is nothing to choose
+    between, and a call would be pure latency."""
+    a = _ranked()
+    a._best_frontier(np.array([[5.0, 0.0]]), np.zeros(2))
+    assert a.ranker.seen == []
+
+
+def test_a_nearby_frontier_short_circuits_the_model():
+    """The shortcuts are why ASCENT does not ask on most steps."""
+    a = _ranked()
+    got = a._best_frontier(np.array([[1.0, 0.0], [9.0, 9.0]]), np.zeros(2))
+    assert np.allclose(got, [1.0, 0.0]) and a.ranker.seen == []
+
+
+def test_the_model_chooses_among_the_top_k_when_no_shortcut_fires():
+    a = _ranked(choice=1)
+    pts = np.array([[8.0, 0.0], [0.0, 8.0], [-8.0, 0.0]])
+    a._best_frontier(pts, np.zeros(2))
+    assert a.ranker.seen and a.ranker.seen[0][0] <= 3
+    assert a.stats["rank_calls"] == 1 and a.stats["rank_overrides"] == 1
+
+
+def test_agreeing_with_the_value_ranking_is_not_an_override():
+    a = _ranked(choice=0)
+    a._best_frontier(np.array([[8.0, 0.0], [0.0, 8.0]]), np.zeros(2))
+    assert a.stats["rank_calls"] == 1 and "rank_overrides" not in a.stats
+
+
+def test_a_failing_model_falls_back_to_the_value_ranking():
+    """Every failure path returns 0, so a slow or broken model costs a call and
+    nothing else."""
+    a = _ranked(boom=True)
+    a._best_frontier(np.array([[8.0, 0.0], [0.0, 8.0]]), np.zeros(2))
+    assert a.stats["rank_errors"] == 1 and a._last_rank_pick == 0
+
+
+def test_an_out_of_range_index_is_refused():
+    a = _ranked(choice=99)
+    a._best_frontier(np.array([[8.0, 0.0], [0.0, 8.0]]), np.zeros(2))
+    assert a._last_rank_pick == 0
+
+
+def test_the_cadence_reuses_the_last_choice_between_calls():
+    a = _ranked(choice=1, every=20)
+    pts = np.array([[8.0, 0.0], [0.0, 8.0], [-8.0, 0.0]])
+    a._best_frontier(pts, np.zeros(2))
+    for _ in range(5):
+        a.step_count += 1
+        a._best_frontier(pts, np.zeros(2))
+    assert a.stats["rank_calls"] == 1, "one call per cadence window, not per step"
+
+
+def test_no_ranker_means_the_value_argmax():
+    a = _agent()
+    assert a.ranker is None
+    pts = np.array([[8.0, 0.0], [0.0, 8.0]])
+    a._best_frontier(pts, np.zeros(2))
+    assert "rank_calls" not in a.stats

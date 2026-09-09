@@ -1,0 +1,38 @@
+# @package _global_
+#
+# S53: `ascentnav` with ASCENT's LLM frontier choice -- the mechanism the paper
+# is named for and the one this arm never had.
+#
+#   python scripts/run_eval.py +experiment=ascentnav_llm eval=scenes20_ep0to4
+#
+# Control: `+experiment=ascentnav` (`outputs/s68_behaviour100`, 54.0%).
+#
+# `llm_planner._get_best_frontier_with_llm` (ascent/llm_planner.py:57-127) is
+# four steps, and this arm previously implemented only the first two:
+#   1. one frontier            -> take it
+#   2. anything within 3 m     -> take the nearest
+#   3. otherwise ask the LLM to choose among the top-k, each described as
+#      "a <room> containing objects: <...>", against prior room-object
+#      probabilities from a knowledge graph
+#   4. sticky-frontier retirement
+#
+# Step 3 is `AscentFrontierRanker`, which OSG already carries and the runner
+# already builds -- `ascentnav` accepted the object and dropped it on the floor.
+#
+# Cadence is `exploration.ranker_every_steps` (20). ASCENT asks whenever steps
+# 1-2 miss; this agent re-selects every step, so asking on its schedule would be
+# hundreds of calls an episode.
+#
+# Falsifiable prediction: `rank_calls` > 0 and `rank_overrides` > 0 -- i.e. the
+# model actually disagrees with the value ranking sometimes -- and SR above the
+# control's 54.0%. If it fires and SR does not move, LLM frontier choice is not
+# what separates this arm from ASCENT, and the remaining candidates are the
+# models themselves (BLIP-2 over CLIP, GroundingDINO+D-FINE over YOLOE).
+
+defaults:
+  - ascentnav
+
+exploration:
+  ranker: ascent
+  ranker_every_steps: 20
+  ranker_topk: 3

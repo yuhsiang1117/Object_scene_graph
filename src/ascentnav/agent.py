@@ -49,6 +49,7 @@ import numpy as np
 
 from osg.core.types import Detection, FrameData
 from osg.graph.scene_graph import SceneGraph
+from osg.mapping.frontier import Frontier
 from osg.eval.behaviour_log import BehaviourLog
 from osg.planning.escape import ActionHistoryEscape, DisplacementEscape
 
@@ -89,6 +90,7 @@ class AscentNavAgent:
         *,
         image_text=None,
         pointnav=None,
+        ranker=None,
         stair_segmenter=None,
         profiler=None,
         **_ignored,
@@ -98,6 +100,11 @@ class AscentNavAgent:
         self.verifier = verifier
         self.image_text = image_text
         self.pointnav = pointnav
+        # ASCENT's LLM frontier choice (`llm_planner._decide_frontier_with_llm`).
+        # The runner has always built this and `ascentnav` has always thrown it
+        # away, which meant the arm was missing the mechanism the paper is named
+        # for: "LLM-Driven Coarse-to-Fine Exploration".
+        self.ranker = ranker
         self.stair_segmenter = stair_segmenter
         self.profiler = profiler
 
@@ -115,6 +122,8 @@ class AscentNavAgent:
         self.abandon_steps = int(getattr(a, "approach_abandon_steps", 100) or 100)
         self.escape = ActionHistoryEscape(int(getattr(a, "escape_window", 30) or 30))
         self.stuck = DisplacementEscape(int(getattr(a, "stuck_escape_patience", 0) or 0))
+        self.llm_rank_every = int(getattr(cfg.exploration, "ranker_every_steps", 0) or 0)
+        self.llm_topk = int(getattr(cfg.exploration, "ranker_topk", 3) or 3)
 
         # S47's commit gate. Off by default: it changes what the agent is
         # willing to walk to, so it is an A/B, not a bug fix. The thresholds are
@@ -174,6 +183,8 @@ class AscentNavAgent:
         self._last_dets: list = []
         self._pn_goal: Optional[np.ndarray] = None
         self._seg_upper = False
+        self._last_rank_step = -10**9
+        self._last_rank_pick = 0
         self._last_action: Optional[str] = None
         self._last_moved = 1.0
         self._last_xy: Optional[np.ndarray] = None
@@ -632,19 +643,58 @@ class AscentNavAgent:
         return action
 
     def _best_frontier(self, frontiers, robot_xy) -> Optional[np.ndarray]:
-        """Value argmax with ASCENT's nearby shortcut (`llm_planner.py:157-179`).
+        """`llm_planner._get_best_frontier_with_llm`, in its own order.
 
-        No division by path cost: ASCENT ranks on value and lets distance in
-        only as a hard shortcut for anything within `nearby_distance`.
+        ASCENT does not rank by value alone. It sorts by the value map, takes
+        two shortcuts first -- a single frontier, then anything inside
+        `nearby_distance` -- and only when neither fires does it ask the LLM to
+        choose among the top-k, each described as "a <room> containing objects:
+        <objects>" alongside prior room-object probabilities
+        (`llm_planner.py:409-489`).
+
+        The shortcuts matter as much as the model: they are why the LLM is not
+        consulted on most steps.
         """
         if len(frontiers) == 1:
-            return frontiers[0]
+            return frontiers[0]                       # llm_planner.py:79-81
         dists = np.linalg.norm(frontiers - robot_xy, axis=1)
         near = np.where(dists < self.nearby_distance)[0]
         if len(near):
             return frontiers[near[int(np.argmin(dists[near]))]]
         sorted_pts, sorted_vals = self.value_map.sort_waypoints(frontiers, 0.5)
-        return sorted_pts[0] if len(sorted_pts) else frontiers[int(np.argmin(dists))]
+        if not len(sorted_pts):
+            return frontiers[int(np.argmin(dists))]
+        pick = self._llm_pick(sorted_pts)
+        return sorted_pts[pick]
+
+    def _llm_pick(self, sorted_pts) -> int:
+        """Index chosen by the LLM among the top-k, or 0 (the value argmax).
+
+        Cadence is `exploration.ranker_every_steps`: ASCENT asks whenever its
+        shortcuts miss, which on this agent -- which re-selects every step --
+        would be hundreds of calls an episode. Every failure path returns 0, so
+        the value ranking is what survives a model that is slow, absent or
+        wrong.
+        """
+        if self.ranker is None or self.llm_rank_every <= 0 or len(sorted_pts) < 2:
+            return 0
+        if self.step_count - self._last_rank_step < self.llm_rank_every:
+            return self._last_rank_pick
+        self._last_rank_step = self.step_count
+        cand = [Frontier(id=i, centroid_xy=np.asarray(p, dtype=float),
+                         cells=np.zeros((0, 2), dtype=int), size=0)
+                for i, p in enumerate(sorted_pts[: self.llm_topk])]
+        try:
+            idx = int(self.ranker.pick(cand, self.target, sg=self.scene_graph))
+        except Exception:
+            self.stats["rank_errors"] = self.stats.get("rank_errors", 0) + 1
+            idx = 0
+        idx = idx if 0 <= idx < len(cand) else 0
+        self.stats["rank_calls"] = self.stats.get("rank_calls", 0) + 1
+        if idx != 0:
+            self.stats["rank_overrides"] = self.stats.get("rank_overrides", 0) + 1
+        self._last_rank_pick = idx
+        return idx
 
     def _sticky(self, best, robot_xy) -> None:
         """`_handle_frontier_stick_and_disable` (llm_planner.py:239-257)."""
