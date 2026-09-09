@@ -1,0 +1,135 @@
+# Native ASCENT (arXiv 2505.23019), built to run head-to-head against OSG.
+#
+#   docker build -f docker/Dockerfile.ascent -t ascent:native .
+#
+# This exists because ASCENT could NOT be installed into the OSG image or a
+# clone of it, and every failure is encoded below as a pin or a base-image
+# choice. The three that decided the design:
+#
+#  1. The OSG image is `nvidia/cuda:...-runtime-`, which has no nvcc. Every
+#     attempt to add one -- conda `cuda-nvcc`, `cuda-toolkit=11.8` -- ended with
+#     conda mixing runtime and dev components across CUDA 11.8/12.4/13.3, so
+#     GroundingDINO's fused attention kernel never built. `-devel-` ships nvcc,
+#     the headers and the stubs as ONE consistent 11.8 toolchain, matching
+#     torch's cu118 build, and the extension compiles.
+#  2. `salesforce-lavis==1.0.2` declares dependencies that cannot resolve on
+#     python 3.9: `spacy` pulls `thinc>=8.3.12`, which requires python >=3.10.
+#     It goes in with --no-deps and its real imports are pinned by hand below.
+#  3. numpy. habitat-sim 0.3.1 pins `numpy<1.24`, while pip's current wheels for
+#     pandas/opencv are built against numpy 2 and fail with
+#     "numpy._core.multiarray failed to import". Every numpy-linked package here
+#     is pinned to a build that predates numpy 2.
+#
+# ASCENT's own README is the spine (python 3.9, torch 2.1.0+cu118,
+# habitat-sim 0.3.1, transformers==4.37.0 installed LAST -- that override of
+# lavis's `<4.27` pin is ASCENT's, and it is what lets BLIP-2 and Qwen2.5 share
+# one environment).
+
+FROM nvidia/cuda:11.8.0-cudnn8-devel-ubuntu22.04
+
+RUN rm -f /etc/apt/apt.conf.d/docker-clean; \
+    echo 'Binary::apt::APT::Keep-Downloaded-Packages "true";' > /etc/apt/apt.conf.d/keep-cache
+
+# EGL/GL userland for headless habitat-sim; git for the repos pip cannot serve.
+RUN --mount=type=cache,target=/var/cache/apt,sharing=private \
+    apt-get update && apt-get install -y --no-install-recommends \
+    git curl ca-certificates bzip2 unzip build-essential ninja-build \
+    libegl1 libgl1 libglvnd0 libx11-6 libxext6 libopengl0 libglx0 \
+    libjpeg-dev libpng-dev libglib2.0-0 sudo tmux \
+    && rm -rf /var/lib/apt/lists/*
+
+RUN curl -L https://github.com/conda-forge/miniforge/releases/latest/download/Miniforge3-Linux-x86_64.sh \
+      -o /tmp/miniforge.sh \
+    && bash /tmp/miniforge.sh -b -p /opt/conda \
+    && rm /tmp/miniforge.sh
+ENV PATH=/opt/conda/bin:$PATH
+
+# README step 1. habitat-sim 0.3.1 is a python 3.9 build.
+RUN conda create -y -n ascent python=3.9 cmake=3.14.0 && conda clean -ya
+SHELL ["conda", "run", "--no-capture-output", "-n", "ascent", "/bin/bash", "-c"]
+
+# README step 2. cu118 to match the base image's nvcc -- torch's cpp_extension
+# refuses to build when nvcc's version differs from torch.version.cuda.
+RUN pip install --no-cache-dir torch==2.1.0 torchvision==0.16.0 torchaudio==2.1.0 \
+      --index-url https://download.pytorch.org/whl/cu118
+
+# README step 3.
+RUN conda install -y -n ascent habitat-sim=0.3.1 withbullet headless \
+      -c conda-forge -c aihabitat && conda clean -ya
+
+# The numpy floor, set BEFORE anything that links against it. habitat-sim 0.3.1
+# requires <1.24; scipy 1.10.1 is the last release built against that line.
+RUN pip install --no-cache-dir "numpy==1.23.5" "scipy==1.10.1" "pandas==1.5.3"
+
+WORKDIR /opt/ascent
+COPY relative_work/ascent /opt/ascent
+
+# README step 4.
+RUN pip install --no-cache-dir -e third_party/habitat-lab/habitat-lab \
+    && pip install --no-cache-dir -e third_party/habitat-lab/habitat-baselines
+
+# README step 5. With a -devel- base this builds the fused CUDA kernel; without
+# it, GroundingDINO silently falls back to CPU, which at one call per step is
+# 14-40 hours for a 100-episode run.
+ENV CUDA_HOME=/usr/local/cuda TORCH_CUDA_ARCH_LIST="8.6;8.9;9.0"
+RUN cd third_party/GroundingDINO \
+    && python setup.py build_ext --inplace \
+    && pip install --no-cache-dir -e . --no-build-isolation --no-deps \
+    && python -c "from groundingdino import _C; print('GroundingDINO CUDA extension: OK')"
+
+# README step 6.
+RUN pip install --no-cache-dir -e third_party/MobileSAM \
+    && pip install --no-cache-dir -e third_party/vlfm
+
+# README step 7 (requirements.txt), minus the parts that cannot resolve here.
+# lavis first with --no-deps, then its real imports; `spacy==3.7.5` is the last
+# release supporting python 3.9, and only `img2prompt_vqa` needs it at all.
+RUN pip install --no-cache-dir --no-deps salesforce-lavis==1.0.2 \
+    && pip install --no-cache-dir \
+       "spacy==3.7.5" "timm==0.4.12" "opencv-python-headless==4.10.0.84" \
+       iopath decord webdataset fairscale einops pycocoevalcap \
+       omegaconf plotly flask open3d dash scikit-learn joblib seaborn \
+       "supervision==0.25.1" openpyxl "yapf==0.43.0" \
+    && pip install --no-cache-dir --no-deps "recognize-anything @ git+https://github.com/xinyu1205/recognize-anything.git"
+
+# LAST, and deliberately: ASCENT's own override of lavis's transformers pin.
+# 4.37.0 is the floor for Qwen2.5 and works with BLIP-2 in practice, which is
+# what lets all six model servers share one environment.
+RUN pip install --no-cache-dir "transformers==4.37.0" \
+    && python -c "import torch, habitat_sim, transformers, numpy, cv2; \
+       import lavis.models, mobile_sam, groundingdino.util.inference, ram; \
+       print('all ASCENT model packages import OK')"
+
+# Exactly one opencv build may be installed: two of them abort at import with
+# "CPU dispatcher tracer already initlized".
+RUN pip uninstall -y opencv-python opencv-contrib-python 2>/dev/null; \
+    python -c "import cv2; print('cv2', cv2.__version__)"
+
+ENV NVIDIA_DRIVER_CAPABILITIES=all \
+    MAGNUM_LOG=quiet \
+    HABITAT_SIM_LOG=quiet \
+    __EGL_VENDOR_LIBRARY_FILENAMES=/usr/share/glvnd/egl_vendor.d/10_nvidia.json \
+    PYTHONPATH=/opt/ascent
+
+# Weights are NOT baked in: ~20 GB, and several need a HuggingFace token. Mount
+# `pretrained_weights/` at run time. `scripts/fetch_ascent_weights.sh` in this
+# repo downloads the set. Four of them OSG already has under data/weights:
+# mobile_sam.pt, rednet_semmap_mp3d_40.pth, resnet50_places365.pth.tar and the
+# vlfm pointnav checkpoint.
+VOLUME /opt/ascent/pretrained_weights /opt/ascent/data
+
+RUN printf '\nif [ -z "$CONDA_DEFAULT_ENV" ]; then\n  source /opt/conda/etc/profile.d/conda.sh\n  conda activate ascent\nfi\n' >> /etc/bash.bashrc
+
+ARG USERNAME=user
+ARG USER_UID=1000
+ARG USER_GID=1000
+RUN groupadd -g $USER_GID $USERNAME \
+    && useradd -m -s /bin/bash -u $USER_UID -g $USER_GID -G sudo $USERNAME \
+    && echo '%sudo ALL=(ALL) NOPASSWD:ALL' >> /etc/sudoers \
+    && chown -R $USER_UID:$USER_GID /opt/ascent
+USER $USERNAME
+
+# Six model servers, then the policy:
+#   bash scripts/launch_vlm_servers_ascent.sh
+#   python -u -m ascent.run --config-name=eval_ascent_hm3d.yaml
+CMD ["/bin/bash"]
