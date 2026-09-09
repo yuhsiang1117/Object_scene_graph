@@ -19,9 +19,11 @@
 # Step 3 is `AscentFrontierRanker`, which OSG already carries and the runner
 # already builds -- `ascentnav` accepted the object and dropped it on the floor.
 #
-# Cadence is `exploration.ranker_every_steps` (20). ASCENT asks whenever steps
-# 1-2 miss; this agent re-selects every step, so asking on its schedule would be
-# hundreds of calls an episode.
+# What limits the calls is not a timer but the COMMITMENT: the model's choice
+# becomes ASCENT's `_force_frontier` and is followed until that frontier stops
+# being extracted (`llm_planner.py:121-125`). The first cut of this preset
+# missed that, asked the model and then let the nearby rule override the answer
+# on the next step -- 1 call in 2 episodes, the mechanism neutered.
 #
 # Falsifiable prediction: `rank_calls` > 0 and `rank_overrides` > 0 -- i.e. the
 # model actually disagrees with the value ranking sometimes -- and SR above the
@@ -34,5 +36,4 @@ defaults:
 
 exploration:
   ranker: ascent
-  ranker_every_steps: 20
   ranker_topk: 3

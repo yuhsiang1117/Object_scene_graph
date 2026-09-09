@@ -883,10 +883,10 @@ class _Ranker:
         return self.choice
 
 
-def _ranked(choice=1, every=20, boom=False):
+def _ranked(choice=1, boom=False):
     a = _agent()
     a.ranker = _Ranker(choice, boom)
-    a.llm_rank_every, a.llm_topk = every, 3
+    a.llm_topk = 3
     return a
 
 
@@ -898,9 +898,11 @@ def test_a_single_frontier_never_reaches_the_model():
     assert a.ranker.seen == []
 
 
-def test_a_nearby_frontier_short_circuits_the_model():
-    """The shortcuts are why ASCENT does not ask on most steps."""
+def test_a_nearby_frontier_short_circuits_the_model_once_exploring():
+    """The shortcuts are why ASCENT does not ask on most steps -- but only after
+    the first explore has happened."""
     a = _ranked()
+    a.obstacle_map._finish_first_explore = True
     got = a._best_frontier(np.array([[1.0, 0.0], [9.0, 9.0]]), np.zeros(2))
     assert np.allclose(got, [1.0, 0.0]) and a.ranker.seen == []
 
@@ -923,24 +925,54 @@ def test_a_failing_model_falls_back_to_the_value_ranking():
     """Every failure path returns 0, so a slow or broken model costs a call and
     nothing else."""
     a = _ranked(boom=True)
-    a._best_frontier(np.array([[8.0, 0.0], [0.0, 8.0]]), np.zeros(2))
-    assert a.stats["rank_errors"] == 1 and a._last_rank_pick == 0
+    pts = np.array([[8.0, 0.0], [0.0, 8.0]])
+    got = a._best_frontier(pts, np.zeros(2))
+    assert a.stats["rank_errors"] == 1
+    assert np.allclose(got, a.value_map.sort_waypoints(pts, 0.5)[0][0]), \
+        "a raising model must leave the value argmax standing"
 
 
 def test_an_out_of_range_index_is_refused():
     a = _ranked(choice=99)
-    a._best_frontier(np.array([[8.0, 0.0], [0.0, 8.0]]), np.zeros(2))
-    assert a._last_rank_pick == 0
+    pts = np.array([[8.0, 0.0], [0.0, 8.0]])
+    got = a._best_frontier(pts, np.zeros(2))
+    assert np.allclose(got, a.value_map.sort_waypoints(pts, 0.5)[0][0])
 
 
-def test_the_cadence_reuses_the_last_choice_between_calls():
-    a = _ranked(choice=1, every=20)
+def test_the_models_choice_becomes_a_commitment():
+    """The point of "coarse-to-fine": the model picks a region and the agent
+    keeps going there. Asking again every step and letting the nearby rule
+    override the answer is what made the first cut of this consult the model
+    once every two episodes."""
+    a = _ranked(choice=1)
     pts = np.array([[8.0, 0.0], [0.0, 8.0], [-8.0, 0.0]])
-    a._best_frontier(pts, np.zeros(2))
+    first = a._best_frontier(pts, np.zeros(2))
+    assert np.allclose(first, pts[1]) or a.stats["rank_calls"] == 1
     for _ in range(5):
         a.step_count += 1
-        a._best_frontier(pts, np.zeros(2))
-    assert a.stats["rank_calls"] == 1, "one call per cadence window, not per step"
+        again = a._best_frontier(pts, np.zeros(2))
+        assert np.allclose(again, first), "the commitment must hold"
+    assert a.stats["rank_calls"] == 1, "one call, then a commitment"
+    assert a.stats["force_frontier_steps"] == 5
+
+
+def test_the_commitment_is_dropped_when_the_frontier_is_explored_away():
+    a = _ranked(choice=0)
+    pts = np.array([[8.0, 0.0], [0.0, 8.0]])
+    a._best_frontier(pts, np.zeros(2))
+    assert a._force_frontier is not None
+    a._best_frontier(np.array([[-9.0, 0.0], [0.0, -9.0]]), np.zeros(2))
+    assert a.stats["rank_calls"] == 2, "a vanished commitment must be re-decided"
+
+
+def test_a_nearby_frontier_is_taken_only_after_the_first_explore():
+    """ASCENT gates the fine-grained shortcut on `_finish_first_explore`, so the
+    FIRST decision of an episode always goes to the model."""
+    a = _ranked(choice=0)
+    assert a.obstacle_map._finish_first_explore is False
+    a._best_frontier(np.array([[1.0, 0.0], [8.0, 0.0]]), np.zeros(2))
+    assert a.stats["rank_calls"] == 1, "the first decision is the model's"
+    assert a.obstacle_map._finish_first_explore is True
 
 
 def test_no_ranker_means_the_value_argmax():

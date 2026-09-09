@@ -183,8 +183,9 @@ class AscentNavAgent:
         self._last_dets: list = []
         self._pn_goal: Optional[np.ndarray] = None
         self._seg_upper = False
-        self._last_rank_step = -10**9
-        self._last_rank_pick = 0
+        # ASCENT's `_force_frontier`: the LLM's choice, held until that
+        # frontier stops being extracted (`llm_planner.py:121-125`).
+        self._force_frontier: Optional[np.ndarray] = None
         self._last_action: Optional[str] = None
         self._last_moved = 1.0
         self._last_xy: Optional[np.ndarray] = None
@@ -643,44 +644,67 @@ class AscentNavAgent:
         return action
 
     def _best_frontier(self, frontiers, robot_xy) -> Optional[np.ndarray]:
-        """`llm_planner._get_best_frontier_with_llm`, in its own order.
+        """`llm_planner._get_best_frontier_with_llm` (ascent/llm_planner.py:57-127).
 
-        ASCENT does not rank by value alone. It sorts by the value map, takes
-        two shortcuts first -- a single frontier, then anything inside
-        `nearby_distance` -- and only when neither fires does it ask the LLM to
-        choose among the top-k, each described as "a <room> containing objects:
-        <objects>" alongside prior room-object probabilities
-        (`llm_planner.py:409-489`).
+        The order is the mechanism, and the commitment is the point:
 
-        The shortcuts matter as much as the model: they are why the LLM is not
-        consulted on most steps.
+          1. one frontier                -> take it
+          2. a FORCE frontier still in the list -> keep going to it
+          3. `_finish_first_explore` and something within `nearby_distance`
+                                         -> take the nearest (fine-grained)
+          4. otherwise ask the LLM among the top-k, and MAKE THAT THE FORCE
+             FRONTIER -- its answer is a commitment, not a one-step preference
+
+        Step 4 setting the force frontier is what "coarse-to-fine" means: the
+        model picks a region, the agent commits to it, and the nearby rule then
+        handles local choices along the way. Asking the model and letting the
+        nearby rule override it on the very next step -- which is what this
+        agent did at first -- consults it once every couple of episodes and
+        throws the answer away.
         """
+        om = self.obstacle_map
         if len(frontiers) == 1:
             return frontiers[0]                       # llm_planner.py:79-81
-        dists = np.linalg.norm(frontiers - robot_xy, axis=1)
-        near = np.where(dists < self.nearby_distance)[0]
-        if len(near):
-            return frontiers[near[int(np.argmin(dists[near]))]]
-        sorted_pts, sorted_vals = self.value_map.sort_waypoints(frontiers, 0.5)
+        sorted_pts, _ = self.value_map.sort_waypoints(frontiers, 0.5)
         if not len(sorted_pts):
-            return frontiers[int(np.argmin(dists))]
-        pick = self._llm_pick(sorted_pts)
-        return sorted_pts[pick]
+            d = np.linalg.norm(frontiers - robot_xy, axis=1)
+            return frontiers[int(np.argmin(d))]
+
+        # 2. the standing commitment, while it still exists
+        if self._force_frontier is not None:
+            for p in sorted_pts:
+                if np.allclose(p, self._force_frontier, atol=1e-3):
+                    self.stats["force_frontier_steps"] = (
+                        self.stats.get("force_frontier_steps", 0) + 1)
+                    return p
+            self._force_frontier = None               # it was explored away
+
+        # 3. fine-grained: something close enough to just go and look at
+        if om._finish_first_explore:
+            d = np.linalg.norm(sorted_pts - robot_xy, axis=1)
+            near = np.where(d <= self.nearby_distance)[0]
+            if len(near):
+                om._neighbor_search = True
+                return sorted_pts[int(near[np.argmin(d[near])])]
+            # Nothing near: ASCENT drops the flag so the NEXT round is forced
+            # through the model rather than drifting on value alone.
+            om._finish_first_explore = False
+            om._neighbor_search = False
+
+        # 4. coarse: the model chooses, and its choice becomes the commitment
+        best = sorted_pts[self._llm_pick(sorted_pts)]
+        om._finish_first_explore = True
+        self._force_frontier = np.asarray(best, dtype=float).copy()
+        return best
 
     def _llm_pick(self, sorted_pts) -> int:
         """Index chosen by the LLM among the top-k, or 0 (the value argmax).
 
-        Cadence is `exploration.ranker_every_steps`: ASCENT asks whenever its
-        shortcuts miss, which on this agent -- which re-selects every step --
-        would be hundreds of calls an episode. Every failure path returns 0, so
-        the value ranking is what survives a model that is slow, absent or
-        wrong.
+        Every failure path returns 0, so the value ranking is what survives a
+        model that is slow, absent or wrong.
         """
-        if self.ranker is None or self.llm_rank_every <= 0 or len(sorted_pts) < 2:
+        if self.ranker is None or len(sorted_pts) < 2:
             return 0
-        if self.step_count - self._last_rank_step < self.llm_rank_every:
-            return self._last_rank_pick
-        self._last_rank_step = self.step_count
         cand = [Frontier(id=i, centroid_xy=np.asarray(p, dtype=float),
                          cells=np.zeros((0, 2), dtype=int), size=0)
                 for i, p in enumerate(sorted_pts[: self.llm_topk])]
@@ -693,7 +717,6 @@ class AscentNavAgent:
         self.stats["rank_calls"] = self.stats.get("rank_calls", 0) + 1
         if idx != 0:
             self.stats["rank_overrides"] = self.stats.get("rank_overrides", 0) + 1
-        self._last_rank_pick = idx
         return idx
 
     def _sticky(self, best, robot_xy) -> None:
