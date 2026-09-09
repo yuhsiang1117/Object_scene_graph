@@ -3659,6 +3659,53 @@ the remaining models demand would need every one of those footnoted, and would
 be weaker evidence than reading `ascent_policy.py` directly -- which is what
 S36-S50 did.
 
+### S52 — the unstick guard fires, and makes the thing it targets worse
+
+The recorder found a clear defect (S51): 793 commanded forwards produced no
+displacement across 100 episodes, in 69 of them, while `escape_window` -- the
+guard that exists for this -- fired **zero** times, because it reads the
+COMMANDED action stream and needs 30 consecutive turns or forwards, and the real
+stream alternates turn / turn / blocked-forward.
+
+`DisplacementEscape` is fed realised motion: four dead forwards inside a
+twelve-step window trigger a three-turn burst. The preset pre-registered how to
+judge it -- `stuck_escapes` rising and `blocked_forwards` falling, not SR, since
+the same recording bounded the prize at 1-2 episodes.
+
+**It fired, and the target metric moved the wrong way.**
+
+| | SR | SPL | steps | blocked / forwards | stuck_escapes |
+|---|---|---|---|---|---|
+| `s68` control | 54.0% | 0.284 | 197 | 793 / 8385 = **9.5%** | 0 |
+| `s69` unstick | 53.0% | 0.278 | 203 | 904 / 8412 = **10.7%** | 158 |
+
+4 wins, 5 losses, net -1, p = 1.00. And on the 8 episodes it exists for -- the
+most wedged in the control, `blocked_frac` 0.23-0.57 -- it is worse on both
+counts: SR **50.0% -> 37.5%**, mean `blocked_frac` **0.315 -> 0.357**.
+
+**Why, and it is the useful part.** The escape overrides the ACTION for three
+steps. It does not touch the GOAL. PointNav is a reactive policy that re-aims at
+the same (rho, theta) on the very next step, so the agent turns 90 degrees away,
+the policy turns it straight back, and it presses into the same geometry again --
+now with three wasted steps. The counters show the fight: 36 episodes escape at
+all, and among those the median is 2 escapes but the p90 is 10.5 and one episode
+escapes **29 times**. That is not a guard firing once to break a wedge; that is a
+guard and a policy oscillating.
+
+The 4-step displacement after a forced turn is a median 0.25 m -- exactly one
+forward step -- so the burst does free the agent momentarily, and then the same
+goal walks it straight back in.
+
+**What this rules out.** Action-level override is the wrong layer. S42 already
+said the escape from that pocket requires travelling AWAY from the goal, and
+habitat's own planner did it in 13 steps precisely because it could choose a
+route rather than a heading. A fix has to act on the GOAL -- retarget behind the
+agent for a committed burst, or refuse that bearing for N steps -- not on the
+action the policy just chose. That is a bigger change than this one and is not
+attempted here.
+
+The flag stays, defaulting to 0 (off), with this result attached to it.
+
 ### S26 — ASCENT's dense approach re-check
 
 S23/S25 closed the mover, the aim point and the commit gate as explanations for
