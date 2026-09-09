@@ -3761,6 +3761,60 @@ candidates is indistinguishable from a bad ranker. That is why the value model
 is tested next and separately (S54), and why the LLM arm should be re-run on top
 of it if it wins.
 
+### S54 — ASCENT's own value model is significantly WORSE here
+
+The value map ranks frontiers. ASCENT scores it with BLIP-2 image-text matching
+(`map_controller.py:110`); OSG uses CLIP's whole-image cosine. Different
+quantities, and S26 had already measured CLIP's cosine as carrying no signal
+about a related judgement (AUC 0.479), so BLIP-2 looked like the safer bet.
+
+BLIP-2 will not install alongside habitat-sim, so it runs where it does work --
+the `ascent` conda env, behind the Flask server ASCENT itself ships. That is
+their architecture, not a workaround around it, and the client speaks their wire
+format (including no channel swap: their client hands the RGB array straight to
+`cv2.imencode`, so flipping to BGR would feed BLIP-2 inverted images and still
+return plausible scores).
+
+| | SR | SPL | steps | same-floor | cross-floor |
+|---|---|---|---|---|---|
+| `s68` CLIP | 54.0% | 0.284 | 197 | 65.4% | 13.6% |
+| `s73` BLIP-2 | **45.0%** | 0.245 | 206 | 53.8% | 13.6% |
+
+4 wins, 13 losses, net **-9**, **McNemar p = 0.049**, on 20 596 value calls
+across 100 episodes. This is the first statistically significant A/B result in
+the whole campaign, and it is negative.
+
+The integration matches ASCENT's usage exactly -- one cosine per step against
+the same "Seems like there is a {target} ahead." prompt, handed to the same
+`ValueMap.update_map` -- so this is not a wiring error. With this detector and
+these maps, scoring the value map with BLIP-2 makes exploration worse.
+
+#### The pattern, after eleven A/Bs
+
+| change | mechanism verified live? | SR effect | p |
+|---|---|---|---|
+| stair projection + direction + lip (S43-46) | yes: climb conversion 11% -> 30% | -2 | 0.79 |
+| commit gate @ 0.70 (S48) | yes: far-commits 22 -> 8 | -2 | 0.82 |
+| commit gate @ 0.60 (S49) | yes: far-commits 22 -> 15 | +0 | 1.00 |
+| scan on arrival (S50) | yes: 288 scans, 17% of steps | -2 | 0.75 |
+| displacement escape (S52) | yes: 158 escapes | -1 | 1.00 |
+| LLM frontier ranker (S53) | yes: 301 calls, 85 overrides | **-4** | 0.45 |
+| BLIP-2 value map (S54) | yes: 20 596 calls | **-9** | **0.049** |
+
+Every one of these is a real ASCENT mechanism, verified firing, and not one
+improves this system; the two with the strongest mechanism signal are the two
+that hurt most. The reading that fits all seven is that **this pipeline is not
+ASCENT-minus-these-parts.** Its CLIP value map and geometric frontier ranking
+are tuned to ITS detector and ITS maps, and ASCENT's components are tuned to
+GroundingDINO + D-FINE + RAM++ and to BLIP-2 ranking. Transplanting one organ at
+a time makes the recipient worse each time, which is what a mismatched graft
+looks like.
+
+That is testable and it is the one thing this container cannot test: the
+detector ensemble is the third model-level difference, and it needs the image in
+`docker/Dockerfile.ascent`. If the components only work together, the honest
+comparison is native ASCENT against OSG, not a chimera of the two.
+
 ### S26 — ASCENT's dense approach re-check
 
 S23/S25 closed the mover, the aim point and the commit gate as explanations for
