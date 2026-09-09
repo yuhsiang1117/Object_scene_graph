@@ -3706,6 +3706,61 @@ attempted here.
 
 The flag stays, defaulting to 0 (off), with this result attached to it.
 
+### S53 — ASCENT's LLM frontier ranking, working, and it costs 4 episodes
+
+The paper is "LLM-Driven Coarse-to-Fine Exploration" and `ascentnav` had none of
+the LLM half. Porting it took three fixes, two of which were faults that made
+the first attempt inert in ways that LOOKED like a working mechanism:
+
+* **The choice must be a commitment.** `_get_best_frontier_with_llm` is an
+  order: one frontier, then a standing force-frontier, then the nearby shortcut
+  once `_finish_first_explore`, then the model -- **and the model's answer
+  becomes the force frontier** (llm_planner.py:121-125). The first cut asked and
+  then let the nearby rule override on the next step: 1 call in 2 episodes.
+* **The descriptions come from the FRAME.** ascentnav built a `SceneGraph` and
+  never populated it, so all top-k areas rendered as "unknown room containing
+  objects: " -- identical prompts. ASCENT reads `each_step_rooms[step]` /
+  `each_step_objects[step]` from the frame that revealed the frontier
+  (llm_planner.py:418-419); OSG had that as `FrontierSemantics`, unwired.
+* **The model was dead.** Every NIM text model returns 410 Gone as of 2026-09.
+  `AscentFrontierRanker.pick` returns index 0 on any failure, so a dead endpoint
+  is indistinguishable from a model that always agrees: 308 calls, 0 overrides.
+  Fixed by serving ASCENT's own planner, Qwen2.5-7B, through ollama.
+
+With all three fixed the mechanism is unambiguously live: **301 calls, 85
+overrides (28%), 0 errors, 1663 frontiers bound, 2333 steps spent following a
+commitment.**
+
+| | SR | SPL | steps | same-floor | cross-floor |
+|---|---|---|---|---|---|
+| `s68` control (no LLM) | 54.0% | 0.284 | 197 | 65.4% | 13.6% |
+| `s72` LLM ranker | **50.0%** | 0.273 | 204 | 60.3% | 13.6% |
+
+6 wins, 10 losses, net **-4**, p = 0.454.
+
+**And the damage is exactly where the model acted.** Splitting the 100 episodes
+by whether it ever overrode the value ranking:
+
+| | control | with the LLM |
+|---|---|---|
+| 40 episodes it overrode | 42.5% | **35.0%** |
+| 60 it did not | 61.7% | 60.0% |
+
+The 60 it left alone are unchanged within noise; the 40 it steered lost 7.5
+points. The overrides are, on net, wrong.
+
+This is the second independent measurement of the same thing: S27 measured
+frame-sourced descriptions at net -4 against graph-sourced ones on the navmesh
+arm, with the same signature -- "the agent was told to go the wrong way and
+never recovered". Two different arms, two different runs, the same -4.
+
+**What it does not settle.** The model chooses among the top-k OF THE VALUE
+RANKING. Ours is scored by CLIP; ASCENT's by BLIP-2. If the value ranking hands
+it three poor candidates, reordering them cannot help, and a good ranker on bad
+candidates is indistinguishable from a bad ranker. That is why the value model
+is tested next and separately (S54), and why the LLM arm should be re-run on top
+of it if it wins.
+
 ### S26 — ASCENT's dense approach re-check
 
 S23/S25 closed the mover, the aim point and the commit gate as explanations for
