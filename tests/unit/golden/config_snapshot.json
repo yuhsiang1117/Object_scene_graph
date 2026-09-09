@@ -206,6 +206,8 @@
   "exploration.top_n_frontiers": 5,
   "exploration.unscored_prior": 0.3,
   "exploration.value_argmax": false,
+  "exploration.value_blip2_timeout_s": 10.0,
+  "exploration.value_blip2_url": "http://localhost:13182/blip2itm",
   "exploration.value_clip_name": "ViT-B/32",
   "exploration.value_clip_root": "data/clip",
   "exploration.value_map": false,

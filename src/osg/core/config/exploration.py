@@ -244,7 +244,13 @@ class ExplorationConfig:
     stair_min_cells: int = 25
     stair_retire_cells: bool = False
     value_map: bool = False
-    value_model: str = "clip"  # clip | constant
+    # clip | constant | blip2itm. `blip2itm` is ASCENT's own value model,
+    # reached over HTTP because lavis cannot be installed in this environment;
+    # see `perception/image_text.py::Blip2ItmScorer` and
+    # `scripts/serve_blip2itm.sh`.
+    value_model: str = "clip"
+    value_blip2_url: str = "http://localhost:13182/blip2itm"
+    value_blip2_timeout_s: float = 10.0
     value_clip_name: str = "ViT-B/32"
     value_clip_root: str = "data/clip"
     value_stride: int = 1

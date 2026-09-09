@@ -1,0 +1,40 @@
+# @package _global_
+#
+# S54: `ascentnav` scoring its value map with ASCENT's own model.
+#
+#   bash scripts/serve_blip2itm.sh &        # in the `ascent` conda env
+#   python scripts/run_eval.py +experiment=ascentnav_blip2 eval=scenes20_ep0to4
+#
+# Control: `+experiment=ascentnav` (`outputs/s68_behaviour100`, 54.0%).
+#
+# The value map is what ranks frontiers, and it is scored by a different model
+# in each system:
+#
+#   ASCENT   BLIP-2 image-text matching (map_controller.py:110)
+#   OSG      CLIP whole-image cosine
+#
+# These are not the same quantity. CLIP is trained for retrieval in a shared
+# embedding space; BLIP-2 ITM is trained to answer "does this text describe this
+# image", which is the question a value map asks. S26 already measured CLIP's
+# whole-image cosine as carrying no signal about a related judgement (AUC 0.479
+# for commit correctness), which is a reason to doubt it here too.
+#
+# BLIP-2 will not install alongside habitat-sim -- lavis needs numpy 1.x builds
+# and transformers pins this environment does not have -- so it runs in the
+# `ascent` env behind the Flask server ASCENT itself ships. Process-per-model
+# over HTTP is ASCENT's own architecture, so this is their deployment rather
+# than a workaround around it.
+#
+# Falsifiable prediction: SR above the control's 54.0%. The value map is
+# consulted on every step of every episode, so if swapping the model that scores
+# it does not move SR, the exploration signal is not what separates these two
+# systems and the remaining candidate is the detector.
+#
+# If the server is down the scorer returns 0 for every prompt and logs it: a
+# flat value map ranks nothing, so check `value_errors` before reading the SR.
+
+defaults:
+  - ascentnav
+
+exploration:
+  value_model: blip2itm

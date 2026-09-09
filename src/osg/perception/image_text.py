@@ -110,6 +110,76 @@ class ClipScorer(ImageTextScorer):
         return sims.detach().cpu().numpy().astype(np.float32)
 
 
+class Blip2ItmScorer(ImageTextScorer):
+    """ASCENT's own value model, over HTTP.
+
+    The value map is what ranks frontiers, and ASCENT scores it with BLIP-2
+    image-text matching (`map_controller.py:110`, `BLIP2ITMClient`). OSG has
+    been using CLIP's whole-image cosine, which is a different quantity: CLIP is
+    trained for retrieval over a shared embedding, BLIP-2 ITM is trained to
+    answer "does this text match this image", which is the question the value
+    map asks.
+
+    BLIP-2 will not co-exist with this environment -- lavis needs numpy 1.x
+    builds and transformers pins that habitat's env does not have -- so it runs
+    where it does work, in the `ascent` conda env, behind the Flask server
+    ASCENT itself ships (`model_api/blip2itm_out.py`). That is not a workaround
+    bolted on: process-per-model over HTTP is ASCENT's own architecture, and
+    this speaks its wire format.
+
+    Falls back to a constant on any failure. A value map stuck at one value is
+    a value map that ranks nothing, which is visible in `value_errors` rather
+    than silently reshaping exploration.
+    """
+
+    def __init__(self, url: str = "http://localhost:13182/blip2itm",
+                 timeout_s: float = 10.0) -> None:
+        self.url = url
+        self.timeout_s = float(timeout_s)
+        self.n_calls = 0
+        self.n_errors = 0
+        self._warned = False
+
+    def reset(self) -> None:
+        self.n_calls = 0
+        self.n_errors = 0
+
+    def score(self, rgb: np.ndarray, texts: List[str]) -> np.ndarray:
+        import base64
+        import json as _json
+        import urllib.request
+
+        import cv2
+
+        out = np.zeros(len(texts), dtype=np.float32)
+        # No channel swap. ASCENT's own client hands the RGB array straight to
+        # `cv2.imencode` (`server_wrapper_out.py:59`) and the server decodes it
+        # and calls `Image.fromarray`, so the round trip preserves whatever was
+        # passed. Converting to BGR here would feed BLIP-2 channel-swapped
+        # images -- and it would still return plausible-looking scores.
+        ok, buf = cv2.imencode(".jpg", rgb)
+        if not ok:
+            self.n_errors += 1
+            return out
+        payload = base64.b64encode(buf.tobytes()).decode("ascii")
+        for i, text in enumerate(texts):
+            body = _json.dumps({"image": payload, "txt": text,
+                                "method": "cosine"}).encode()
+            req = urllib.request.Request(
+                self.url, data=body, headers={"Content-Type": "application/json"})
+            try:
+                with urllib.request.urlopen(req, timeout=self.timeout_s) as r:
+                    out[i] = float(_json.loads(r.read())["response"])
+                self.n_calls += 1
+            except Exception as exc:  # noqa: BLE001 -- any failure means no signal
+                self.n_errors += 1
+                if not self._warned:
+                    self._warned = True
+                    print(f"[blip2itm] unreachable at {self.url} ({exc}); "
+                          "value map will read 0 until it answers")
+        return out
+
+
 def build_image_text_scorer(cfg) -> Optional[ImageTextScorer]:
     """None when the value map is off, so nothing is loaded."""
     if not getattr(cfg.exploration, "value_map", False):
@@ -122,5 +192,11 @@ def build_image_text_scorer(cfg) -> Optional[ImageTextScorer]:
             model_name=getattr(cfg.exploration, "value_clip_name", "ViT-B/32"),
             device=cfg.detector.device,
             download_root=getattr(cfg.exploration, "value_clip_root", "data/clip"),
+        )
+    if model == "blip2itm":
+        return Blip2ItmScorer(
+            url=str(getattr(cfg.exploration, "value_blip2_url",
+                            "http://localhost:13182/blip2itm")),
+            timeout_s=float(getattr(cfg.exploration, "value_blip2_timeout_s", 10.0)),
         )
     raise ValueError(f"unknown value_model: {model}")

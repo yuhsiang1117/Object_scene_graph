@@ -981,3 +981,61 @@ def test_no_ranker_means_the_value_argmax():
     pts = np.array([[8.0, 0.0], [0.0, 8.0]])
     a._best_frontier(pts, np.zeros(2))
     assert "rank_calls" not in a.stats
+
+
+# ============================================================ BLIP-2 value map
+
+def test_the_blip2_scorer_speaks_ascents_wire_format(monkeypatch):
+    """ASCENT's server decodes with cv2 and calls `Image.fromarray`, and its own
+    client encodes the RGB array WITHOUT a channel swap
+    (`server_wrapper_out.py:59`). Swapping here would feed BLIP-2
+    channel-flipped images and still return plausible scores."""
+    import base64, json as _json
+    import cv2
+    from osg.perception.image_text import Blip2ItmScorer
+
+    sent = {}
+
+    class _Resp:
+        def __init__(self, body): self._b = body
+        def read(self): return self._b
+        def __enter__(self): return self
+        def __exit__(self, *a): return False
+
+    def fake_urlopen(req, timeout=None):
+        sent["body"] = _json.loads(req.data)
+        return _Resp(_json.dumps({"response": 0.42}).encode())
+
+    monkeypatch.setattr("urllib.request.urlopen", fake_urlopen)
+    rgb = np.zeros((8, 8, 3), np.uint8)
+    rgb[..., 0] = 255                       # pure RED in RGB terms
+    out = Blip2ItmScorer().score(rgb, ["a sofa"])
+    assert out[0] == pytest.approx(0.42)
+    assert sent["body"]["method"] == "cosine" and sent["body"]["txt"] == "a sofa"
+    back = cv2.imdecode(np.frombuffer(base64.b64decode(sent["body"]["image"]), np.uint8),
+                        cv2.IMREAD_ANYCOLOR)
+    assert back[..., 0].mean() > 200, "the array must round-trip unswapped"
+
+
+def test_an_unreachable_value_model_is_visible_not_silent(monkeypatch, capsys):
+    """A value map stuck at one value ranks nothing. That must show up as
+    errors rather than quietly reshaping exploration."""
+    from osg.perception.image_text import Blip2ItmScorer
+
+    def boom(req, timeout=None):
+        raise OSError("connection refused")
+
+    monkeypatch.setattr("urllib.request.urlopen", boom)
+    s = Blip2ItmScorer()
+    out = s.score(np.zeros((8, 8, 3), np.uint8), ["a sofa", "a bed"])
+    assert list(out) == [0.0, 0.0] and s.n_errors == 2 and s.n_calls == 0
+    assert "unreachable" in capsys.readouterr().out
+
+
+def test_the_factory_dispatches_on_value_model():
+    from osg.core.config import OSGConfig
+    from osg.perception.image_text import Blip2ItmScorer, build_image_text_scorer
+    cfg = OSGConfig()
+    cfg.exploration.value_map = True
+    cfg.exploration.value_model = "blip2itm"
+    assert isinstance(build_image_text_scorer(cfg), Blip2ItmScorer)
