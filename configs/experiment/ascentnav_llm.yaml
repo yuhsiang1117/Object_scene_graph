@@ -37,3 +37,12 @@ defaults:
 exploration:
   ranker: ascent
   ranker_topk: 3
+  # The DESCRIPTIONS are half the mechanism. ASCENT reads the room and objects
+  # from the frame that revealed each frontier (`each_step_rooms[step]` /
+  # `each_step_objects[step]`, llm_planner.py:418-419). The first run of this
+  # preset passed an empty SceneGraph instead: 308 calls, ZERO overrides, every
+  # area described identically as "unknown room". Places365 supplies the room.
+  frontier_desc: frame
+
+scene_graph:
+  room_classifier: place365

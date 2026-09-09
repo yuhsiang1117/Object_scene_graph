@@ -1039,3 +1039,72 @@ def test_the_factory_dispatches_on_value_model():
     cfg.exploration.value_map = True
     cfg.exploration.value_model = "blip2itm"
     assert isinstance(build_image_text_scorer(cfg), Blip2ItmScorer)
+
+
+# ============================================ frame-based frontier descriptions
+
+from osg.mapping.frontier import Frontier  # noqa: E402
+
+
+class _Room:
+    def __init__(self, label="kitchen"): self.label = label
+    def classify(self, rgb): return self.label
+
+
+def test_frontiers_are_described_by_the_frame_that_revealed_them():
+    """ASCENT's source is `each_step_rooms[step]` / `each_step_objects[step]`,
+    not a spatial query against an accumulated graph. The first LLM arm passed
+    an EMPTY SceneGraph, so every frontier read as "unknown room" and the model
+    had nothing to choose between -- 308 calls, zero overrides."""
+    from osg.perception.detector import Detection as _D  # noqa: F401  (shape only)
+    a = _agent()
+    a.room_classifier = _Room("kitchen")
+    a.obstacle_map.frontiers = np.array([[3.0, 0.0]])
+    f = _wall_frame([0, 0.88, 0], [1, 0.88, 0])
+    a._observe_semantics(f, [_det(label="sofa"), _det(label="chair")],
+                         np.zeros(2), 0.0)
+    got = a.frontier_semantics.describe(
+        Frontier(id=0, centroid_xy=np.array([3.0, 0.0]),
+                 cells=np.zeros((0, 2), int), size=0))
+    assert got is not None, "the frontier was never bound to a frame"
+    room, objects = got
+    assert room == "kitchen"
+    assert set(objects) == {"sofa", "chair"}
+    assert a.stats["frontiers_bound"] == 1
+
+
+def test_a_missing_room_classifier_is_survivable():
+    a = _agent()
+    assert a.room_classifier is None
+    a.obstacle_map.frontiers = np.array([[3.0, 0.0]])
+    a._observe_semantics(_wall_frame([0, 0.88, 0], [1, 0.88, 0]),
+                         [_det(label="bed")], np.zeros(2), 0.0)
+    got = a.frontier_semantics.describe(
+        Frontier(id=0, centroid_xy=np.array([3.0, 0.0]),
+                 cells=np.zeros((0, 2), int), size=0))
+    assert got is not None and got[1] == ["bed"]
+
+
+def test_a_raising_room_classifier_does_not_kill_the_step():
+    class _Boom:
+        def classify(self, rgb): raise RuntimeError("model gone")
+    a = _agent()
+    a.room_classifier = _Boom()
+    a.obstacle_map.frontiers = np.array([[3.0, 0.0]])
+    a._observe_semantics(_wall_frame([0, 0.88, 0], [1, 0.88, 0]),
+                         [_det(label="bed")], np.zeros(2), 0.0)
+    assert a.stats["frontiers_bound"] == 1
+
+
+def test_the_ranker_is_handed_the_frame_semantics():
+    seen = {}
+
+    class _R:
+        def pick(self, frontiers, target, sg=None, semantics=None, mode="frame"):
+            seen["semantics"], seen["mode"] = semantics, mode
+            return 0
+
+    a = _agent()
+    a.ranker = _R()
+    a._best_frontier(np.array([[8.0, 0.0], [0.0, 8.0]]), np.zeros(2))
+    assert seen["semantics"] is a.frontier_semantics and seen["mode"] == "frame"

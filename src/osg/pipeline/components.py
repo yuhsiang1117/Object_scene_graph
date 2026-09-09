@@ -187,7 +187,9 @@ def build_verifier(cfg):
     from ..verification.verifier import VLMVerifier
 
     client = ChatClient(
-        cfg.llm.base_url, cfg.verification.vlm_model, cfg.llm.api_key,
+        (getattr(cfg.verification, "base_url", "") or cfg.llm.base_url),
+        cfg.verification.vlm_model,
+        (getattr(cfg.verification, "api_key", "") or cfg.llm.api_key),
         cfg.llm.timeout_s, cfg.llm.max_image_px, cfg.llm.send_response_format,
     )
     return VLMVerifier(

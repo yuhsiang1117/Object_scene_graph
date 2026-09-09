@@ -1,0 +1,18 @@
+defaults:
+  - base_ollama
+
+# ASCENT's own planner model, served locally.
+#
+# The hosted NIM text endpoint returns `410 Gone` for every text model as of
+# 2026-09 (nemotron-nano-9b-v2, llama-3.1-8b, llama-3.3-70b all 410;
+# qwen2.5-7b-instruct 404), which silently disabled the LLM frontier ranker:
+# `AscentFrontierRanker.pick` returns index 0 on any failure, so the arm ran
+# with 308 calls and ZERO overrides and looked like a model that always agreed.
+#
+# ASCENT runs Qwen2.5-7B-Instruct behind its own server
+# (`model_api/qwen25_out.py`); this is the same model family through ollama, so
+# the ranker reads the model the paper used rather than a hosted substitute.
+#
+# The VISION endpoint on NIM is still alive, so `verification=nim` is unaffected
+# and should stay -- verify_calls were 193 with 0 errors on the same runs.
+text_model: qwen2.5:7b

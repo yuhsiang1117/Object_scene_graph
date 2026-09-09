@@ -150,3 +150,11 @@ class VerificationConfig:
     # Verification is rare (1-3 calls/episode) and precision-critical: the 3B
     # VLM rejected clear true positives in prompt-lab tests; 7B passed all.
     vlm_model: str = "qwen2.5vl:7b"
+    # Endpoint for the VLM, when it differs from the text model's. Empty means
+    # "use cfg.llm", which is how this has always worked. It exists because the
+    # two roles can live on different providers: as of 2026-09 the NIM TEXT
+    # models return 410 Gone while its vision model still answers, so the
+    # frontier ranker has to move to a local model without dragging the
+    # verifier -- measured at 0.850 on NIM against 0.750 locally -- with it.
+    base_url: str = ""
+    api_key: str = ""

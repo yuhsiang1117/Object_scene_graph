@@ -133,6 +133,7 @@ def run_eval(cfg) -> dict:
             # "search_room_saturation_free" "search_same_room_bonus"
             # "scan_on_arrival" "search_surface_mass" "search_unreached_credit"
             # "value_blip2_timeout_s" "value_blip2_url"
+            # "verify_api_key" "verify_base_url"
             # "stuck_escape_patience"
             # "select_every"
             # "selector" "stair_explored_rule" "stair_min_cells" "stair_prior"

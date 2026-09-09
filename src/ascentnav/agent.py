@@ -51,6 +51,7 @@ from osg.core.types import Detection, FrameData
 from osg.graph.scene_graph import SceneGraph
 from osg.mapping.frontier import Frontier
 from osg.eval.behaviour_log import BehaviourLog
+from osg.exploration.frontier_semantics import FrontierSemantics
 from osg.planning.escape import ActionHistoryEscape, DisplacementEscape
 
 from .constants import STAIR_CLASS_ID
@@ -91,6 +92,7 @@ class AscentNavAgent:
         image_text=None,
         pointnav=None,
         ranker=None,
+        room_classifier=None,
         stair_segmenter=None,
         profiler=None,
         **_ignored,
@@ -105,6 +107,20 @@ class AscentNavAgent:
         # away, which meant the arm was missing the mechanism the paper is named
         # for: "LLM-Driven Coarse-to-Fine Exploration".
         self.ranker = ranker
+        self.room_classifier = room_classifier
+        # ASCENT describes a frontier by what was seen in the FRAME that
+        # revealed it -- `object_map.each_step_rooms[step]` and
+        # `each_step_objects[step]` (llm_planner.py:418-419), bound via
+        # `extract_frontiers_with_image`. Not by a spatial query against an
+        # accumulated graph. The first cut of the LLM arm passed an EMPTY
+        # SceneGraph, so all top-k frontiers described identically as "unknown
+        # room" and the model had nothing to choose between: 308 calls, zero
+        # overrides.
+        self.frontier_semantics = FrontierSemantics(
+            match_radius_m=float(getattr(cfg.exploration, "frontier_desc_match_m", 1.0)),
+            fov_rad=float(np.radians(cfg.eval.hfov_deg)),
+            max_range_m=float(getattr(cfg.eval, "depth_max_m", 5.0)),
+        )
         self.stair_segmenter = stair_segmenter
         self.profiler = profiler
 
@@ -347,6 +363,7 @@ class AscentNavAgent:
             seg if seg is not None else zeros,
             pitch_deg, not self.climb.climbing, self.climb.reached, self.climb.direction,
         )
+        self._observe_semantics(frame, raw, robot_xy, heading)
         self._stair_diag(seg, stair_mask)
         self._trace(frame, robot_xy, heading, pitch_deg, seg, stair_mask)
         self.behaviour.annotate(nfront=int(np.atleast_2d(
@@ -443,6 +460,33 @@ class AscentNavAgent:
                 self._robot_px(robot_xy),
                 self.cfg.agent.agent_radius * om.pixels_per_meter)),
         )
+
+    def _observe_semantics(self, frame, dets, robot_xy, heading) -> None:
+        """Record this frame's room and objects, and bind any new frontier to it.
+
+        ASCENT's sources are a room classifier and RAM++ tags; ours are
+        Places365 and YOLOE's labels. Same two fields, same binding rule -- a
+        frontier is described by the frame that first had it in view.
+        """
+        room = None
+        if self.room_classifier is not None:
+            try:
+                room = self.room_classifier.classify(frame.rgb)
+            except Exception:
+                room = None
+        labels = sorted({d.label.replace("_", " ") for d in dets})
+        self.frontier_semantics.observe(
+            self.step_count, room, labels,
+            camera_xy=np.asarray(robot_xy, dtype=float),
+            heading_xy=np.array([np.cos(heading), np.sin(heading)], dtype=float),
+        )
+        fr = np.atleast_2d(np.asarray(self.obstacle_map.frontiers)).reshape(-1, 2)
+        if len(fr):
+            bound = self.frontier_semantics.bind(
+                [Frontier(id=i, centroid_xy=p, cells=np.zeros((0, 2), dtype=int), size=0)
+                 for i, p in enumerate(fr)], self.step_count)
+            if bound:
+                self.stats["frontiers_bound"] = self.stats.get("frontiers_bound", 0) + bound
 
     def _stair_diag(self, seg, stair_mask) -> None:
         """Counters for the two ways the stair path can be silently dead: the
@@ -709,7 +753,8 @@ class AscentNavAgent:
                          cells=np.zeros((0, 2), dtype=int), size=0)
                 for i, p in enumerate(sorted_pts[: self.llm_topk])]
         try:
-            idx = int(self.ranker.pick(cand, self.target, sg=self.scene_graph))
+            idx = int(self.ranker.pick(cand, self.target, sg=self.scene_graph,
+                                       semantics=self.frontier_semantics, mode="frame"))
         except Exception:
             self.stats["rank_errors"] = self.stats.get("rank_errors", 0) + 1
             idx = 0
