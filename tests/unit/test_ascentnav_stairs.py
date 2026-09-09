@@ -798,3 +798,73 @@ def test_the_agent_feeds_the_log_through_a_real_step():
     for key in ("n", "xy", "yaw", "h", "state", "act", "ndet", "explored_m2", "on_stairs"):
         assert key in row, f"{key} missing from the behaviour row"
     assert a.step_trace is a.behaviour.rows, "the wire format must stay the same list"
+
+
+# ======================================================== displacement escape
+
+def _stuck(patience=4, window=12, burst=3):
+    from osg.planning.escape import DisplacementEscape
+    return DisplacementEscape(patience, window, burst)
+
+
+def test_it_fires_on_forwards_that_went_nowhere():
+    e = _stuck(patience=3)
+    for _ in range(2):
+        e.observe("move_forward", 0.0)
+        assert e("move_forward") == "move_forward"
+    e.observe("move_forward", 0.0)
+    assert e("move_forward") == "turn_right", "three dead forwards must break out"
+    assert e.n_escapes == 1
+
+
+def test_forwards_that_moved_do_not_count():
+    e = _stuck(patience=3)
+    for _ in range(10):
+        e.observe("move_forward", 0.25)
+        assert e("move_forward") == "move_forward"
+    assert e.n_escapes == 0
+
+
+def test_turns_are_ignored_entirely():
+    """The action-history guard fired zero times in 100 episodes because the
+    real stream alternates turn/turn/blocked-forward. This one must not care
+    what the turns are doing."""
+    e = _stuck(patience=2)
+    for _ in range(20):
+        e.observe("turn_left", 0.0)
+        assert e("turn_left") == "turn_left"
+    assert e.n_escapes == 0
+
+
+def test_the_escape_is_a_burst_not_one_step():
+    """One turn does not clear a pocket; S42's wedge needed a deliberate turn
+    away before forward meant anything."""
+    e = _stuck(patience=2, burst=3)
+    e.observe("move_forward", 0.0); e.observe("move_forward", 0.0)
+    assert [e("move_forward") for _ in range(3)] == ["turn_right"] * 3
+    assert e("move_forward") == "move_forward", "and then it hands control back"
+
+
+def test_old_evidence_ages_out_of_the_window():
+    e = _stuck(patience=3, window=4)
+    e.observe("move_forward", 0.0)
+    for _ in range(4):
+        e.observe("move_forward", 0.25)      # window fills with successes
+    e.observe("move_forward", 0.0)
+    assert e("move_forward") == "move_forward", "one old block must not persist"
+
+
+def test_it_is_off_at_patience_zero():
+    e = _stuck(patience=0)
+    for _ in range(20):
+        e.observe("move_forward", 0.0)
+    assert e("move_forward") == "move_forward"
+
+
+def test_the_agent_measures_displacement_the_way_the_recorder_does():
+    a = _agent(stuck_escape_patience=3)
+    f1 = _wall_frame([0, 0.88, 0], [1, 0.88, 0])
+    f2 = _wall_frame([0.25, 0.88, 0], [1.25, 0.88, 0])
+    a.act(f1); a.act(f2)
+    assert a._last_moved == pytest.approx(0.25, abs=1e-6)
+    assert a.stuck.patience == 3

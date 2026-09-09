@@ -56,6 +56,7 @@
   "agent.stair_overshoot_m": 1.5,
   "agent.stair_reach_m": 0.6,
   "agent.stair_up_mode": "detector",
+  "agent.stuck_escape_patience": 0,
   "agent.success_distance": 0.1,
   "agent.terminal_engage_m": 1.0,
   "agent.terminal_percentile": 5.0,

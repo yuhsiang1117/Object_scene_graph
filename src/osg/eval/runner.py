@@ -132,6 +132,7 @@ def run_eval(cfg) -> dict:
             # "search_room_saturation" "search_room_saturation_floor"
             # "search_room_saturation_free" "search_same_room_bonus"
             # "scan_on_arrival" "search_surface_mass" "search_unreached_credit"
+            # "stuck_escape_patience"
             # "select_every"
             # "selector" "stair_explored_rule" "stair_min_cells" "stair_prior"
             # "stair_up_mode" "terminal_percentile" "terminal_requires_detection"

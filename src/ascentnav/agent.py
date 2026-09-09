@@ -50,7 +50,7 @@ import numpy as np
 from osg.core.types import Detection, FrameData
 from osg.graph.scene_graph import SceneGraph
 from osg.eval.behaviour_log import BehaviourLog
-from osg.planning.escape import ActionHistoryEscape
+from osg.planning.escape import ActionHistoryEscape, DisplacementEscape
 
 from .constants import STAIR_CLASS_ID
 from osg.perception.stair_seg import MIN_STAIR_PIXELS
@@ -114,6 +114,7 @@ class AscentNavAgent:
         self.stop_radius = float(getattr(a, "pointnav_stop_radius", 0.9))
         self.abandon_steps = int(getattr(a, "approach_abandon_steps", 100) or 100)
         self.escape = ActionHistoryEscape(int(getattr(a, "escape_window", 30) or 30))
+        self.stuck = DisplacementEscape(int(getattr(a, "stuck_escape_patience", 0) or 0))
 
         # S47's commit gate. Off by default: it changes what the agent is
         # willing to walk to, so it is an A/B, not a bug fix. The thresholds are
@@ -173,9 +174,13 @@ class AscentNavAgent:
         self._last_dets: list = []
         self._pn_goal: Optional[np.ndarray] = None
         self._seg_upper = False
+        self._last_action: Optional[str] = None
+        self._last_moved = 1.0
+        self._last_xy: Optional[np.ndarray] = None
         self._stick_steps = 0
         self._last_frontier_dist = 0.0
         self.escape.reset()
+        self.stuck.reset()
 
         # Runner interface
         self.stats: dict = {}
@@ -277,7 +282,15 @@ class AscentNavAgent:
         if self._state != prev:
             self.state_log.append((self.step_count, self._state))
         if self._state != "done":
+            # The realised-displacement guard runs BEFORE the action-history
+            # one: it is the specific failure, and its override should not be
+            # second-guessed by a rule that never fires anyway.
+            self.stuck.observe(self._last_action, self._last_moved)
+            action = self.stuck(action)
             action = self.escape(action)
+            self.stats["stuck_escapes"] = self.stuck.n_escapes
+            self.stats["stuck_forced"] = self.stuck.n_forced
+        self._last_action = action
         self.behaviour.annotate(act=action, state=self._state)
         self.step_count += 1
         return action
@@ -293,6 +306,12 @@ class AscentNavAgent:
         tf = tf_camera_to_episodic(frame, self.camera_height)
         depth_n = normalise_depth(frame.depth, self.min_depth, self.max_depth)
         robot_xy, heading = robot_xy_heading(frame)
+        # Realised displacement since the previous step, measured exactly as
+        # `BehaviourLog` measures it, so the guard and the log cannot disagree
+        # about whether the agent moved.
+        self._last_moved = (1.0 if self._last_xy is None
+                            else float(np.linalg.norm(robot_xy - self._last_xy)))
+        self._last_xy = np.asarray(robot_xy, dtype=float).copy()
         pitch_deg = float(np.degrees(-camera_pitch(frame)))
         zeros = np.zeros(frame.depth.shape[:2], np.uint8)
 

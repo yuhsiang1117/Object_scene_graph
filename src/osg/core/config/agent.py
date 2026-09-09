@@ -210,6 +210,12 @@ class AgentConfig:
     # MEASURED NULL on SR at both 0.70 and 0.60 (S48, S49) -- far-commits fall
     # 22 -> 8 and SR does not move -- so it stays off; the flag is kept because
     # the mechanism is real and n=100 cannot resolve a 2-3 episode effect.
+    # S51: escape a wedge on REALISED displacement. `escape_window` below reads
+    # the commanded action stream and fired zero times across 100 episodes while
+    # 793 forwards produced no motion in 69 of them -- the stream alternates
+    # turn/turn/blocked-forward, so neither of its predicates ever holds. This
+    # counts forwards that went nowhere. 0 disables.
+    stuck_escape_patience: int = 0
     commit_gate: bool = False
     # S50: turn in place on ARRIVING at a frontier. 62% of the steps the agent
     # spends within 3 m of the target object have it outside the FOV. MEASURED

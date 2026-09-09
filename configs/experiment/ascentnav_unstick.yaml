@@ -1,0 +1,31 @@
+# @package _global_
+#
+# S52: `ascentnav` plus the realised-displacement escape.
+#
+#   python scripts/run_eval.py +experiment=ascentnav_unstick eval=scenes20_ep0to4
+#
+# Control: `+experiment=ascentnav` (`outputs/s68_behaviour100`, 54.0%), one
+# field apart.
+#
+# The recorder measured it: across 100 episodes, 793 commanded forwards produced
+# no displacement, in 69 of the 100 -- and `escape_window`, the guard that
+# exists for this, fired ZERO times. It reads the commanded action stream and
+# needs 30 consecutive turns or 30 consecutive forwards; the real stream
+# alternates turn / turn / blocked-forward, so neither predicate ever holds.
+#
+# EXPECTATION, and it is deliberately modest. The same recording bounds the
+# prize: the median episode has 2 blocked forwards, which is a brush against a
+# doorframe, and only 8 of 100 exceed 20%. Those 8 score 50.0% against 54.3%
+# for the rest. So this is worth ~1-2 episodes, which S50's power analysis says
+# is INVISIBLE at n=100 (10 discordant pairs need 9-1 to reach p<0.05).
+#
+# It is therefore not run to move SR. It is run because a guard that never fires
+# while its failure occurs 793 times is a defect, and because the mechanism
+# counter -- `stuck_escapes` -- either goes up or the fix does not work. Judge it
+# on that counter and on `blocked_forwards` falling, not on SR.
+
+defaults:
+  - ascentnav
+
+agent:
+  stuck_escape_patience: 4
