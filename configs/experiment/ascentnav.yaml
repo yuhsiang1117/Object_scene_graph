@@ -1,47 +1,43 @@
 # @package _global_
 #
-# S39/S41: ASCENT's navigation pipeline reimplemented in src/ascentnav.
+# S71: ASCENT's control flow, on ASCENT's models, in OSG's harness.
 #
-#   python scripts/download_weights.py --pointnav --rednet    # once
+#   bash scripts/serve_perception.sh                          # five servers
 #   python scripts/run_eval.py +experiment=ascentnav eval=scenes20_ep0to4
 #
-# THE DEFAULT ARM. `final_sensor` inherits this preset, so this file is what the
-# headline sensor-only number is produced with. Measured on `scenes20_ep0to4`:
-# 58.0% SR / 0.285 SPL, 66.7% same-floor, 27.3% cross-floor (`outputs/s41_stairs`),
-# against 42.0% for the S30-S38 port chain (`+experiment=ascent_sensor`, still
-# reachable by name).
+# THIS IS THE DEFAULT CONFIG, kept under its name so earlier runs and
+# docs/AB_RESULTS.md stay comparable; `python scripts/run_eval.py` with no
+# preset composes to exactly this (pinned by the fingerprint golden).
 #
-# Where the earlier arms put ASCENT's control flow on OSG's maps (S37), this
-# runs ASCENT's OWN maps -- ObstacleMap, ValueMap, ObjectPointCloudMap, vendored
-# from the reference implementation -- under ASCENT's control flow. Those maps
-# differ from OSG's in kind, not in parameters: a fog-of-war reveal over a
-# maintained navigable map with a [0.61, 0.88] obstacle band and
-# `detect_frontier_waypoints`, against OSG's per-frame depth raycast over
-# [0.15, 1.5] with contour frontiers.
+# `src/ascentnav/agent.py` is a transcription of `Ascent_Policy.act` and the
+# `Map_Controller` it drives, for one environment, on the vendored ASCENT maps,
+# with every rule cited to its reference line. The previous port scored 54.0%
+# on this split against the reference's 65.0%, and seventeen configuration and
+# perception arms never beat it; a paired trace diagnosis showed the loss was
+# BEFORE the target is ever in frame -- frontiers retired early and same-floor
+# stair climbing (17.5% of steps vs 9.2%), plus a STOP that could fire on step
+# 12 with the opening scan unfinished. Both are control flow; both are ported.
 #
-# Three substitutions, each the OSG equivalent of something that cannot run
-# here, and each already a documented deviation:
-#   detector     YOLOE for D-FINE + GroundingDINO + MobileSAM (`transformers`
-#                absent) -- and S15 measured the detector as worth ZERO here
-#   value map    CLIP for BLIP-2 ITM (`lavis` absent)
-#   LLM          the hosted client for a local Qwen2.5-7B
+# THE MODELS are the reference's own, served as ASCENT itself serves them:
+#   detector    D-FINE, closed-set COCO, target detections at 0.8,
+#               one MobileSAM mask per detection, EVERY detection ingested
+#   gate        the value map's BLIP-2 cosine >= 0.15, latched, never cleared
+#   stairs      RedNet AND GroundingDINO "stair" >= 0.60 (the strict fusion)
+#   prompt      RAM++ tags + Places365 room per step, ASCENT's prompts verbatim
+#   LLM         Qwen2.5-7B, local, ASCENT's system message
 #
-# The object scene graph is built from the same object cloud and is read-only
-# with respect to every navigation decision.
+# `detector.strict` / `exploration.value_strict`: a served model that does not
+# answer raises `PerceptionUnavailable` instead of returning a neutral value.
+# Under this gate a silent 0 from BLIP-2 is an agent that never STOPs.
 
 defaults:
-  - ascent_sensor
+  - override /agent: s71
+  - override /detector: dfine
+  - override /scene_graph: place365
+  - override /exploration: s71
+  - override /llm: qwen_local
+  - override /verification: s71
+  - override /eval: scenes20_ep0to4
 
-agent:
-  policy: ascentnav
-
-  # ASCENT runs RedNet every step (`ascent_policy.py:151, 424`) and the stair
-  # maps are dead without it: with `rednet_stairs: false` the fused mask is
-  # empty on every frame and the agent has no floor-transition capability at
-  # all, which is what left the first s39 run at 0.0% on the 21 cross-floor
-  # episodes.
-  rednet_stairs: true
-  # `rednet` unions the two stair inputs instead of ANDing them; see
-  # `ascentnav/agent.py::_stair_det_mask` for the recall measurement that
-  # motivates it. `ascent` restores the strict fusion.
-  stair_up_mode: rednet
+mapping:
+  multi_floor: true

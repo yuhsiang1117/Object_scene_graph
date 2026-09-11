@@ -127,3 +127,42 @@ def test_transform_matches_the_ascent_helper_exactly():
     assert np.allclose(tf[:3, 3], [1.0, 2.0, 3.0])
     assert np.allclose(tf[:2, :2], [[np.cos(0.3), -np.sin(0.3)],
                                     [np.sin(0.3), np.cos(0.3)]])
+
+
+# ================================================== episode-frame anchoring
+#
+# A12: ASCENT's maps are centred on the episode start (GPS/compass); the port
+# used raw world coordinates, whose 40 m half-extent was being spent on scenes
+# that start 23 m from the world origin.
+
+def test_the_start_pose_maps_to_the_origin_facing_forward():
+    from ascentnav.geometry import EpisodeAnchor
+    anchor = EpisodeAnchor(np.array([5.0, -3.0]), np.radians(90.0))
+    assert np.allclose(anchor.to_episodic(np.array([5.0, -3.0])), [0.0, 0.0])
+    assert anchor.heading_to_episodic(np.radians(90.0)) == pytest.approx(0.0)
+
+
+def test_a_point_ahead_at_the_start_is_on_the_positive_x_axis():
+    from ascentnav.geometry import EpisodeAnchor
+    anchor = EpisodeAnchor(np.array([5.0, -3.0]), np.radians(90.0))
+    ahead = np.array([5.0, -2.0])                     # one metre along heading 90 deg (+y)
+    assert np.allclose(anchor.to_episodic(ahead), [1.0, 0.0], atol=1e-9)
+
+
+def test_anchoring_round_trips():
+    from ascentnav.geometry import EpisodeAnchor
+    anchor = EpisodeAnchor(np.array([-2.0, 7.0]), 0.7)
+    for p in ([0.0, 0.0], [3.0, -1.0], [-4.5, 2.25]):
+        assert np.allclose(anchor.to_world(anchor.to_episodic(np.array(p))), p, atol=1e-9)
+
+
+def test_rho_theta_is_invariant_under_anchoring():
+    """The mover's polar goal must not depend on which frame the map used."""
+    from ascentnav.geometry import EpisodeAnchor
+    from osg.planning.pointnav_driver import rho_theta
+    anchor = EpisodeAnchor(np.array([1.0, 2.0]), 0.4)
+    agent_w, head_w, goal_w = np.array([2.0, 3.0]), 1.1, np.array([4.0, 1.0])
+    r0, t0 = rho_theta(agent_w, head_w, goal_w)
+    r1, t1 = rho_theta(anchor.to_episodic(agent_w), anchor.heading_to_episodic(head_w),
+                       anchor.to_episodic(goal_w))
+    assert r0 == pytest.approx(r1) and t0 == pytest.approx(t1)

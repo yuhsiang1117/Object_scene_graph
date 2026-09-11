@@ -92,6 +92,27 @@ RUN pip install --no-cache-dir --no-deps salesforce-lavis==1.0.2 \
        "supervision==0.25.1" openpyxl "yapf==0.43.0" \
     && pip install --no-cache-dir --no-deps "recognize-anything @ git+https://github.com/xinyu1205/recognize-anything.git"
 
+# Four imports that requirements.txt never declares, each found by a server or
+# the policy failing at import time:
+#
+#  - scikit-image: `ascent/llm_planner.py` imports skimage.metrics.ssim, so the
+#    eval process dies before habitat starts. 0.19.3 is the last line built
+#    against numpy <1.24.
+#  - faster-coco-eval + calflops + accelerate: pulled in transitively by
+#    `from src.core import YAMLConfig` in model_api/dfine_out.py -- D-FINE's
+#    package __init__ imports its TRAINING stack (data/, nn/criterion/,
+#    misc/profiler_utils) even though only inference is used here. 1.6.7 is the
+#    floor for `faster_coco_eval.utils.pytorch`, which 1.6.5 does not have.
+#    calflops and accelerate go in --no-deps: accelerate's dependency solver
+#    otherwise pulls a transformers newer than the 4.37.0 pinned below.
+#
+# Without these, D-FINE is the only server that fails, and the run does NOT
+# crash -- model_api's clients swallow connection errors -- so ASCENT silently
+# evaluates with one of its two detectors dead. Check scripts/check_vlm_servers.sh
+# reports 6/6 before trusting any SR number.
+RUN pip install --no-cache-dir "scikit-image==0.19.3" "faster-coco-eval==1.6.7" \
+    && pip install --no-cache-dir --no-deps calflops "accelerate==0.26.1"
+
 # LAST, and deliberately: ASCENT's own override of lavis's transformers pin.
 # 4.37.0 is the floor for Qwen2.5 and works with BLIP-2 in practice, which is
 # what lets all six model servers share one environment.

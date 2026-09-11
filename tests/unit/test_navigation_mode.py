@@ -228,7 +228,7 @@ def _goto_frontier_agent(rule, **overrides):
     from .test_nav_agent import make_agent, make_cfg
 
     agent = make_agent(make_cfg(
-        frontier_stick_rule=rule, frontier_stick_m=0.3, frontier_stick_steps=20,
+        frontier_stick_rule=rule,
         **overrides,
     ))
     agent.state = State.GOTO_FRONTIER

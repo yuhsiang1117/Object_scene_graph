@@ -1,0 +1,8 @@
+# The S71 default: no VLM verifier -- the reference has none; ASCENT's gate is
+# the value map's BLIP-2 cosine (`agent.blip_gate_threshold`). The NIM fields
+# are kept so `verification.enabled=true` on the CLI is a working A/B.
+defaults:
+  - nim
+
+enabled: false
+reject_cooldown_steps: 100

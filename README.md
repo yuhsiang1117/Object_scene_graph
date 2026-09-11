@@ -30,19 +30,19 @@ how it got here):
   the goal list; rejects detector mislabels (e.g. a stool detected as a chair)
   and unreachable / non-goal instances, then keeps exploring.
 
-> **Status (2026-08):** best config (`+experiment=full_v1_navmesh`) scores
-> **46% SR on full v1** (5 eps/scene, 100 eps), SPL 0.215 — up from ~18% at the
-> start of the SR-gap investigation. **Single-floor: 71.4%** (above the old ROS
-> stack's 54%); **multi-floor: 32.3%**, up from 24.6% before the multi-floor
-> work. **Cross-floor episodes are 4.2%** (1/24) — off zero for the first time,
-> but still the dominant loss: the agent now reaches other storeys reliably and
-> does not find the target once there.
+> **Status (2026-09):** the default config is the S71 arm — ASCENT's control
+> flow (`src/ascentnav/`) on ASCENT's served perception models, sensor-only —
+> at **63.0% SR / 0.36 SPL on `scenes20_ep0to4`** (100 HM3D v1 episodes);
+> native ASCENT scores 65.0% / 0.36 on the same episodes, the previous port
+> 54.0%. Same-floor 75.6%, cross-floor 18.2%.
 >
-> See **[docs/INVESTIGATION.md](docs/INVESTIGATION.md)** for the SR-gap A/Bs and
-> **[docs/MULTI_FLOOR.md](docs/MULTI_FLOOR.md)** for the multi-floor literature
-> survey, results, and two documented negative results. Note from that work:
-> **runs are not reproducible while the VLM verifier is on** — use
-> `verification=off` for any A/B meant to prove two configs equivalent.
+> **[docs/USAGE.md](docs/USAGE.md)** is the how-to: model servers, running,
+> comparing against ASCENT, variants. **[docs/AB_RESULTS.md](docs/AB_RESULTS.md)**
+> (S71) has the diagnosis and the paired result; **[docs/INVESTIGATION.md](docs/INVESTIGATION.md)**
+> and **[docs/MULTI_FLOOR.md](docs/MULTI_FLOOR.md)** the earlier work. Note from
+> that work: **runs are not reproducible while the VLM verifier is on** — the
+> default has it off; use `verification=off` on legacy presets for any A/B
+> meant to prove two configs equivalent.
 
 ## Quick start
 
@@ -99,11 +99,16 @@ local model instead.
 ### Running an eval
 
 ```bash
-python scripts/run_eval.py eval=hm3d_val_mini            # 3-episode smoke eval
-python scripts/run_eval.py eval=hm3d_val                 # full HM3D val (v2), default detector/LLM
-python scripts/run_eval.py +experiment=matched_single_floor          # a named experiment preset
-python scripts/run_eval.py +experiment=full_v1_navmesh eval.debug_frames=true   # current best config, full debug
+bash scripts/serve_perception.sh                         # the five ASCENT model servers (once)
+python scripts/run_eval.py                               # the default: S71 on scenes20_ep0to4 (100 eps)
+python scripts/run_eval.py eval.num_episodes=3           # smoke
+python scripts/run_eval.py +experiment=final_sensor      # the full v1 val split
+python scripts/run_eval.py +experiment=matched_single_floor          # a legacy preset (old base, see docs/USAGE.md)
+python scripts/compare_ascent_osg.py relative_work/ascent/debug/behaviour_100 outputs/<run>   # paired vs ASCENT
 ```
+
+The default needs the servers and a local ollama with `qwen2.5:7b`; it refuses
+to start if any is down. See [docs/USAGE.md](docs/USAGE.md).
 
 ### Authored YCB benchmark
 
@@ -185,13 +190,15 @@ names carry the scene because HM3D episode ids repeat across scenes.
 Hydra groups under `configs/` — override on the CLI (`group=name`) or compose a
 whole preset with `+experiment=name`:
 
-| group | options |
+| group | options (**default** = the S71 arm) |
 |---|---|
-| `detector` | `yoloe` (11l, 640px), `yoloe_small` (11s, 512px) |
-| `llm` | `nim` (NVIDIA hosted, default), `ollama` (local) |
-| `exploration` | `llm_text`, `nearest`, `sweep`, plus ASCENT/value/floor-aware alternatives |
-| `verification` | `nim` (forced-choice VLM, **default**), `nim_terminal` (verify at STOP), `off` |
-| `eval` | `hm3d_val` (v2), `hm3d_val_v1` (v1, matched-to-old), `hm3d_val_single_floor`, `hm3d_val_mini`, `ycb_authored` |
+| `agent` | **`s71`** (ascentnav policy, PointNav mover), `default` (OSG's `nav_agent`) |
+| `detector` | **`dfine`** (served, strict), `yoloe` (11l, 640px), `yoloe_small` (11s, 512px) |
+| `llm` | **`qwen_local`** (ollama qwen2.5:7b), `nim` (NVIDIA hosted), `ollama` |
+| `exploration` | **`s71`** (ASCENT planner + BLIP-2 value map), `llm_text`, `nearest`, `sweep`, `value` |
+| `verification` | **`s71`** (off), `nim` (forced-choice VLM), `nim_terminal` (verify at STOP), `off` |
+| `scene_graph` | **`place365`**, `default` |
+| `eval` | **`scenes20_ep0to4`** (100 v1 eps), `hm3d_val_v1_full`, `hm3d_val` (v2), `hm3d_val_v1`, `hm3d_val_single_floor`, `hm3d_val_mini`, `ycb_authored` |
 | `floor` | multi-floor support; all off by default, enabled by `+experiment=full_v1_navmesh` (see docs/MULTI_FLOOR.md) |
 
 Key agent flags (CLI: `agent.<flag>=...`): `navigation`

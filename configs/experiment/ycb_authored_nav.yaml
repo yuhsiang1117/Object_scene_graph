@@ -17,6 +17,7 @@
 #   # explicit 6 GB fallback (never selected automatically)
 #   python scripts/run_eval.py +experiment=ycb_authored_nav detector=yoloe_small
 defaults:
+  - /legacy_defaults            # the pre-S71 base this preset was measured on
   - override /detector: yoloe
   - override /exploration: sweep
   - override /verification: "off"

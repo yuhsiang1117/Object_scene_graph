@@ -1,0 +1,15 @@
+# The S71 default: ASCENT's control flow (`src/ascentnav/agent.py`), sensor-only,
+# on the frozen PointNav mover. 63.0% SR on `scenes20_ep0to4` (docs/AB_RESULTS.md S71).
+defaults:
+  - base_default
+
+policy: ascentnav
+navigation: pointnav
+rednet_stairs: true
+stair_up_mode: ascent            # RedNet AND GroundingDINO; `rednet` = the union A/B
+approach_abandon_steps: 100
+escape_window: 30
+frontier_stick_rule: closing
+terminal_requires_detection: false
+terminal_rule: nearest_point
+terminal_stop_m: 0.4

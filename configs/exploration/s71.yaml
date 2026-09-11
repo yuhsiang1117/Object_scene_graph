@@ -1,0 +1,14 @@
+# The S71 default: the vendored ASCENT planner over the BLIP-2 value map,
+# with RAM++ tags in the prompt. Served models: `bash scripts/serve_perception.sh`.
+defaults:
+  - base_vlm
+
+extractor: contour
+selector: ascent
+ranker: ascent
+floor_llm: true
+continuity_weight: 2.0
+value_map: true
+value_model: blip2itm
+value_strict: true               # an unreachable BLIP-2 raises instead of scoring 0
+ram_tags: true

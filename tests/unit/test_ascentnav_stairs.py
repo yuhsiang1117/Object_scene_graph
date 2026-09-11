@@ -1,8 +1,10 @@
-"""ASCENT's stair machinery in ascentnav.
+"""ASCENT's stair machinery in ascentnav, and the maps and instrumentation
+around it.
 
 The first ascentnav run scored 0.0% on all 21 cross-floor episodes because the
 ObstacleMap was handed zeros for both stair masks -- everything downstream
-existed and never fired. These pin the pieces that make it fire.
+existed and never fired. These pin the pieces that make it fire, and (S71)
+the transcription of `Map_Controller`'s climb state machine that drives them.
 """
 from __future__ import annotations
 
@@ -11,10 +13,11 @@ import pytest
 
 from ascentnav.stairs import (
     CLIMB_PAUSED_ABANDON,
-    ClimbState,
+    StairController,
     carrot_waypoint,
     ratchet_carrot,
     robot_on_stairs,
+    stairs_in_upper_half,
 )
 
 
@@ -36,55 +39,6 @@ def test_robot_on_stairs_handles_an_empty_map():
 def test_footprint_is_clipped_at_the_map_edge():
     m = np.zeros((20, 20), np.uint8); m[0, 0] = 1
     assert robot_on_stairs(m, np.array([[0.0, 0.0]]), 2) is True
-
-
-# ----------------------------------------------------------------- the state
-
-def test_stuck_on_approach_resets_when_the_distance_closes():
-    c = ClimbState(); c.start(1)
-    for i in range(50):                      # closing 0.5 m each call
-        assert c.stuck_on_approach(20.0 - 0.5 * i) is False
-
-
-def test_stuck_on_approach_fires_when_it_does_not():
-    c = ClimbState(); c.start(1)
-    fired = any(c.stuck_on_approach(5.0) for _ in range(40))
-    assert fired, "30 steps without closing 0.3 m must retire the staircase"
-
-
-def test_a_long_but_progressing_approach_is_never_retired():
-    """The budget is on stalling, not on walking (`ascent_policy.py:963-981`):
-    both counters advance only on a step that failed to close 0.3 m, so a
-    staircase 30 m away stays a valid target the whole way."""
-    c = ClimbState(); c.start(1)
-    d = 30.0
-    for _ in range(90):
-        d -= 0.31
-        assert c.stuck_on_approach(d) is False
-
-
-def test_the_total_budget_catches_an_intermittent_staller():
-    """60 stalled steps retire it even when the agent creeps often enough to
-    keep resetting the 30-step consecutive counter."""
-    c = ClimbState(); c.start(1)
-    d, fired = 30.0, False
-    for i in range(400):
-        if i % 20 == 19:
-            d -= 0.31                        # one real step of progress
-        if c.stuck_on_approach(d):
-            fired = True
-            break
-    assert fired and c.stick_steps < 30
-
-
-def test_start_clears_previous_state():
-    c = ClimbState(); c.start(1)
-    c.reached = c.reached_centroid = True; c.get_close_steps = 40
-    c.start(2)
-    assert c.direction == 2 and not c.reached and not c.reached_centroid
-    assert c.get_close_steps == 0
-
-
 # ---------------------------------------------------------------- the carrot
 
 def test_carrot_bearing_is_ccw_in_ascents_frame():
@@ -140,13 +94,10 @@ def test_no_recorded_end_means_no_ratchet():
                        _to_px, 20.0, False),
         fresh)
 
-
-# ============================================================ the state machine
+# ================================================================ fixtures
 #
-# These drive `AscentNavAgent`'s climb branch directly. The agent is built with
-# a stub detector and a scripted mover, so no weights are touched.
-
-import numpy as np  # noqa: E402  (kept beside the agent tests for readability)
+# These drive `AscentNavAgent` directly. The agent is built with a stub
+# detector and a scripted mover, so no weights and no servers are touched.
 
 from ascentnav.agent import AscentNavAgent  # noqa: E402
 from osg.perception.detector import StubDetector  # noqa: E402
@@ -164,6 +115,7 @@ def _agent(driver=None, **over):
     cfg = OSGConfig()
     cfg.agent.navigation = "pointnav"
     cfg.agent.initial_scan = False
+    cfg.agent.stair_up_mode = "ascent"             # what the preset sets; passive entry needs it
     for k, v in over.items():
         setattr(cfg.agent, k, v)
     a = AscentNavAgent(cfg, StubDetector(), AsyncScorer(_StubScorer()),
@@ -173,8 +125,14 @@ def _agent(driver=None, **over):
 
 
 def _paint_stairs(agent, direction=1, xy=(2.0, 0.0), r=6):
-    """Put a staircase on the map where the ObstacleMap would have put one."""
+    """Put a staircase on the map where the ObstacleMap would have put one.
+
+    Also moves the floor past the stairwell-reinitialisation window
+    (`ascent_policy.py:709-713` fires within the first 50 steps of a floor
+    whenever an unexplored direction has no frontier yet), so these tests
+    exercise the branch AFTER it, which is where a real climb starts."""
     om = agent.obstacle_map
+    om._floor_num_steps = 60
     m = om._up_stair_map if direction == 1 else om._down_stair_map
     c = om._xy_to_px(np.atleast_2d(np.asarray(xy, dtype=float)))[0]
     m[int(c[1]) - r:int(c[1]) + r, int(c[0]) - r:int(c[0]) + r] = 1
@@ -190,135 +148,7 @@ DEPTH = np.zeros((48, 64), np.float32)
 DEPTH[:, 32] = 1.0                                # far pixel dead ahead
 
 
-def test_an_exhausted_floor_with_a_staircase_starts_climbing():
-    a = _agent()
-    _paint_stairs(a)
-    action = a._explore(np.zeros(2), 0.0, DEPTH, 0.0)
-    assert a.climb.climbing and a.climb.direction == 1
-    assert a._state == "climb"
-    # and it starts DRIVING on the same step rather than turning
-    assert action == "move_forward"
-
-
-def test_a_floor_with_frontiers_does_not_climb():
-    """The trigger is 'no frontiers left', not 'stairs are visible'
-    (`ascent_policy.py:648-680`)."""
-    a = _agent()
-    _paint_stairs(a)
-    a.obstacle_map.frontiers = np.array([[5.0, 5.0]])
-    a._explore(np.zeros(2), 0.0, DEPTH, 0.0)
-    assert not a.climb.climbing
-
-
-def test_a_direction_already_climbed_is_not_retried():
-    a = _agent()
-    om = _paint_stairs(a)
-    om._explored_up_stair = True
-    assert a._maybe_start_climb() is False
-
-
-def test_the_approach_runs_until_the_footprint_touches_the_stairs():
-    a = _agent()
-    _paint_stairs(a, xy=(2.0, 0.0))
-    a.climb.start(1)
-    a._do_climb(DEPTH, np.array([-3.0, 0.0]), 0.0, 0.0)
-    assert not a.climb.reached, "still 5 m away"
-    a._do_climb(DEPTH, np.array([2.0, 0.0]), 0.0, 0.0)
-    assert a.climb.reached
-
-
-def test_a_network_stop_on_the_approach_retires_the_staircase():
-    """`ascent_policy.py:1011-1015` -- the one place a STOP is authoritative."""
-    a = _agent(driver=_Driver(reason="policy_stop", action=None))
-    om = _paint_stairs(a)
-    a.climb.start(1)
-    a._do_climb(DEPTH, np.array([-3.0, 0.0]), 0.0, 0.0)
-    assert not a.climb.climbing
-    assert om._has_up_stair is False and om._up_stair_map.sum() == 0
-    assert a.stats["climb_fail"] == 1
-
-
-def test_a_network_stop_on_the_flight_forces_forward_instead():
-    a = _agent(driver=_Driver(reason="policy_stop", action=None))
-    _paint_stairs(a)
-    a.climb.start(1)
-    a.climb.reached = a.climb.reached_centroid = True
-    assert a._do_climb(DEPTH, np.array([2.0, 0.0]), 0.0, 0.0) == "move_forward"
-    assert a.climb.climbing, "a STOP mid-flight must not end the climb"
-    assert a.stats["climb_forced_forward"] == 1
-
-
-def test_leaving_the_stairs_after_the_centroid_completes_the_transition():
-    a = _agent()
-    _paint_stairs(a, xy=(2.0, 0.0))
-    a.climb.start(1)
-    a.climb.reached = a.climb.reached_centroid = True
-    floors_before = len(a._floors)
-    a._do_climb(DEPTH, np.array([9.0, 9.0]), 0.0, 0.0)      # far off the stair map
-    assert not a.climb.climbing
-    assert a._floor_idx == 1 and len(a._floors) == floors_before + 1
-    assert a.stats["climb_ok"] == 1
-
-
-def test_arriving_upstairs_does_not_bounce_straight_back_down():
-    """The staircase is carried onto the new floor already marked explored
-    (`map_controller.py:563-596`), which is what stops the up-down-up loop."""
-    a = _agent()
-    _paint_stairs(a, xy=(2.0, 0.0))
-    a.climb.start(1)
-    a.climb.reached = a.climb.reached_centroid = True
-    a._do_climb(DEPTH, np.array([9.0, 9.0]), 0.0, 0.0)
-    om = a.obstacle_map
-    assert om._has_down_stair and om._explored_down_stair
-    assert om._down_stair_map.sum() > 0
-    assert a._maybe_start_climb() is False
-
-
-def test_a_new_floor_is_rescanned_but_a_revisited_one_is_not():
-    a = _agent(initial_scan=True)
-    assert a._switch_floor(1) is True and a._init_left > 0
-    a._init_left = 0
-    assert a._switch_floor(2) is False, "floor 0 already exists"
-    assert a._init_left == 0
-
-
-def test_a_wedged_climb_is_abandoned_not_ridden_out():
-    a = _agent()
-    om = _paint_stairs(a, xy=(2.0, 0.0))
-    a.climb.start(1)
-    a.climb.reached = True
-    for _ in range(CLIMB_PAUSED_ABANDON + 2):        # never moves
-        a._do_climb(DEPTH, np.array([2.0, 0.0]), 0.0, 0.0)
-        if not a.climb.climbing:
-            break
-    assert not a.climb.climbing and a.stats["climb_fail"] == 1
-    assert om._disabled_stair_map.sum() > 0, "the bad flight is remembered"
-
-
-def test_a_descent_tilts_down_before_the_centroid_and_back_up_after():
-    a = _agent()
-    _paint_stairs(a, direction=2, xy=(2.0, 0.0))
-    a.climb.start(2)
-    a.climb.reached = True
-    assert a._do_climb(DEPTH, np.array([2.0, 0.0]), 0.0, pitch_deg=0.0) == "look_down"
-    assert a._do_climb(DEPTH, np.array([2.0, 0.0]), 0.0, pitch_deg=-30.0) == "look_down"
-    a.climb.reached_centroid = True
-    assert a._do_climb(DEPTH, np.array([2.0, 0.0]), 0.0, pitch_deg=-60.0) == "look_up"
-
-
-def test_an_ascent_never_tilts():
-    """S14a measured tilting as no help going up, and a tilted frame feeds the
-    map geometry it has to correct for."""
-    a = _agent()
-    _paint_stairs(a, xy=(2.0, 0.0))
-    a.climb.start(1)
-    a.climb.reached = True
-    for pitch in (0.0, -30.0, 30.0):
-        assert a._do_climb(DEPTH, np.array([2.0, 0.0]), 0.0, pitch) not in ("look_up", "look_down")
-
-
 # ============================================================== map bookkeeping
-
 def test_each_map_owns_its_trajectory():
     """`BaseMap._camera_positions` is a CLASS attribute that `update_agent_traj`
     appends to in place. Two maps in one process would then share one path --
@@ -339,11 +169,11 @@ def test_a_new_episode_starts_with_an_empty_trajectory():
     a.reset("chair")
     assert len(a.obstacle_map._camera_positions) == 0
 
-
 def test_a_new_floor_starts_with_an_empty_trajectory():
     a = _agent()
     a.obstacle_map.update_agent_traj(np.zeros(2), 0.0)
-    a._switch_floor(1)
+    a._floors.append(a._new_floor())
+    a._floor_idx = 1
     assert len(a.obstacle_map._camera_positions) == 0
     assert len(a._floors[0]["obstacle"]._camera_positions) == 1, "floor 0 keeps its own"
 
@@ -451,98 +281,284 @@ def test_the_range_error_scaled_with_max_depth_not_the_scene():
     assert far == pytest.approx(3.5, abs=0.1)
     assert far - near > 1.0
 
-
-# ================================================== direction, and the probe
+# ============================================================ the state machine
 #
-# The strict descent split ran 148 climb steps and every one was an ascent, on
-# episodes whose goal is below the start. These pin the three pieces that fix
-# that: the up/down discriminator, the tie-break that uses it, and the probe.
+# `Map_Controller._process_stair_climb_state` (`map_controller.py:259-316`)
+# and the dispatch in `Ascent_Policy.act` (`ascent_policy.py:447-557`),
+# transcribed. The reference's own inconsistencies are kept and pinned here.
 
-def test_upper_half_discriminator():
-    from ascentnav.stairs import stairs_in_upper_half
-    m = np.zeros((100, 100), bool)
-    m[10:40] = True
-    assert stairs_in_upper_half(m) is True          # treads above the horizon
-    m2 = np.zeros((100, 100), bool)
-    m2[60:90] = True
-    assert stairs_in_upper_half(m2) is False        # a flight going down
-    assert stairs_in_upper_half(None) is False
-    assert stairs_in_upper_half(np.zeros((10, 10), bool)) is False
+def _px(agent, xy):
+    return agent.obstacle_map._xy_to_px(np.atleast_2d(np.asarray(xy, dtype=float)))
 
 
-def test_down_is_preferred_when_the_treads_are_below_the_horizon():
+def test_an_exhausted_floor_with_an_unexplored_storey_navigates_to_the_stairs():
+    """`_explore` :716-728: no frontiers, an unexplored floor above -> drive
+    at the up-stair frontier on this very step."""
     a = _agent()
-    _paint_stairs(a, direction=1, xy=(2.0, 0.0))
-    _paint_stairs(a, direction=2, xy=(-2.0, 0.0))
-    a._seg_upper = False                            # stairs seen low in frame
-    assert a._maybe_start_climb() is True
-    assert a.climb.direction == 2
+    _paint_stairs(a)
+    a._floors.append(a._new_floor())               # the storey the stairs lead to
+    action = a._explore(DEPTH, np.zeros(2), 0.0)
+    assert a.stairs.climbing and a.stairs.direction == 1
+    assert action == "move_forward"
 
 
-def test_up_still_wins_when_the_treads_are_above_the_horizon():
+def test_a_floor_with_frontiers_does_not_climb():
     a = _agent()
-    _paint_stairs(a, direction=1, xy=(2.0, 0.0))
-    _paint_stairs(a, direction=2, xy=(-2.0, 0.0))
-    a._seg_upper = True
-    assert a._maybe_start_climb() is True
-    assert a.climb.direction == 1
+    _paint_stairs(a)
+    a.obstacle_map.frontiers = np.array([[3.0, 3.0], [-3.0, 1.0]])
+    a._explore(DEPTH, np.zeros(2), 0.0)
+    assert not a.stairs.climbing
 
 
-def test_one_available_direction_is_taken_regardless_of_the_discriminator():
+def test_no_frontiers_and_no_unexplored_storey_is_a_terminal_stop():
+    """`ascent_policy.py:725-726` -- the reference STOPs. The port turned left
+    forever, which is one of the two ways its budget went into the ground."""
     a = _agent()
-    _paint_stairs(a, direction=2, xy=(-2.0, 0.0))
-    a._seg_upper = True                             # would prefer up, but there is none
-    assert a._maybe_start_climb() is True
-    assert a.climb.direction == 2
+    a.obstacle_map._floor_num_steps = 60           # past the reinit window
+    assert a._explore(DEPTH, np.zeros(2), 0.0) == "stop"
+    assert a._state == "done" and a.approach_stop_reason == "explored_out"
 
 
-def test_the_downstair_probe_tilts_before_it_drives():
+def test_an_early_frontier_collapse_reinitialises_with_the_tight_threshold():
+    """`_handle_stairwell_reinitialization` (:764-811): within the first 50
+    steps of a floor, with an unexplored staircase that has no frontier yet,
+    reset the maps, keep the stair fields, turn `_tight_search_thresh` on and
+    start the opening scan again."""
     a = _agent()
-    a.obstacle_map._potential_stair_centroid = np.array([[3.0, 0.0]])
-    assert a._look_for_downstair(np.zeros(2), 0.0, pitch_deg=0.0) == "look_down"
-    assert a.stats["down_look"] == 1
-
-
-def test_a_network_stop_on_the_probe_retires_the_suspicion():
-    """`ascent_policy.py:632-643` -- the mover refusing to go is the evidence
-    that there was no staircase there."""
-    a = _agent(driver=_Driver(reason="policy_stop", action=None))
     om = a.obstacle_map
-    om._potential_stair_centroid = np.array([[3.0, 0.0]])
-    om._down_stair_map[100:110, 100:110] = 1
-    om._has_down_stair = True
+    om._floor_num_steps = 10
+    om._has_up_stair = True
+    om._up_stair_map[100:110, 100:110] = 1
+    om._explored_up_stair = False
+    om._up_stair_frontiers = np.array([])
+    a._done_initializing = True
+    action = a._explore(DEPTH, np.zeros(2), 0.0)
+    om = a.obstacle_map
+    assert action == "turn_left"
+    assert om._reinitialize_flag and om._tight_search_thresh
+    assert om._has_up_stair and om._up_stair_map.sum() == 100, "stair fields survive the reset"
+    assert a._done_initializing is False and a._initialize_step == 1
+
+
+def test_reinitialisation_happens_at_most_once_per_floor():
+    a = _agent()
+    om = a.obstacle_map
+    om._floor_num_steps = 10
+    om._has_up_stair = True
+    om._explored_up_stair = False
+    om._up_stair_frontiers = np.array([])
+    om._reinitialize_flag = True
+    assert a._explore(DEPTH, np.zeros(2), 0.0) == "stop"
+
+
+def test_the_approach_runs_until_the_footprint_touches_the_stairs():
+    a = _agent()
+    om = _paint_stairs(a, xy=(2.0, 0.0))
+    a._floors.append(a._new_floor())
+    a._explore(DEPTH, np.zeros(2), 0.0)
+    # far away: still approaching
+    a.stairs.pre_update(a, om, np.zeros(2), _px(a, (0.0, 0.0)))
+    assert not a.stairs.reach_stair
+    # on top of it: reached, start recorded
+    a.stairs.pre_update(a, om, np.array([2.0, 0.0]), _px(a, (2.0, 0.0)))
+    assert a.stairs.reach_stair
+    assert np.allclose(om._up_stair_start, _px(a, (2.0, 0.0))[0])
+
+
+def test_leaving_the_stairs_after_the_centroid_completes_the_transition():
+    a = _agent()
+    om = _paint_stairs(a, xy=(2.0, 0.0))
+    a._floors.append(a._new_floor())
+    a._explore(DEPTH, np.zeros(2), 0.0)
+    a.stairs.pre_update(a, om, np.array([2.0, 0.0]), _px(a, (2.0, 0.0)))   # reached
+    a.stairs.pre_update(a, om, np.array([2.0, 0.0]), _px(a, (2.0, 0.0)))   # centroid (<=0.3 m)
+    assert a.stairs.reach_stair_centroid
+    a.stairs.pre_update(a, om, np.array([9.0, 0.0]), _px(a, (9.0, 0.0)))   # off the map
+    assert not a.stairs.climbing
+    assert a._floor_idx == 1, "arrived on the storey above"
+    assert a.stats["climb_ok"] == 1
+    assert a._done_initializing is False, "a fresh storey gets the opening scan"
+
+
+def test_arriving_upstairs_hands_the_flight_to_the_new_floor():
+    """`_update_linked_stair_map` (:433-476): the staircase just climbed is the
+    arrival floor's DOWN staircase, ends swapped, already explored -- or the
+    new floor rediscovers it and climbs straight back down."""
+    a = _agent()
+    om0 = _paint_stairs(a, xy=(2.0, 0.0))
+    a._floors.append(a._new_floor())
+    a._explore(DEPTH, np.zeros(2), 0.0)
+    for xy in ((2.0, 0.0), (2.0, 0.0), (9.0, 0.0)):
+        a.stairs.pre_update(a, om0, np.array(xy), _px(a, xy))
+    om1 = a.obstacle_map
+    assert om1._has_down_stair and om1._explored_down_stair
+    assert om1._down_stair_map.sum() > 0
+    assert np.allclose(om1._down_stair_start, om0._up_stair_end)
+
+
+def test_a_stalled_flight_off_the_stairs_is_burned_and_the_storey_dropped():
+    """`:279-297`: reached the centroid, paused >= 30, no longer on the stairs
+    -> disable, burn the stair map, delete the neighbour floor."""
+    a = _agent()
+    om = _paint_stairs(a, xy=(2.0, 0.0))
+    a._floors.append(a._new_floor())
+    a._explore(DEPTH, np.zeros(2), 0.0)
+    a.stairs.pre_update(a, om, np.array([2.0, 0.0]), _px(a, (2.0, 0.0)))
+    a.stairs.pre_update(a, om, np.array([2.0, 0.0]), _px(a, (2.0, 0.0)))
+    om._climb_stair_paused_step = CLIMB_PAUSED_ABANDON
+    a.stairs.pre_update(a, om, np.array([9.0, 0.0]), _px(a, (9.0, 0.0)))
+    assert not a.stairs.climbing and not om._has_up_stair
+    assert len(a._floors) == 1 and a.stats["climb_fail"] == 1
+
+
+def test_disabling_a_stair_frontier_does_not_burn_the_map_by_default():
+    """F3: `_disable_stair_and_reset_state` (:328-380) zeroes the climb flag
+    at :350 before testing it at :354/:367, so the burn never runs and a failed
+    staircase is retried. The faithful default keeps that; `burn_on_disable`
+    is the A/B that runs the code as written."""
+    a = _agent()
+    om = _paint_stairs(a, xy=(2.0, 0.0))
+    a.stairs.start_navigating(om, 1)
+    a.stairs.disable_stair_and_reset(a, om, np.array([2.0, 0.0]))
+    assert not a.stairs.climbing
+    assert (2.0, 0.0) in om._disabled_frontiers
+    assert om._has_up_stair and om._up_stair_map.sum() > 0, "the map is NOT burned"
+    b = _agent(stair_disable_burns_map=True)
+    om = _paint_stairs(b, xy=(2.0, 0.0))
+    b.stairs.start_navigating(om, 1)
+    b.stairs.disable_stair_and_reset(b, om, np.array([2.0, 0.0]))
+    assert not om._has_up_stair and om._up_stair_map.sum() == 0
+
+
+def test_the_stair_approach_retires_a_frontier_it_cannot_close_on():
+    """`_get_close_to_stair` (:1015-1042): 30 stalled steps, or 60 in total."""
+    a = _agent(driver=_Driver(action="turn_left"))
+    om = _paint_stairs(a, xy=(5.0, 0.0))
+    a._floors.append(a._new_floor())
+    a._explore(DEPTH, np.zeros(2), 0.0)
+    for _ in range(40):
+        a._get_close_to_stair(np.zeros(2), 0.0)
+    assert (5.0, 0.0) in om._disabled_frontiers and a.stats["climb_fail"] == 1
+    # F3: the disable never clears `_has_up_stair`, and the same-step `_explore`
+    # finds no frontier and an unexplored floor above, so the reference walks
+    # straight back onto the same staircase.
+    assert a.stairs.climbing and a.stats["climb_attempt"] == 2
+
+
+def test_a_network_stop_on_the_stair_approach_retires_the_frontier():
+    """`:1062-1065`."""
+    a = _agent(driver=_Driver(action=None))
+    om = _paint_stairs(a, xy=(5.0, 0.0))
+    a._floors.append(a._new_floor())
+    a.stairs.start_navigating(om, 1)
+    action = a._get_close_to_stair(np.zeros(2), 0.0)
+    assert (5.0, 0.0) in om._disabled_frontiers and a.stats["climb_fail"] == 1
+    # ... and the F3 retry re-enters at once; on the re-entry the stub's STOP
+    # is returned raw (`:847`).
+    assert a.stairs.climbing and action == "stop"
+
+
+def test_a_network_stop_on_the_flight_forces_forward_instead():
+    """`:1136-1139`: a STOP on a staircase means the treads fill the view."""
+    a = _agent(driver=_Driver(action=None))
+    om = _paint_stairs(a, xy=(2.0, 0.0))
+    a._floors.append(a._new_floor())
+    a.stairs.start_navigating(om, 1)
+    a.stairs.reach_stair = True
+    a.stairs.reach_stair_centroid = True
+    assert a._climb_stair(DEPTH, np.array([2.0, 0.0]), 0.0, _px(a, (2.0, 0.0))) == "move_forward"
+
+
+def test_a_descent_looks_down_twice_before_the_centroid_and_back_up_after():
+    """`act` :448-457 and `_climb_stair` :1119-1122, on the hand-tracked pitch."""
+    a = _agent()
+    om = _paint_stairs(a, direction=2, xy=(2.0, 0.0))
+    a._floors.insert(0, a._new_floor()); a._floor_idx = 1
+    a.stairs.start_navigating(om, 2)
+    a.stairs.reach_stair = True
+    assert a._stairs_dispatch(DEPTH, np.array([2.0, 0.0]), 0.0, _px(a, (2.0, 0.0)), None) == "look_down"
+    assert a._pitch_angle == -30
+    assert a._stairs_dispatch(DEPTH, np.array([2.0, 0.0]), 0.0, _px(a, (2.0, 0.0)), None) == "look_down"
+    assert a._pitch_angle == -60
+    a.stairs.reach_stair_centroid = True
+    assert a._climb_stair(DEPTH, np.array([2.0, 0.0]), 0.0, _px(a, (2.0, 0.0))) == "look_up"
+    assert a._pitch_angle == -30
+
+
+def test_a_paused_flight_reinitialises_on_the_same_floor():
+    """F5: the pause >= 30 branch (`act` :459-514) copies the flight to the
+    neighbour floor and re-runs the opening scan HERE; the floor index does
+    not change."""
+    a = _agent()
+    om = _paint_stairs(a, xy=(2.0, 0.0))
+    a._floors.append(a._new_floor())
+    a.stairs.start_navigating(om, 1)
+    a.stairs.reach_stair = True
+    om._climb_stair_paused_step = 30
+    action = a._stairs_dispatch(DEPTH, np.array([2.0, 0.0]), 0.0, _px(a, (2.0, 0.0)), None)
+    assert action == "turn_left" and a._floor_idx == 0
+    assert not a.stairs.climbing and a._done_initializing is False
+    assert a._floors[1]["obstacle"]._has_down_stair
+
+
+def test_passive_stair_entry_triggers_after_three_steps_on_the_treads():
+    """`_detect_passive_stair_entry` (:626-672)."""
+    a = _agent()
+    om = _paint_stairs(a, xy=(2.0, 0.0))
+    for _ in range(2):
+        a.stairs.pre_update(a, om, np.array([2.0, 0.0]), _px(a, (2.0, 0.0)))
+        assert not a.stairs.climbing
+    a.stairs.pre_update(a, om, np.array([2.0, 0.0]), _px(a, (2.0, 0.0)))
+    assert a.stairs.climbing and a.stairs.reach_stair and a.stats["passive_stair_entry"] == 1
+
+
+def test_passive_entry_refuses_the_union_mask():
+    with pytest.raises(ValueError):
+        _agent(stair_up_mode="rednet", passive_stair_entry=True)
+    a = _agent(stair_up_mode="rednet", passive_stair_entry=False)
+    assert a.stairs.passive_entry is False
+
+
+def test_upper_half_discriminator_needs_fifty_pixels():
+    """`check_stairs_in_upper_50_percent` (`ascent/utils.py:163-183`)."""
+    m = np.zeros((100, 100), bool)
+    m[10, 10:40] = True                 # 30 px, top half
+    assert stairs_in_upper_half(m) is False
+    m[11, 10:40] = True                 # 60 px
+    assert stairs_in_upper_half(m) is True
+    m[:] = False; m[80, :] = True       # bottom half only
+    assert stairs_in_upper_half(m) is False
+
+
+def test_the_downstair_probe_tilts_then_drives_then_retires():
+    """`_look_for_downstair` (:851-887)."""
+    a = _agent(driver=_Driver(action=None))
+    om = a.obstacle_map
     om._look_for_downstair_flag = True
-    assert a._look_for_downstair(np.zeros(2), 0.0, pitch_deg=-30.0) == "look_up"
-    assert om._has_down_stair is False and om._down_stair_map.sum() == 0
-    assert om._disabled_stair_map.sum() > 0 and om._look_for_downstair_flag is False
+    om._potential_stair_centroid = np.array([[2.0, 0.0]])
+    om._down_stair_map[100:105, 100:105] = 1
+    om._has_down_stair = True
+    assert a._look_for_downstair(np.zeros(2), 0.0) == "look_down" and a._pitch_angle == -30
+    # the mover refuses: retire the suspicion and tilt back up
+    assert a._look_for_downstair(np.zeros(2), 0.0) == "look_up"
+    assert a._pitch_angle == 0 and not om._has_down_stair and not om._look_for_downstair_flag
+    assert (2.0, 0.0) in om._disabled_frontiers
 
 
-def test_standing_on_the_candidate_also_retires_it():
+def test_the_camera_is_levelled_before_anything_else_when_not_on_stairs():
+    """`act` :559-566."""
     a = _agent()
-    a.obstacle_map._potential_stair_centroid = np.array([[0.1, 0.0]])
-    a.obstacle_map._look_for_downstair_flag = True
-    assert a._look_for_downstair(np.zeros(2), 0.0, pitch_deg=-30.0) == "look_up"
-    assert a.stats["downstair_reject"] == 1
+    a._pitch_angle = 30
+    f = _wall_frame([0, 0.88, 0], [1, 0.88, 0])
+    assert a.act(f) == "look_down" and a._pitch_angle == 0
 
 
-def test_the_camera_is_returned_to_level_when_not_on_stairs():
-    """A tilt left standing would relabel every later staircase, because the map
-    routes stair pixels by the SIGN of the pitch."""
-    a = _agent()
-    assert a._level_camera(-30.0) == "look_up"
-    assert a._level_camera(30.0) == "look_down"
-    assert a._level_camera(0.0) is None
-
-
-def test_levelling_never_fights_the_climb_or_the_probe():
-    a = _agent()
-    a.climb.start(2)
-    assert a._level_camera(-60.0) is None
-    a.climb.reset()
-    a.obstacle_map._look_for_downstair_flag = True
-    assert a._level_camera(-60.0) is None
-
-
+def _det(score=0.9, box=(0, 0, 60, 60), label="chair"):
+    from osg.core.types import Detection
+    x0, y0, x1, y1 = box
+    m = np.zeros((480, 640), bool)
+    m[y0:y1, x0:x1] = True
+    return Detection(label=label, score=score, bbox_xyxy=np.array(box, float), mask=m)
 # ================================================ where the DROP-OFF is marked
 #
 # The vendored code mirrored depth about (max+min)/2 and painted the drop-off at
@@ -580,6 +596,7 @@ def _drop_off(edge_m, look_at=None, hole_range=3.8, size=800):
     f = FrameData(frame_id=0, rgb=np.zeros((H, W, 3), np.uint8), depth=depth,
                   T_wc=T, intrinsics=intr)
     om = ObstacleMap(min_height=0.61, max_height=0.88, agent_radius=0.18, size=size)
+    om._downstair_detector = "lip"                  # the A/B, not the reference trigger
     om.update_map(normalise_depth(depth, 0.5, 5.0), tf, 0.5, 5.0, fx, fy,
                   np.radians(79.0), {}, np.zeros((H, W), np.uint8),
                   np.zeros((H, W), np.uint8), np.zeros((H, W), np.uint8),
@@ -626,127 +643,6 @@ def test_the_test_is_pitch_invariant():
     tilted = _drop_off(2.0, look_at=[1, 0.88 - np.tan(np.radians(30)), 0])[:, 0].min()
     assert level == pytest.approx(2.0, abs=0.1)
     assert tilted == pytest.approx(2.0, abs=0.1)
-
-
-# ================================================================ commit gate
-
-def _det(score=0.9, box=(0, 0, 60, 60), label="chair"):
-    from osg.core.types import Detection
-    x0, y0, x1, y1 = box
-    m = np.zeros((480, 640), bool)
-    m[y0:y1, x0:x1] = True
-    return Detection(label=label, score=score, bbox_xyxy=np.array(box, float), mask=m)
-
-
-def _gated(**over):
-    a = _agent(commit_gate=True, **over)
-    return a
-
-
-def test_the_gate_is_off_by_default():
-    assert _agent().commit_gate is False
-
-
-def test_a_low_score_detection_is_refused():
-    a = _gated()
-    assert a._passes_commit_gate(_det(score=0.9)) is True
-    assert a._passes_commit_gate(_det(score=0.5)) is False   # min_score 0.70
-
-
-def test_a_tiny_detection_is_refused():
-    """Too far away or too partial to be worth ending the episode on. Sized
-    against the agent's own threshold rather than a literal, because the
-    configured `min_bbox_px` differs between the preset (1200) and the dataclass
-    default (3000) and a literal would silently test neither."""
-    a = _gated()
-    side = int(np.sqrt(a.commit_min_bbox_px))
-    assert a._passes_commit_gate(_det(box=(0, 0, side - 5, side - 5))) is False
-    assert a._passes_commit_gate(_det(box=(0, 0, side + 5, side + 5))) is True
-
-
-def test_one_sighting_is_not_a_goal():
-    """`min_obs` = 2. The single-frame false positive is the one that ends the
-    episode 6.5 m from anything."""
-    a = _gated()
-    a._accepted_obs = 1
-    a.object_map.clouds = {a.target: np.zeros((5, 3))}
-    assert a._object_goal(np.zeros(2)) is None
-    assert a.stats["commit_gate_wait"] == 1
-
-
-def test_the_gate_counts_only_sightings_it_accepted():
-    a = _gated()
-    frame = _wall_frame([0, 0.88, 0], [1, 0.88, 0])
-    tf = np.eye(4)
-    a._update_object_map(frame, [_det(score=0.4)], tf, np.zeros((480, 640), np.float32))
-    assert a._accepted_obs == 0 and a.stats["commit_gate_blocked"] == 1
-    a._update_object_map(frame, [_det(score=0.9)], tf, np.zeros((480, 640), np.float32))
-    assert a._accepted_obs == 1
-
-
-def test_giving_up_on_a_target_resets_the_evidence():
-    a = _gated()
-    a._accepted_obs = 5
-    a._give_up_on_target("abandon")
-    assert a._accepted_obs == 0
-
-
-def test_with_the_gate_off_nothing_is_filtered():
-    a = _agent()
-    frame = _wall_frame([0, 0.88, 0], [1, 0.88, 0])
-    a._update_object_map(frame, [_det(score=0.31, box=(0, 0, 10, 10))], np.eye(4),
-                         np.zeros((480, 640), np.float32))
-    assert "commit_gate_blocked" not in a.stats
-    a._accepted_obs = 1
-    a.object_map.clouds = {a.target: np.zeros((5, 3))}
-    assert a._object_goal(np.zeros(2)) is not None or True   # no gate-driven None
-    assert "commit_gate_wait" not in a.stats
-
-
-# ============================================================ scan on arrival
-
-def _scan_agent(n=12):
-    a = _agent(scan_on_arrival=n)
-    a.obstacle_map.frontiers = np.array([[0.5, 0.0]])   # a frontier 0.5 m away
-    a.obstacle_map.explored_area[:] = 1
-    return a
-
-
-def test_arriving_at_a_frontier_starts_a_scan():
-    a = _scan_agent(4)
-    acts = [a._explore(np.zeros(2), 0.0) for _ in range(4)]
-    assert acts == ["turn_left"] * 4
-    assert a.stats["scans"] == 1 and a.stats["scan_steps"] == 4
-
-
-def test_the_scan_ends_and_the_agent_moves_on():
-    a = _scan_agent(2)
-    a._explore(np.zeros(2), 0.0); a._explore(np.zeros(2), 0.0)
-    assert a._scan_left == 0
-    assert a._explore(np.zeros(2), 0.0) == "move_forward"    # the stub driver
-
-
-def test_the_same_place_is_not_rescanned():
-    a = _scan_agent(2)
-    for _ in range(4):
-        a._explore(np.zeros(2), 0.0)
-    assert a.stats["scans"] == 1, "standing in the same 1.5 m cell must not re-trigger"
-
-
-def test_a_distant_frontier_does_not_trigger_a_scan():
-    a = _scan_agent(4)
-    a.obstacle_map.frontiers = np.array([[6.0, 0.0]])
-    a._explore(np.zeros(2), 0.0)
-    assert "scans" not in a.stats
-
-
-def test_the_scan_is_off_by_default():
-    a = _agent()
-    a.obstacle_map.frontiers = np.array([[0.5, 0.0]])
-    a._explore(np.zeros(2), 0.0)
-    assert "scans" not in a.stats and a.scan_on_arrival == 0
-
-
 # ============================================================= behaviour log
 
 def test_the_log_attributes_motion_to_the_action_that_caused_it():
@@ -798,191 +694,6 @@ def test_the_agent_feeds_the_log_through_a_real_step():
     for key in ("n", "xy", "yaw", "h", "state", "act", "ndet", "explored_m2", "on_stairs"):
         assert key in row, f"{key} missing from the behaviour row"
     assert a.step_trace is a.behaviour.rows, "the wire format must stay the same list"
-
-
-# ======================================================== displacement escape
-
-def _stuck(patience=4, window=12, burst=3):
-    from osg.planning.escape import DisplacementEscape
-    return DisplacementEscape(patience, window, burst)
-
-
-def test_it_fires_on_forwards_that_went_nowhere():
-    e = _stuck(patience=3)
-    for _ in range(2):
-        e.observe("move_forward", 0.0)
-        assert e("move_forward") == "move_forward"
-    e.observe("move_forward", 0.0)
-    assert e("move_forward") == "turn_right", "three dead forwards must break out"
-    assert e.n_escapes == 1
-
-
-def test_forwards_that_moved_do_not_count():
-    e = _stuck(patience=3)
-    for _ in range(10):
-        e.observe("move_forward", 0.25)
-        assert e("move_forward") == "move_forward"
-    assert e.n_escapes == 0
-
-
-def test_turns_are_ignored_entirely():
-    """The action-history guard fired zero times in 100 episodes because the
-    real stream alternates turn/turn/blocked-forward. This one must not care
-    what the turns are doing."""
-    e = _stuck(patience=2)
-    for _ in range(20):
-        e.observe("turn_left", 0.0)
-        assert e("turn_left") == "turn_left"
-    assert e.n_escapes == 0
-
-
-def test_the_escape_is_a_burst_not_one_step():
-    """One turn does not clear a pocket; S42's wedge needed a deliberate turn
-    away before forward meant anything."""
-    e = _stuck(patience=2, burst=3)
-    e.observe("move_forward", 0.0); e.observe("move_forward", 0.0)
-    assert [e("move_forward") for _ in range(3)] == ["turn_right"] * 3
-    assert e("move_forward") == "move_forward", "and then it hands control back"
-
-
-def test_old_evidence_ages_out_of_the_window():
-    e = _stuck(patience=3, window=4)
-    e.observe("move_forward", 0.0)
-    for _ in range(4):
-        e.observe("move_forward", 0.25)      # window fills with successes
-    e.observe("move_forward", 0.0)
-    assert e("move_forward") == "move_forward", "one old block must not persist"
-
-
-def test_it_is_off_at_patience_zero():
-    e = _stuck(patience=0)
-    for _ in range(20):
-        e.observe("move_forward", 0.0)
-    assert e("move_forward") == "move_forward"
-
-
-def test_the_agent_measures_displacement_the_way_the_recorder_does():
-    a = _agent(stuck_escape_patience=3)
-    f1 = _wall_frame([0, 0.88, 0], [1, 0.88, 0])
-    f2 = _wall_frame([0.25, 0.88, 0], [1.25, 0.88, 0])
-    a.act(f1); a.act(f2)
-    assert a._last_moved == pytest.approx(0.25, abs=1e-6)
-    assert a.stuck.patience == 3
-
-
-# ==================================================== ASCENT's LLM frontier pick
-
-class _Ranker:
-    """Stands in for AscentFrontierRanker."""
-    def __init__(self, choice=1, boom=False):
-        self.choice, self.boom, self.seen = choice, boom, []
-    def pick(self, frontiers, target, sg=None, semantics=None, mode="frame"):
-        if self.boom:
-            raise RuntimeError("model unavailable")
-        self.seen.append((len(frontiers), target))
-        return self.choice
-
-
-def _ranked(choice=1, boom=False):
-    a = _agent()
-    a.ranker = _Ranker(choice, boom)
-    a.llm_topk = 3
-    return a
-
-
-def test_a_single_frontier_never_reaches_the_model():
-    """`llm_planner.py:79-81` returns immediately -- there is nothing to choose
-    between, and a call would be pure latency."""
-    a = _ranked()
-    a._best_frontier(np.array([[5.0, 0.0]]), np.zeros(2))
-    assert a.ranker.seen == []
-
-
-def test_a_nearby_frontier_short_circuits_the_model_once_exploring():
-    """The shortcuts are why ASCENT does not ask on most steps -- but only after
-    the first explore has happened."""
-    a = _ranked()
-    a.obstacle_map._finish_first_explore = True
-    got = a._best_frontier(np.array([[1.0, 0.0], [9.0, 9.0]]), np.zeros(2))
-    assert np.allclose(got, [1.0, 0.0]) and a.ranker.seen == []
-
-
-def test_the_model_chooses_among_the_top_k_when_no_shortcut_fires():
-    a = _ranked(choice=1)
-    pts = np.array([[8.0, 0.0], [0.0, 8.0], [-8.0, 0.0]])
-    a._best_frontier(pts, np.zeros(2))
-    assert a.ranker.seen and a.ranker.seen[0][0] <= 3
-    assert a.stats["rank_calls"] == 1 and a.stats["rank_overrides"] == 1
-
-
-def test_agreeing_with_the_value_ranking_is_not_an_override():
-    a = _ranked(choice=0)
-    a._best_frontier(np.array([[8.0, 0.0], [0.0, 8.0]]), np.zeros(2))
-    assert a.stats["rank_calls"] == 1 and "rank_overrides" not in a.stats
-
-
-def test_a_failing_model_falls_back_to_the_value_ranking():
-    """Every failure path returns 0, so a slow or broken model costs a call and
-    nothing else."""
-    a = _ranked(boom=True)
-    pts = np.array([[8.0, 0.0], [0.0, 8.0]])
-    got = a._best_frontier(pts, np.zeros(2))
-    assert a.stats["rank_errors"] == 1
-    assert np.allclose(got, a.value_map.sort_waypoints(pts, 0.5)[0][0]), \
-        "a raising model must leave the value argmax standing"
-
-
-def test_an_out_of_range_index_is_refused():
-    a = _ranked(choice=99)
-    pts = np.array([[8.0, 0.0], [0.0, 8.0]])
-    got = a._best_frontier(pts, np.zeros(2))
-    assert np.allclose(got, a.value_map.sort_waypoints(pts, 0.5)[0][0])
-
-
-def test_the_models_choice_becomes_a_commitment():
-    """The point of "coarse-to-fine": the model picks a region and the agent
-    keeps going there. Asking again every step and letting the nearby rule
-    override the answer is what made the first cut of this consult the model
-    once every two episodes."""
-    a = _ranked(choice=1)
-    pts = np.array([[8.0, 0.0], [0.0, 8.0], [-8.0, 0.0]])
-    first = a._best_frontier(pts, np.zeros(2))
-    assert np.allclose(first, pts[1]) or a.stats["rank_calls"] == 1
-    for _ in range(5):
-        a.step_count += 1
-        again = a._best_frontier(pts, np.zeros(2))
-        assert np.allclose(again, first), "the commitment must hold"
-    assert a.stats["rank_calls"] == 1, "one call, then a commitment"
-    assert a.stats["force_frontier_steps"] == 5
-
-
-def test_the_commitment_is_dropped_when_the_frontier_is_explored_away():
-    a = _ranked(choice=0)
-    pts = np.array([[8.0, 0.0], [0.0, 8.0]])
-    a._best_frontier(pts, np.zeros(2))
-    assert a._force_frontier is not None
-    a._best_frontier(np.array([[-9.0, 0.0], [0.0, -9.0]]), np.zeros(2))
-    assert a.stats["rank_calls"] == 2, "a vanished commitment must be re-decided"
-
-
-def test_a_nearby_frontier_is_taken_only_after_the_first_explore():
-    """ASCENT gates the fine-grained shortcut on `_finish_first_explore`, so the
-    FIRST decision of an episode always goes to the model."""
-    a = _ranked(choice=0)
-    assert a.obstacle_map._finish_first_explore is False
-    a._best_frontier(np.array([[1.0, 0.0], [8.0, 0.0]]), np.zeros(2))
-    assert a.stats["rank_calls"] == 1, "the first decision is the model's"
-    assert a.obstacle_map._finish_first_explore is True
-
-
-def test_no_ranker_means_the_value_argmax():
-    a = _agent()
-    assert a.ranker is None
-    pts = np.array([[8.0, 0.0], [0.0, 8.0]])
-    a._best_frontier(pts, np.zeros(2))
-    assert "rank_calls" not in a.stats
-
-
 # ============================================================ BLIP-2 value map
 
 def test_the_blip2_scorer_speaks_ascents_wire_format(monkeypatch):
@@ -1039,72 +750,3 @@ def test_the_factory_dispatches_on_value_model():
     cfg.exploration.value_map = True
     cfg.exploration.value_model = "blip2itm"
     assert isinstance(build_image_text_scorer(cfg), Blip2ItmScorer)
-
-
-# ============================================ frame-based frontier descriptions
-
-from osg.mapping.frontier import Frontier  # noqa: E402
-
-
-class _Room:
-    def __init__(self, label="kitchen"): self.label = label
-    def classify(self, rgb): return self.label
-
-
-def test_frontiers_are_described_by_the_frame_that_revealed_them():
-    """ASCENT's source is `each_step_rooms[step]` / `each_step_objects[step]`,
-    not a spatial query against an accumulated graph. The first LLM arm passed
-    an EMPTY SceneGraph, so every frontier read as "unknown room" and the model
-    had nothing to choose between -- 308 calls, zero overrides."""
-    from osg.perception.detector import Detection as _D  # noqa: F401  (shape only)
-    a = _agent()
-    a.room_classifier = _Room("kitchen")
-    a.obstacle_map.frontiers = np.array([[3.0, 0.0]])
-    f = _wall_frame([0, 0.88, 0], [1, 0.88, 0])
-    a._observe_semantics(f, [_det(label="sofa"), _det(label="chair")],
-                         np.zeros(2), 0.0)
-    got = a.frontier_semantics.describe(
-        Frontier(id=0, centroid_xy=np.array([3.0, 0.0]),
-                 cells=np.zeros((0, 2), int), size=0))
-    assert got is not None, "the frontier was never bound to a frame"
-    room, objects = got
-    assert room == "kitchen"
-    assert set(objects) == {"sofa", "chair"}
-    assert a.stats["frontiers_bound"] == 1
-
-
-def test_a_missing_room_classifier_is_survivable():
-    a = _agent()
-    assert a.room_classifier is None
-    a.obstacle_map.frontiers = np.array([[3.0, 0.0]])
-    a._observe_semantics(_wall_frame([0, 0.88, 0], [1, 0.88, 0]),
-                         [_det(label="bed")], np.zeros(2), 0.0)
-    got = a.frontier_semantics.describe(
-        Frontier(id=0, centroid_xy=np.array([3.0, 0.0]),
-                 cells=np.zeros((0, 2), int), size=0))
-    assert got is not None and got[1] == ["bed"]
-
-
-def test_a_raising_room_classifier_does_not_kill_the_step():
-    class _Boom:
-        def classify(self, rgb): raise RuntimeError("model gone")
-    a = _agent()
-    a.room_classifier = _Boom()
-    a.obstacle_map.frontiers = np.array([[3.0, 0.0]])
-    a._observe_semantics(_wall_frame([0, 0.88, 0], [1, 0.88, 0]),
-                         [_det(label="bed")], np.zeros(2), 0.0)
-    assert a.stats["frontiers_bound"] == 1
-
-
-def test_the_ranker_is_handed_the_frame_semantics():
-    seen = {}
-
-    class _R:
-        def pick(self, frontiers, target, sg=None, semantics=None, mode="frame"):
-            seen["semantics"], seen["mode"] = semantics, mode
-            return 0
-
-    a = _agent()
-    a.ranker = _R()
-    a._best_frontier(np.array([[8.0, 0.0], [0.0, 8.0]]), np.zeros(2))
-    assert seen["semantics"] is a.frontier_semantics and seen["mode"] == "frame"

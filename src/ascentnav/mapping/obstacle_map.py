@@ -133,6 +133,9 @@ class ObstacleMap(BaseMap):
         # How far a downward ray must run PAST the floor before the floor counts
         # as missing. Depth noise on a flat floor is centimetres; half a metre
         # is a step and a half.
+        # `ascent`: the reference's mirrored-depth trigger (:549-562);
+        # `lip`: OSG's rewrite below.
+        self._downstair_detector = "ascent"
         self._drop_off_margin_m = 0.5
         # Missing-floor pixels a column needs before its nearest sample counts.
         self._drop_off_min_col_px = 8
@@ -583,7 +586,18 @@ class ObstacleMap(BaseMap):
             # known forward distance; if the measured depth runs well past that,
             # the floor is missing along that ray and the lip is where it should
             # have been.
-            if agent_pitch_angle <= 0 and reach_stair == False:
+            if agent_pitch_angle <= 0 and reach_stair == False and self._downstair_detector == "ascent":
+                # the reference, verbatim (`obstacle_map.py:549-562`)
+                filled_depth_for_stair = fill_small_holes(depth, self._hole_area_thresh)
+                inverted_depth_for_stair = max_depth - filled_depth_for_stair * (max_depth - min_depth)
+                inverted_mask = inverted_depth_for_stair < 2
+                inverted_point_cloud_camera_frame = get_point_cloud(inverted_depth_for_stair, inverted_mask, fx, fy)
+                inverted_point_cloud_episodic_frame = transform_points(tf_camera_to_episodic, inverted_point_cloud_camera_frame)
+                below_ground_obstacle_cloud_0 = filter_points_by_height_below_ground_0(inverted_point_cloud_episodic_frame)
+                below_ground_xy_points = below_ground_obstacle_cloud_0[:, :2]
+                below_ground_pixel_points = self._xy_to_px(below_ground_xy_points)
+                self._down_stair_map[below_ground_pixel_points[:, 1], below_ground_pixel_points[:, 0]] = 1
+            elif agent_pitch_angle <= 0 and reach_stair == False:
                 filled_depth_for_stair = fill_small_holes(depth, self._hole_area_thresh)
                 measured_fwd = filled_depth_for_stair * (max_depth - min_depth) + min_depth
 

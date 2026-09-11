@@ -98,6 +98,9 @@ def run_eval(cfg) -> dict:
     out_dir.mkdir(parents=True, exist_ok=True)
 
     unload_ollama_models(cfg)
+    from ..pipeline.components import probe_served_models
+
+    probe_served_models(cfg)
     env = build_env(cfg)
     components = build_run_components(cfg)
     algorithm_holder = {
@@ -109,14 +112,17 @@ def run_eval(cfg) -> dict:
             # "approach_navigable_goal" "approach_retarget_m"
             # "approach_retarget_max" "approach_scan_turns" "approach_to_viewpoint"
             # "area_thresh_m2" "ascent_max_obstacle_h" "ascent_min_obstacle_h"
-            # "climb_carrot" "climb_carrot_m" "climb_exit_rule" "commit_gate"
+            # "climb_carrot" "climb_carrot_m" "climb_exit_rule"
+            # "blip_gate_threshold" "passive_stair_entry" "initialize_turns"
+            # "downstair_detector" "value_use_max_confidence" "value_strict"
+            # "ram_url" "ram_tags" "llm_multi_floor"
             # "continuity_weight" "detector_imgsz" "detector_weights"
             # "down_look_every" "escape_window" "extractor" "floor_ask_every"
             # "floor_llm" "floor_llm_boost" "floor_min_steps" "fp_retraction"
             # "frontier_commit" "frontier_cost_free_cell" "frontier_desc"
             # "frontier_desc_match_m" "frontier_goal_free_cell"
             # "frontier_min_cells" "frontier_reachability_gate"
-            # "frontier_stick_m" "frontier_stick_rule" "frontier_stick_steps"
+            # "frontier_stick_rule"
             # "info_gain_weight" "knowledge_prior" "knowledge_weight"
             # "los_visibility_penalty" "multi_floor" "navigation" "navmesh_3d_goals"
             # "nearby_distance_m" "pointnav_approach_creep_m" "pointnav_arrival_m"
@@ -131,10 +137,9 @@ def run_eval(cfg) -> dict:
             # "search_posterior" "search_proximity_floor" "search_proximity_len_m"
             # "search_room_saturation" "search_room_saturation_floor"
             # "search_room_saturation_free" "search_same_room_bonus"
-            # "scan_on_arrival" "search_surface_mass" "search_unreached_credit"
+            # "search_surface_mass" "search_unreached_credit"
             # "value_blip2_timeout_s" "value_blip2_url"
             # "verify_api_key" "verify_base_url"
-            # "stuck_escape_patience"
             # "select_every"
             # "selector" "stair_explored_rule" "stair_min_cells" "stair_prior"
             # "stair_up_mode" "terminal_percentile" "terminal_requires_detection"

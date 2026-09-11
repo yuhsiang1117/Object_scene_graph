@@ -236,6 +236,12 @@ STICKY_FRONTIER_STEP_THRESHOLD = 20
 REPEATED_SELECTION_THRESHOLD = 20
 MULTI_FLOOR_ASK_STEP_THRESHOLD = 60
 FLOOR_EXP_STEP_THRESHOLD = 100
+# `_detect_passive_stair_entry` (`map_controller.py:626-672`): consecutive
+# steps standing on stair pixels before the climb is triggered.
+PASSIVE_STAIR_DETECTION_THRESHOLD = 3
+# `_initialize` (`ascent_policy.py:689-697`) latches on `_initialize_step > 11`
+# and still returns TURN_LEFT on that call: 13 turns, 390 degrees.
+INITIALIZE_TURNS = 13
 
 # reference_captions = [[obj] for obj in reference_object_list]
 REFERENCE_ROOMS = [

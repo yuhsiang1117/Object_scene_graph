@@ -40,6 +40,18 @@ class DetectorConfig:
     imgsz: int = 512
     half: bool = True
     device: str = "cuda"
+    # `dfine` only: ASCENT's models answer over HTTP (scripts/serve_perception.sh).
+    url: str = "http://localhost:13186/dfine"
+    sam_url: str = "http://localhost:13183/mobile_sam"
+    use_sam: bool = True
+    timeout_s: float = 15.0
+    # GroundingDINO, the detector half of ASCENT's stair fusion
+    # (`map_controller.py:700-704, 782-786`): caption "stair .", logit >= 0.60.
+    gdino_url: str = "http://localhost:13184/gdino"
+    gdino_stair_conf: float = 0.60
+    # Raise `PerceptionUnavailable` on any served-model failure instead of
+    # returning a neutral value. The ascentnav preset turns this on.
+    strict: bool = False
     vocabulary: List[str] = field(default_factory=lambda: list(DEFAULT_VOCABULARY))
 
 

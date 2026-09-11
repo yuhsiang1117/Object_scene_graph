@@ -1,0 +1,15 @@
+defaults:
+  - base_yoloe
+
+# ASCENT's own detector, over HTTP: D-FINE (closed-set COCO) with MobileSAM
+# masks. Needs `bash scripts/serve_perception.sh`.
+#
+# `conf` is 0.8 because that is ASCENT's `coco_threshold` for target detections
+# (`map_controller.py:712`, and the resolved config of the reference run). It is
+# not comparable to YOLOE's 0.3: a closed-set head is calibrated on its trained
+# classes where a prompted open-vocabulary head is not.
+name: dfine
+weights: ""          # served, not loaded here
+imgsz: 640
+conf: 0.8
+strict: true         # a server that does not answer raises PerceptionUnavailable

@@ -199,28 +199,24 @@ class AgentConfig:
     # Navigation/termination controls imported with the ASCENT behavior
     # snapshot.  Defaults are intentionally inert for legacy presets.
     approach_abandon_steps: int = 0
-    frontier_stick_m: float = 0.2
-    frontier_stick_steps: int = 15
     frontier_stick_rule: str = "displacement"  # displacement | closing
     escape_window: int = 0
-    # S47/S48: refuse to walk to a detection until it clears the evidence bar
-    # `object_layer.candidates` applies (verification.min_score / min_obs /
-    # min_bbox_px). `ascentnav` otherwise writes every detection above the
-    # detector's own conf into its object cloud and treats a cloud as a goal.
-    # MEASURED NULL on SR at both 0.70 and 0.60 (S48, S49) -- far-commits fall
-    # 22 -> 8 and SR does not move -- so it stays off; the flag is kept because
-    # the mechanism is real and n=100 cannot resolve a 2-3 episode effect.
-    # S51: escape a wedge on REALISED displacement. `escape_window` below reads
-    # the commanded action stream and fired zero times across 100 episodes while
-    # 793 forwards produced no motion in 69 of them -- the stream alternates
-    # turn/turn/blocked-forward, so neither of its predicates ever holds. This
-    # counts forwards that went nowhere. 0 disables.
-    stuck_escape_patience: int = 0
-    commit_gate: bool = False
-    # S50: turn in place on ARRIVING at a frontier. 62% of the steps the agent
-    # spends within 3 m of the target object have it outside the FOV. MEASURED
-    # NULL: 288 scans cost 17% of all steps and SR moved -2 (p = 0.75).
-    scan_on_arrival: int = 0
+    # --- ASCENT control-flow port (S71) ------------------------------------
+    # `_double_check_goal` latches when the value map's BLIP-2 cosine clears
+    # this (`map_controller.py:774`). Read by ascentnav only.
+    blip_gate_threshold: float = 0.15
+    # `_detect_passive_stair_entry` (`map_controller.py:626-672`). Only valid
+    # with the strict stair mask (`stair_up_mode: ascent`); the constructor
+    # refuses the union.
+    passive_stair_entry: bool = True
+    # ASCENT's `_initialize` returns TURN_LEFT until `_initialize_step > 11`,
+    # which is 13 calls (`ascent_policy.py:689-697`).
+    initialize_turns: int = 13
+    # `ascent` = REF's mirrored-depth down-stair trigger
+    # (`obstacle_map.py:549-562`); `lip` = OSG's rewritten "missing floor lip"
+    # test. The flag sets `_look_for_downstair_flag`, and every frame it is up
+    # is spent tilting at a possible phantom drop-off.
+    downstair_detector: str = "ascent"
     terminal_requires_detection: bool = True
     frontier_reachability_gate: bool = True
     check_candidates_all_states: bool = False
@@ -235,7 +231,7 @@ class AgentConfig:
     # enabled by an imported or combined multi-floor preset.
     ascent_min_obstacle_h: float = 0.61
     ascent_max_obstacle_h: float = 0.88
-    stair_up_mode: str = "detector"  # detector | ascent | rednet
+    stair_up_mode: str = "detector"  # detector | ascent | rednet; `ascentnav` sets `ascent` (the strict RedNet AND GroundingDINO fusion), `rednet` (the union) is its A/B
     rednet_stairs: bool = False
     rednet_weights: str = "data/weights/rednet_semmap_mp3d_40.pth"
     stair_reach_m: float = 0.6

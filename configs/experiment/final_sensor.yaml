@@ -3,27 +3,18 @@
 # THE comparable number, on the full v1 val split -- so the result belongs in
 # the same column as ASCENT's published 63% SR rather than needing a footnote.
 #
-#   python scripts/download_weights.py --pointnav --rednet    # once
+#   bash scripts/serve_perception.sh                              # five servers
 #   python scripts/run_eval.py +experiment=final_sensor +profile=report
 #
-# This is `ascentnav` + the stair machinery, i.e. exactly the configuration
-# `outputs/s41_stairs` was run with -- the best sensor-only arm measured on
-# `scenes20_ep0to4` (58.0% SR / 0.285 SPL, 66.7% same-floor, 27.3% cross-floor;
-# docs/AB_RESULTS.md S39 and S41). It supersedes the S30-S38 port chain, which
-# reached 42.0% on the same split and is still reachable as
-# `+experiment=ascent_sensor`.
-#
-# Its counterpart is `ascent_aligned`, the same protocol on habitat's
-# ground-truth navmesh. That pair is the S8 measurement: the gap between them is
+# This is `ascentnav` (S71: the reference's control flow on the reference's
+# served models) on every episode. Its counterpart is `ascent_aligned`, the
+# same protocol on habitat's ground-truth navmesh; the gap between them is
 # what privilege was worth. Quote either number with the profile that produced
 # it.
-#
-# The forced deviations listed in ascent_aligned.yaml still apply (CLIP for
-# BLIP-2 ITM, YOLOE for GroundingDINO/RAM++, and the text model); locomotion is
-# no longer among them.
 
 defaults:
   - ascentnav
+  - override /eval: hm3d_val_v1_full
 
 eval:
   num_episodes: -1

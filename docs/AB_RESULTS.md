@@ -3789,6 +3789,67 @@ the same "Seems like there is a {target} ahead." prompt, handed to the same
 `ValueMap.update_map` -- so this is not a wiring error. With this detector and
 these maps, scoring the value map with BLIP-2 makes exploration worse.
 
+### S71 — the transcription: ASCENT's control flow on ASCENT's models, 63.0%
+
+S55-S68 kept moving loss between the STOP and timeout columns without reducing
+it, and S54's reading -- a mismatched graft -- pointed at the models. The paired
+trace diagnosis said otherwise. Scoring every step of both runs against the
+dataset's own object positions ("SAW" = a true instance within 3 m and ±40°):
+
+| | ASCENT | `s68` |
+|---|---|---|
+| SAW episodes | 90 | 81 |
+| conversion given SAW | 0.711 | 0.667 |
+| never saw → STOP / → timeout | 8 / 1 | 12 / 6 |
+| climb-mode steps, same-floor episodes | 5.2% | 11.8% |
+| earliest STOP | 23 | 12 |
+
+The gap was BEFORE the target is ever in frame: frontiers retired early (the
+sticky rule could retire a floor's last frontier, the disabled set was
+per-episode, there was no stairwell re-initialisation), a stair mask that was
+RedNet's union where the reference ANDs it with GroundingDINO, and a STOP that
+could fire on step 12 with the opening scan unfinished. None of it is a
+threshold. So `src/ascentnav/` was rewritten as a line-cited transcription of
+`Ascent_Policy.act` + `Map_Controller` for one environment, on the reference's
+five served models (D-FINE + MobileSAM, BLIP-2 ITM as the latched 0.15 gate,
+GroundingDINO stairs, RAM++ tags, Qwen2.5-7B locally), with the OSG-only
+mechanisms (VLM verifier, commit/arrival gates, weak memory, escapes) removed.
+`src/ascentnav/README.md` lists the fidelity findings (F1-F14).
+
+`outputs/s71_port100`, `scenes20_ep0to4`, paired against native ASCENT
+(`relative_work/ascent/debug/behaviour_100`) and `s68`:
+
+| | SR | SPL | steps | same-floor (78) | cross-floor (22) |
+|---|---|---|---|---|---|
+| ASCENT, native | 65.0% | 0.36 | 182 | 76.9% | 22.7% |
+| **`s71` transcription** | **63.0%** | **0.36** | 202 | 75.6% | 18.2% |
+| `s68` old port | 54.0% | 0.28 | 197 | 65.4% | 13.6% |
+
+vs `s68`: 17 wins, 8 losses, net **+9** (McNemar p = 0.11). vs ASCENT: both 59,
+ASCENT-only 6, OSG-only 4; per category identical except `bed` (−9.1, 2 eps).
+The trace metrics moved to the reference's:
+
+| | ASCENT | `s71` |
+|---|---|---|
+| SAW episodes | 90 | 87 |
+| conversion given SAW | 0.711 | 0.713 |
+| never saw → STOP / → timeout | 8 / 1 | 9 / 3 |
+| climb-mode steps, same-floor episodes | 5.2% | 5.8% |
+| earliest STOP / STOPs before 33 | 23 / 3 | 23 / 3 |
+| committed, P(success | committed) | 90, 0.711 | 88, 0.693 |
+
+Mechanisms live (100 episodes): 357 LLM calls (93 overrides, 9 errors), 84 gate
+latches, 33 ungated arrivals sent back to explore, 5 abandons, 55 sticky
+retirements, 64 climb attempts (33 completed, 3 failed, 34 passive entries),
+181 policy STOPs on a frontier forced forward. Wall time ~100 s/episode on the
+served models.
+
+What this settles: S54's graft reading was wrong. BLIP-2 and the LLM ranker
+hurt when transplanted into OSG's explore/stop machinery and are neutral-to-
+necessary inside the reference's. The 2-point residual is within n=100 noise
+(the 6 ASCENT-only episodes are 5 timeouts, 4 of them same-floor); the stair
+A/B is `+experiment=ascentnav_union_stairs`.
+
 #### The pattern, after eleven A/Bs
 
 | change | mechanism verified live? | SR effect | p |
@@ -4200,13 +4261,14 @@ climb complete it), and everything else for the 81%.
 |---|---|---|---|
 | ASCENT (published) | 63% | — | sensor-only, v1 val |
 | `final_sensor` | _pending_ | | sensor-only — the comparable number, on the full split |
-| **`ascentnav` + stairs on `scenes20_ep0to4`** | **58.0%** | **0.285** | sensor-only, 100 eps — S41; the current best arm, and what `final_sensor` now composes to |
+| **`ascentnav` (S71 transcription) on `scenes20_ep0to4`** | **63.0%** | **0.360** | sensor-only, 100 eps — S71; ASCENT native on the same episodes: 65.0% / 0.36 |
+| `ascentnav` + stairs on `scenes20_ep0to4` (pre-S71 port) | 58.0% | 0.285 | sensor-only, 100 eps — S41; superseded by S71 |
 | `ascentnav` on `scenes20_ep0to4` | 55.0% | 0.284 | sensor-only, 100 eps — S39, no stair machinery (0.0% cross-floor) |
 | `ascent_sensor` on `scenes20_ep0to4` | 42.0% | 0.196 | sensor-only, 100 eps — the S30-S38 port chain at its best |
 | `ascent_sensor` (S8 baseline) on `scenes20_ep0to4` | 33.0% | 0.129 | sensor-only, 100 eps — S8 above; its navmesh pair scores 63.0% |
 | `final_navmesh` | _pending_ | | uses habitat's ground-truth navmesh; **not** comparable to ASCENT |
 
-`final_sensor` inherits `ascentnav`, so it is exactly the `outputs/s41_stairs`
+`final_sensor` inherits `ascentnav`, so it is exactly the `outputs/s71_port100`
 configuration on the full v1 val split. The port chain (`ascent_sensor` and its
 `ascent_sensor_*` variants) is kept reachable by name — every S30-S38 number is
 reproducible — but it is no longer what the headline preset composes to.

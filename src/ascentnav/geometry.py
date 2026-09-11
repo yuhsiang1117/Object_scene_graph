@@ -41,9 +41,49 @@ def xyz_yaw_pitch_roll_to_tf_matrix(
 
 
 def robot_xy_heading(frame) -> tuple:
-    """Agent position and heading in ASCENT's CCW frame."""
+    """Agent position and heading in ASCENT's CCW frame, WORLD-anchored."""
     xz = frame.camera_position[list(PLANE)]
     return np.array([xz[0], -xz[1]]), -agent_heading(frame.T_wc)
+
+
+class EpisodeAnchor:
+    """The pose the episode started at, so every map is centred on it.
+
+    ASCENT's maps live in a GPS/compass frame -- origin at the episode start,
+    heading 0 along the start facing (`ascent_policy.py:233-237`). The port
+    fed raw world coordinates into `_xy_to_px`, which has no bounds check and a
+    40 m half-extent from the WORLD origin; on this split the furthest start is
+    22.9 m out, so the budget was being quietly spent. Anchoring at the start
+    is what the reference does and what the map size was chosen for.
+    """
+
+    def __init__(self, xy_world: np.ndarray, heading_world: float) -> None:
+        self.xy = np.asarray(xy_world, dtype=float).copy()
+        self.heading = float(heading_world)
+        c, s = np.cos(-self.heading), np.sin(-self.heading)
+        self._r_world_to_ep = np.array([[c, -s], [s, c]])
+        self._r_ep_to_world = self._r_world_to_ep.T
+
+    @classmethod
+    def from_frame(cls, frame) -> "EpisodeAnchor":
+        xy, heading = robot_xy_heading(frame)
+        return cls(xy, heading)
+
+    def to_episodic(self, xy_world: np.ndarray) -> np.ndarray:
+        return self._r_world_to_ep @ (np.asarray(xy_world, dtype=float) - self.xy)
+
+    def to_world(self, xy_ep: np.ndarray) -> np.ndarray:
+        return self._r_ep_to_world @ np.asarray(xy_ep, dtype=float) + self.xy
+
+    def heading_to_episodic(self, heading_world: float) -> float:
+        h = float(heading_world) - self.heading
+        return float(np.arctan2(np.sin(h), np.cos(h)))
+
+
+def episodic_xy_heading(frame, anchor: EpisodeAnchor) -> tuple:
+    """Agent position and heading in ASCENT's CCW frame, EPISODE-anchored."""
+    xy, heading = robot_xy_heading(frame)
+    return anchor.to_episodic(xy), anchor.heading_to_episodic(heading)
 
 
 def camera_pitch(frame) -> float:
@@ -62,11 +102,18 @@ def camera_pitch(frame) -> float:
     return float(-np.arcsin(np.clip(fwd[1], -1.0, 1.0)))
 
 
-def tf_camera_to_episodic(frame, camera_height: float) -> np.ndarray:
-    """ASCENT's `tf_camera_to_episodic` for an OSG frame."""
-    xy, yaw = robot_xy_heading(frame)
+def tf_camera_to_episodic(frame, camera_height: float, anchor: "EpisodeAnchor | None" = None,
+                          pitch: "float | None" = None) -> np.ndarray:
+    """ASCENT's `tf_camera_to_episodic` for an OSG frame.
+
+    `pitch` in ASCENT's convention (radians, negative when looking up) may be
+    supplied by a caller that tracks it by hand, as the reference does.
+    """
+    xy, yaw = (episodic_xy_heading(frame, anchor) if anchor is not None
+               else robot_xy_heading(frame))
+    p = camera_pitch(frame) if pitch is None else float(pitch)
     return xyz_yaw_pitch_roll_to_tf_matrix(
-        np.array([xy[0], xy[1], camera_height]), yaw, camera_pitch(frame), 0.0
+        np.array([xy[0], xy[1], camera_height]), yaw, p, 0.0
     )
 
 

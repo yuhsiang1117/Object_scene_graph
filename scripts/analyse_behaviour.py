@@ -52,6 +52,23 @@ def load_goal_geometry(episodes_root: str) -> dict:
     return out
 
 
+def load_goal_geometry_3d(episodes_root: str) -> dict:
+    """{uid: object positions as (x, -z, y)} -- the plane the agents log in,
+    plus habitat's height, for gating instances to a storey."""
+    out = {}
+    for f in sorted(glob.glob(f"{episodes_root}/*.json.gz")):
+        d = json.load(gzip.open(f))
+        gbc = d.get("goals_by_category", {})
+        for i, e in enumerate(d["episodes"]):
+            key = f"{e['scene_id'].split('/')[-1]}_{e['object_category']}"
+            objs = [g["position"] for g in gbc.get(key, []) if "position" in g]
+            if not objs:
+                continue
+            a = np.asarray(objs, float)
+            out[f"{e['scene_id'].split('/')[-1]}:{i}"] = np.stack([a[:, 0], -a[:, 2], a[:, 1]], 1)
+    return out
+
+
 def uid(row: dict) -> str:
     return row.get("uid") or f"{row.get('scene','?')}:{row['episode_id']}"
 

@@ -32,6 +32,7 @@ from __future__ import annotations
 import os
 
 import logging
+import re
 from typing import List, Optional, Sequence
 
 import numpy as np
@@ -130,6 +131,7 @@ class AscentFrontierRanker:
         self.subgraph_radius_m = subgraph_radius_m
         self.calls = 0
         self.overrides = 0  # times the model disagreed with the value ranking
+        self.abstains = 0   # replies with no index in them ("none")
         self.desc_frame = 0
         self.desc_differs = 0
 
@@ -143,6 +145,7 @@ class AscentFrontierRanker:
         """
         self.calls = 0
         self.overrides = 0
+        self.abstains = 0
         # How many frontier descriptions came from a frame, and how many of
         # those actually read differently from the scene-graph version.
         self.desc_frame = 0
@@ -193,10 +196,21 @@ class AscentFrontierRanker:
         try:
             self.calls += 1
             resp = self.client.chat(prompts.ASCENT_RANK_SYSTEM, user)
-            idx = int(str(resp.get("Index", "1")).strip()) - 1  # 1-based
         except Exception as e:  # noqa: BLE001 - any failure means "keep the ranking"
             log.warning("frontier ranker failed, keeping the value ranking: %s", e)
             return 0
+        # The model does not always answer with a bare number. "none" is a
+        # legitimate reply -- it means no area looks better than the value
+        # ranking already says -- and `int("none")` turned that into an
+        # exception that disabled the ranker for the call and logged it as a
+        # failure. Take the first integer in whatever came back.
+        raw = str(resp.get("Index", "")).strip()
+        m = re.search(r"-?\d+", raw)
+        if m is None:
+            self.abstains += 1
+            log.debug("frontier ranker abstained (%r), keeping the value ranking", raw)
+            return 0
+        idx = int(m.group()) - 1  # 1-based
         if not (0 <= idx < len(cand)):
             log.warning("frontier ranker returned out-of-range index %d", idx + 1)
             return 0

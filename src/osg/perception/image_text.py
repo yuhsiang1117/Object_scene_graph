@@ -133,9 +133,12 @@ class Blip2ItmScorer(ImageTextScorer):
     """
 
     def __init__(self, url: str = "http://localhost:13182/blip2itm",
-                 timeout_s: float = 10.0) -> None:
+                 timeout_s: float = 10.0, strict: bool = False) -> None:
         self.url = url
         self.timeout_s = float(timeout_s)
+        # Fail loud. A cosine of 0 from a dead server means ASCENT's commit
+        # gate never latches, which means the agent never STOPs.
+        self.strict = bool(strict)
         self.n_calls = 0
         self.n_errors = 0
         self._warned = False
@@ -173,11 +176,45 @@ class Blip2ItmScorer(ImageTextScorer):
                 self.n_calls += 1
             except Exception as exc:  # noqa: BLE001 -- any failure means no signal
                 self.n_errors += 1
+                if self.strict:
+                    from .ascent_models import PerceptionUnavailable
+
+                    raise PerceptionUnavailable(f"{self.url}: {exc}") from exc
                 if not self._warned:
                     self._warned = True
                     print(f"[blip2itm] unreachable at {self.url} ({exc}); "
                           "value map will read 0 until it answers")
         return out
+
+
+def build_scorer_by_name(model: str, cfg) -> Optional[ImageTextScorer]:
+    """One scorer by name, independent of whether the value map wants one.
+
+    The value map and the COMMIT GATE ask the same model two different
+    questions, and ASCENT answers both with the same BLIP-2 call
+    (`map_controller.py:540-562` computes the value-map cosine and keeps
+    `cosines[0][0]` as `_blip_cosine`, which `:770-776` thresholds at 0.15 to
+    latch `_double_check_goal`). OSG splits them so the gate can run on BLIP-2
+    while the value map stays on whatever measured best.
+    """
+    if model in ("none", "", None):
+        return None
+    if model == "constant":
+        return ConstantScorer()
+    if model == "clip":
+        return ClipScorer(
+            model_name=getattr(cfg.exploration, "value_clip_name", "ViT-B/32"),
+            device=cfg.detector.device,
+            download_root=getattr(cfg.exploration, "value_clip_root", "data/clip"),
+        )
+    if model == "blip2itm":
+        return Blip2ItmScorer(
+            url=str(getattr(cfg.exploration, "value_blip2_url",
+                            "http://localhost:13182/blip2itm")),
+            timeout_s=float(getattr(cfg.exploration, "value_blip2_timeout_s", 10.0)),
+            strict=bool(getattr(cfg.exploration, "value_strict", False)),
+        )
+    raise ValueError(f"unknown image-text model: {model}")
 
 
 def build_image_text_scorer(cfg) -> Optional[ImageTextScorer]:
@@ -198,5 +235,6 @@ def build_image_text_scorer(cfg) -> Optional[ImageTextScorer]:
             url=str(getattr(cfg.exploration, "value_blip2_url",
                             "http://localhost:13182/blip2itm")),
             timeout_s=float(getattr(cfg.exploration, "value_blip2_timeout_s", 10.0)),
+            strict=bool(getattr(cfg.exploration, "value_strict", False)),
         )
     raise ValueError(f"unknown value_model: {model}")

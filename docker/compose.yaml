@@ -4,7 +4,7 @@ services:
     restart: unless-stopped
     environment:
       - OLLAMA_KEEP_ALIVE=30m
-      - OLLAMA_MAX_LOADED_MODELS=2  
+      - OLLAMA_MAX_LOADED_MODELS=2
       - OLLAMA_CONTEXT_LENGTH=8192
     volumes:
       - ollama-models:/root/.ollama
@@ -16,34 +16,52 @@ services:
           devices:
             - driver: nvidia
               count: 1
-              capabilities: [gpu]
+              capabilities: [ gpu ]
 
   nav:
     build:
       context: .
       dockerfile: Dockerfile
       args:
-        USER_UID: ${LOCAL_UID:-1000}
-        USER_GID: ${LOCAL_GID:-1000}
+        USER_UID: ${UID:-1000}
+        USER_GID: ${GID:-1000}
     runtime: nvidia
     depends_on:
       - ollama
     stdin_open: true
     tty: true
-    command: ["bash"]
+    command: [ "bash" ]
     environment:
       - OLLAMA_HOST=http://ollama:11434
       - NVIDIA_DRIVER_CAPABILITIES=all
+      - NVIDIA_VISIBLE_DEVICES=all
       - PYTORCH_CUDA_ALLOC_CONF=expandable_segments:True
       - HOME=/tmp
       - YOLO_CONFIG_DIR=/tmp/Ultralytics
       - NVIDIA_API_KEY=${NVIDIA_API_KEY}
+      # --- x11: GUI tools inside the container (the Rerun 3D viewer) ---------
+      # Inherit the host's DISPLAY. Empty when the host has no X session, which
+      # is harmless: GUI apps then fail with "Failed to open connection to X
+      # server" and everything headless keeps working.
+      - DISPLAY=${DISPLAY:-}
+      - XDG_RUNTIME_DIR=/tmp
+      - XAUTHORITY=/tmp/.Xauthority
     volumes:
       - ..:/workspace
       - weights-cache:/workspace/data/weights
-      # Habitat assets and authored layouts live in the collector checkout.
-      # The nav container may read and update both collector trees directly.
-      # Its UID/GID matches the host owner, so new files remain host-accessible.
+      - ../outputs:/workspace/outputs
+      # HM3D scene meshes (license-gated, ~10 GB+ for val). Kept out of the
+      # repo, so HM3D_SCENES in docker/.env points at wherever they actually
+      # live and they are mounted onto the path the episode datasets expect:
+      # data/scene_datasets/hm3d is a symlink to versioned_data/hm3d-0.2/hm3d.
+      # Without this the eval dies in the env worker with "No Stage Attributes
+      # exists for requested scene ...basis.glb", not a missing-file error.
+      - ${HM3D_SCENES:-../data/versioned_data}:/workspace/data/versioned_data
+      # Mount X11 server
+      - /tmp/.X11-unix:/tmp/.X11-unix # X11-unix is mounted to allow GUI applications to display on host.
+      - $HOME/.Xauthority:/tmp/.Xauthority # Xauthority is mounted to allow X11 forwarding for remote display.
+      # Mount Direct Rendering Infrastructure (DRI) for hardware acceleration support such as OpenGL.
+      - /dev/dri:/dev/dri
       - ${HABITAT_COLLECTOR_DATA_DIR:-../../habitat-data-collector/data}:/datasets/habitat-data-collector/data:rw
       - ${DUALMAP_AUTHORING_DIR:-../../habitat-data-collector/outputs/dualmap_authoring}:/datasets/habitat-data-collector/outputs/dualmap_authoring:rw
     deploy:
@@ -52,7 +70,7 @@ services:
           devices:
             - driver: nvidia
               count: 1
-              capabilities: [gpu, graphics]
+              capabilities: [ gpu, graphics ]
     ipc: host
 
 volumes:

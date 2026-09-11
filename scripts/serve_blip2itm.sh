@@ -2,7 +2,8 @@
 # Serve ASCENT's BLIP-2 ITM value model for OSG to score its value map against.
 #
 #   bash scripts/serve_blip2itm.sh &
-#   python scripts/run_eval.py +experiment=ascentnav_blip2 eval=scenes20_ep0to4
+#   python scripts/run_eval.py +experiment=ascentnav eval=scenes20_ep0to4
+#   (`scripts/serve_perception.sh` launches this and the other four together)
 #
 # It runs in the `ascent` conda env, not habitat's: lavis needs numpy 1.x builds
 # and transformers pins that habitat's env does not have, and the two cannot
