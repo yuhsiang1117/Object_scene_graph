@@ -28,10 +28,12 @@ The build context is the repo root (`context: ..`), which `/.dockerignore`
 trims from 35 GB on disk to ~213 MB — it drops `.conda-envs/`, `data/`,
 `outputs/`, the 4.5 GB of model weights, and `docker/.env`.
 `tests/unit/test_docker_build_context.py` checks that no `COPY` names a path
-the ignore file excludes, which fails a build as confusingly as a typo. ASCENT itself carries nine nested
-submodules (GroundingDINO, MobileSAM, D-FINE, RAM++, places365, vlfm,
-frontier_exploration, depth_camera_filtering, habitat-lab), and a non-recursive
-clone leaves all nine as empty directories. The servers import from them.
+the ignore file excludes, which fails a build as confusingly as a typo.
+
+ASCENT itself carries nine nested submodules (GroundingDINO, MobileSAM,
+D-FINE, RAM++, places365, vlfm, frontier_exploration, depth_camera_filtering,
+habitat-lab), and a non-recursive clone leaves all nine as empty directories.
+The servers import from them.
 
 ### The compiled CUDA extension (only for pre-merge containers)
 
@@ -50,14 +52,24 @@ NameError: name '_C' is not defined
 ```
 
 which the run surfaces as `PerceptionUnavailable: …/gdino: HTTP Error 500`.
-Build it once, in the `ascent` env:
+Build it once, in the `ascent` env — **compile in place and add a `.pth`; do
+not use `pip install -e .`**, which re-enters pep517 in an isolated environment
+and makes GroundingDINO's `setup.py` try to `pip install torch` from inside it:
 
 ```bash
-/workspace/.conda-envs/ascent/bin/pip install -e relative_work/ascent/third_party/GroundingDINO
+ASCENT_PY=/workspace/.conda-envs/ascent/bin/python
+cd relative_work/ascent/third_party/GroundingDINO
+CUDA_HOME=/usr/local/cuda $ASCENT_PY setup.py build_ext --inplace
+$ASCENT_PY -c "import site, pathlib; \
+  pathlib.Path(site.getsitepackages()[0], '_ascent_gdino.pth') \
+  .write_text('$PWD\n')"
+cd - && $ASCENT_PY -c "import torch; from groundingdino import _C; print('OK')"
 ```
 
-It produces `third_party/GroundingDINO/groundingdino/_C.cpython-39-*.so`; check
-that file exists before blaming the model.
+It produces `groundingdino/_C.cpython-39-*.so` in that directory; check the
+file exists before blaming the model. Import torch first when checking — the
+extension links `libc10` with no RPATH, so a bare `from groundingdino import
+_C` fails even on a good install.
 
 ---
 

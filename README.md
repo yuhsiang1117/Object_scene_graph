@@ -192,7 +192,7 @@ SR/SPL must never be quoted against sensor-only methods).
 - `configs/` — Hydra groups; `configs/experiment/*` are composable presets.
 - `scripts/` — `run_eval.py`, `run_full_split.sh` (supervised long run),
   `serve_perception.sh`, `compare_ascent_osg.py`, `analyze_*.py` diagnostics.
-- `tests/unit` — 937 tests, no GPU or data needed (~20 s). Every
+- `tests/unit` — 949 tests, no GPU or data needed (~20 s). Every
   `test_ascentnav_*` names the reference line it was transcribed from, and
   `tests/unit/golden/` pins every preset's composed config so a default cannot
   move unnoticed.
