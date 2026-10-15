@@ -58,6 +58,7 @@ from .approach import ApproachPolicy
 from .candidate import CandidatePolicy
 from .climb import ClimbPolicy
 from .close_look import CloseLookPolicy
+from .stop_gate import StopGate
 from .floor_policy import FloorPolicy
 from .stair_sense import StairSense
 from ..core.labels import normalize_label
@@ -283,6 +284,7 @@ class NavAgent:
         self.approach = ApproachPolicy(self)
         self.candidates = CandidatePolicy(self)
         self.close_look = CloseLookPolicy(self)
+        self.stop_gate = StopGate(self)
         self.climb = ClimbPolicy(self)
         self.stairs = StairSense(self)
         # Where to go next -- frontiers and mapped surfaces under one index.
@@ -456,6 +458,7 @@ class NavAgent:
         self.approach.reset()
         self.candidates.reset()
         self.close_look.reset()
+        self.stop_gate.reset()
         self.kf_selector.reset()
         self.controller.reset()
         self.exploration.reset()
@@ -516,6 +519,32 @@ class NavAgent:
             if callable(reset):
                 reset()
 
+    def release_candidate(self) -> None:
+        """Drop the committed candidate and go back to EXPLORE, map intact.
+
+        The navigation half of `rearm`, shared with the STOP gate, which
+        releases a candidate without an attempt having been spent on it."""
+        self._candidate_id = None
+        self._target_obj_xy = None
+        self._goal_xy = None
+        self._current_path = None
+        self.approach.at_viewpoint = False
+        self.approach.scan_turns_left = 0
+        self.approach.scan_expected = 0
+        self.approach.stop_reason = None
+        self.close_look.abort()
+        self._stale_stop_pending = False
+        self.state = State.EXPLORE
+
+    def hold_explore(self) -> None:
+        """Keep the commit open for one exploration round (see `rearm`)."""
+        hold = int(getattr(self.cfg.agent, "explore_after_failed_attempt_steps", 0))
+        if hold > 0:
+            self._explore_hold_until = self.step_count + hold
+            force = getattr(self.exploration, "force_select_next", None)
+            if callable(force):
+                force()
+
     def rearm(self, max_steps: int) -> None:
         """Give the agent another attempt without giving it a new map.
 
@@ -529,17 +558,7 @@ class NavAgent:
         failed attempt is WORTH is a protocol question, not an agent one.
         """
         self._schedule_relook()
-        self._candidate_id = None
-        self._target_obj_xy = None
-        self._goal_xy = None
-        self._current_path = None
-        self.approach.at_viewpoint = False
-        self.approach.scan_turns_left = 0
-        self.approach.scan_expected = 0
-        self.approach.stop_reason = None
-        self.close_look.abort()
-        self._stale_stop_pending = False
-        self.state = State.EXPLORE
+        self.release_candidate()
         self._goto_deadline = self.step_count + int(max_steps)
         self.stats["attempts"] = self.stats.get("attempts", 1) + 1
         # EXPLORE is not the same thing as an exploration ROUND. `_act_inner`
@@ -549,12 +568,7 @@ class NavAgent:
         # Hold the commit open long enough for one, and make that one run now
         # rather than at the rate limit's convenience.
         self._note_failed_attempt_on_storey()
-        hold = int(getattr(self.cfg.agent, "explore_after_failed_attempt_steps", 0))
-        if hold > 0:
-            self._explore_hold_until = self.step_count + hold
-            force = getattr(self.exploration, "force_select_next", None)
-            if callable(force):
-                force()
+        self.hold_explore()
 
     # ------------------------------------------------------------------- act
 
@@ -806,6 +820,12 @@ class NavAgent:
         prev_state = self.state
         with self.profiler.timeit("control_loop"):
             action = self._act_inner(frame)
+            if action == STOP_ACTION and self.state is State.DONE:
+                # Every STOP passes here: the approach, the close look and the
+                # stale-anchor stop all end in DONE. Off by default.
+                instead = self.stop_gate.check(frame)
+                if instead is not None:
+                    action = instead
         if self._escape.window > 0 and not (
             action == STOP_ACTION and self.state is State.DONE
         ):

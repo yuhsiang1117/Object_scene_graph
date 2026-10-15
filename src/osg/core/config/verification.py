@@ -246,3 +246,33 @@ class VerificationConfig:
     # verifier -- measured at 0.850 on NIM against 0.750 locally -- with it.
     base_url: str = ""
     api_key: str = ""
+    # The STOP gate (agent/stop_gate.py): when the agent is about to STOP on a
+    # live detection of the target, ask a second recogniser whether it IS the
+    # target, and if not, release the candidate instead of spending an attempt
+    # on it. "off" (the shipped behaviour), "vlm" or "clip".
+    #
+    # On the YCB benchmarks most commits are wrong -- 31 of 40 on the
+    # multi-floor set, 49 of 73 live commits on DualMap's static condition --
+    # and a false positive is a real object, so the detector re-detects it on
+    # arrival, the absence sensor has nothing to say, and the attempt is spent.
+    # HM3D's verdict that verification is a dead end (docs/history/
+    # INVESTIGATION.md) was about category-correct false positives; these are
+    # a lamp called "toy airplane". Measure the recogniser with
+    # scripts/eval_verifiers.py before switching this on.
+    stop_gate: str = "off"
+    # The gate's VLM; empty = `vlm_model`. And forced choice between the query
+    # and the detector's background vocabulary, instead of yes/no.
+    stop_gate_model: str = ""
+    stop_gate_choice: bool = False
+    # `clip`: reject when cos(crop, query) does not beat the best background
+    # class by this margin (MobileCLIP-S2, the region proposer's encoder).
+    stop_gate_clip_margin: float = 0.0
+    # A rejection is identity evidence with these rates, applied through the
+    # presence filter exactly as a failed attempt applies the VLM's
+    # (eval/attempts.py); set them to what eval_verifiers.py measured.
+    stop_gate_recall: float = 0.9
+    stop_gate_q: float = 0.2
+    # Bounds on what a wrong recogniser can cost: a track rejected this many
+    # times is let stop, and an episode rejects at most this many stops.
+    stop_gate_max_per_track: int = 2
+    stop_gate_max_per_episode: int = 4

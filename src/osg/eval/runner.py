@@ -228,6 +228,10 @@ def run_eval(cfg) -> dict:
             # "verify_target_bypasses_bbox_gate"
             # "verify_terminal" "verify_unreachable_is_absorbing" "verify_vlm_q"
             # "verify_vlm_recall" "viewpoint_stop_m" "voronoi_goal_near_m"
+            # "verify_stop_gate" "verify_stop_gate_model" "verify_stop_gate_choice"
+            # "verify_stop_gate_clip_margin" "verify_stop_gate_recall"
+            # "verify_stop_gate_q" "verify_stop_gate_max_per_track"
+            # "verify_stop_gate_max_per_episode"
             **_algorithm_fingerprint(cfg),
         },
     }
