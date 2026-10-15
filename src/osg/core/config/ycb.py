@@ -173,6 +173,12 @@ class YCBAuthoredConfig:
     # viewpoint (whose rings at 0.8-2.0 m make the effective tolerance about
     # 2 m; docs/history/DUALMAP_PROTOCOL_EARLY_ARMS.md). Attempts are spent by the same rule.
     # Habitat's own numbers are kept under habitat_success / habitat_spl.
+    # Pass 1 only (needs `map_out`): after an episode is scored, show its
+    # target to the world model from this many of the layout's goal view
+    # points, so the prior holds every object the robot is supposed to have
+    # seen (eval/prior_map.py `tour_target_views`). 0 is the shipped behaviour.
+    # On 00800 two of six ASCENT mapping walks never had their target in view.
+    map_tour_views: int = 0
     score_by_object_distance: bool = False
     object_success_distance_m: float = 1.0
     # ...and the stop must be on the object's storey: the agent's floor height

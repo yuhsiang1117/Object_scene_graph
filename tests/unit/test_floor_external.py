@@ -561,3 +561,21 @@ def test_the_operator_waypoint_is_the_first_goal_on_the_declared_storey():
     # And the waypoint is not taken again.
     _walk(agent, 6, start=12)
     assert len(posed) == 1
+
+
+def test_register_storey_reuses_a_known_one_and_creates_a_missing_one():
+    """Pass 1's target tour files a view under the storey of its floor height:
+    on 00878 the first mapping episode started in the basement and knew no
+    other storey, so every view was skipped until storeys could be registered."""
+    policy = _policy()
+    est = policy.estimator
+    est._levels = {0: -2.8}
+    est._samples = {0: [-2.8]}
+    est._next_id = 1
+    policy.stack.set_height(0, -2.8)
+    assert policy.register_storey(-2.7) == 0                     # within 1 m: known
+    up = policy.register_storey(2.8)
+    assert up == 1 and est.levels[up] == 2.8
+    assert policy.stack.by_key(up).floor_y == 2.8                # estimator and stack agree
+    assert policy.register_storey(2.75) == up                    # found, not founded again
+    assert est.current == 0                                      # where the agent is: unchanged

@@ -558,6 +558,28 @@ class FloorPolicy:
             float(np.linalg.norm(here - bad)) <= radius for bad in self._failed_portals
         )
 
+    def register_storey(self, height: float, tol_m: float = 1.0) -> int:
+        """The key of the storey at `height`, created if none is within `tol_m`.
+
+        For an observation made somewhere the agent has not stood -- pass 1's
+        target tour (eval/prior_map.py) -- so it is filed under the right
+        storey. Estimator and stack get the same key, as on a load
+        (`map_store.apply_map`) and an external switch, so the walk arriving
+        there later finds the storey rather than founding a second one. Does
+        not move `current`."""
+        est = self.estimator
+        if est._levels:
+            key = min(est._levels, key=lambda k: abs(float(est._levels[k]) - float(height)))
+            if abs(float(est._levels[key]) - float(height)) <= float(tol_m):
+                return int(key)
+        key = max([int(est._next_id)] + [int(k) + 1 for k in self.stack._layers])
+        est._levels[key] = float(height)
+        est._samples[key] = [float(height)]
+        est._next_id = key + 1
+        self.stack.set_height(key, float(height))
+        self.stats["storeys_registered"] = self.stats.get("storeys_registered", 0) + 1
+        return key
+
     def flight_span_m(self, floor_y: float) -> float:
         """How tall a flight from `floor_y` may be, for `find_flights`.
 

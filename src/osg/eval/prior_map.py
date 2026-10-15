@@ -400,6 +400,55 @@ def load_obstacle_map(cfg, agent, scene: str) -> Optional[dict]:
     }
 
 
+def tour_target_views(cfg, env, agent, episode) -> int:
+    """Pass 1: end the episode with a look at its target. Returns views used.
+
+    The dynamic benchmark's premise is that the robot SAW the object in its
+    earlier session -- Fig. 1's "during initial exploration the robot observes
+    the bottle on table A" -- and pass 2 is about revising that memory. An
+    exploration walk does not guarantee it: on 00800, of six 1500-step ASCENT
+    episodes each prompting its own target, two never had the target in view at
+    all (pitcher, cracker box). So after the episode is over and scored, the
+    world model is shown the target from the layout's own goal view points (the
+    manifest's, 0.8-2 m, ranked by visible pixels), up to `ycb.map_tour_views`.
+
+    Only the object layer is fed. The occupancy is the walk's own, and each
+    view's detections are filed under the storey of the view point's floor
+    height, not the estimator's current storey, which a teleport would leave
+    on the wrong floor. A storey the walk never reached is registered
+    (`FloorPolicy.register_storey`): on 00878 the first mapping episode
+    started in the basement, knew no other storey, and the tour had nowhere to
+    file a single view.
+    """
+    n = int(getattr(cfg.ycb, "map_tour_views", 0) or 0)
+    if n <= 0 or not str(cfg.ycb.map_out or ""):
+        return 0
+    world = getattr(agent, "world", None)
+    if world is None or not hasattr(world, "object_layer"):
+        return 0
+    from habitat_sim.utils.common import quat_from_coeffs
+
+    info = (getattr(episode, "info", None) or {}).get("ycb", {})
+    sim = env.env.sim
+    used = 0
+    for view in (info.get("viewpoints") or [])[:n]:
+        key = world.floors.register_storey(float(view["position"][1]))
+        agent_obj = sim.get_agent(0)
+        state = agent_obj.get_state()
+        state.position = np.asarray(view["position"], dtype=np.float32)
+        state.rotation = quat_from_coeffs(np.asarray(view["rotation"], dtype=np.float32))
+        state.sensor_states = {}
+        agent_obj.set_state(state, reset_sensors=True)
+        env._frame_id += 1
+        frame = env._to_frame(sim.get_sensor_observations())
+        dets = world.detector.detect(frame.rgb)
+        world.object_layer.update(frame, dets, floor_key=int(key))
+        world.keyframes.add(frame)
+        used += 1
+    world.stats["tour_views"] = world.stats.get("tour_views", 0) + used
+    return used
+
+
 def save_map_for_scene(cfg, agent, episode) -> None:
     """Pass 1: keep the map this episode built, keyed by scene.
 

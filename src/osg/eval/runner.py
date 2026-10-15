@@ -30,7 +30,7 @@ from .metrics import (
     per_floor_class,
     per_relocation,
 )
-from .prior_map import save_map_for_scene
+from .prior_map import save_map_for_scene, tour_target_views
 from .obstacle_map_viz import save_obstacle_map_pngs
 from .record import (
     build_episode_record,
@@ -305,13 +305,16 @@ def run_eval(cfg) -> dict:
         if debug is not None:
             debug.close()
 
-        save_map_for_scene(cfg, agent, episode)
         rec = build_episode_record(
             cfg=cfg, episode=episode, env=env, agent=agent, outcome=outcome,
             target=target, detector_identity=identity, metrics=env.metrics(),
             profiler=profiler, scorer=scorer, scorer_before=scorer_before,
             verifier=verifier, verifier_before=verifier_before,
         )
+        # After the record: the tour moves the agent, and the record reads its
+        # final pose. Pass 1 only (it needs `ycb.map_out`).
+        tour_target_views(cfg, env, agent, episode)
+        save_map_for_scene(cfg, agent, episode)
         results.append(rec)
         with open(episodes_file, "a") as f:
             f.write(json.dumps(rec) + "\n")

@@ -70,6 +70,25 @@ OUT=${OUT:-outputs/prior_v2}
 # pass 2 searches with 11L (configs/detector/yoloe.yaml), and a prior mapped by
 # a weaker detector than the one that later disputes it is a confound.
 WM_WEIGHTS=${WM_WEIGHTS:-data/weights/yoloe-11l-seg.pt}
+# ...and at the resolution pass 2 searches at. `mf5_ascentnav_map` renders
+# 640x480 for ASCENT, and the world model then ran YOLOE at imgsz 640 on those
+# frames -- a quarter of the pixels pass 2 has (1280x960, imgsz 1280; the
+# single-floor priors were built that way too, campaign/rebuild_maps.sh). On
+# objects this small scale is the recall (perception/foveate.py): after six
+# 1500-step episodes on 00800, each prompting its own target, the graph held a
+# bowl and toy-airplane tracks and no cracker box, tin can, pitcher or banana.
+# D-FINE and the other served models take any size, RedNet resizes, and the
+# intrinsics come from the width, so ASCENT drives the same scene; only its
+# perception calls get larger images. `detector.imgsz` reaches the world
+# model's YOLOE alone -- D-FINE ignores it.
+# The walk is not guaranteed to look at its target (two of six on 00800 never
+# had it in view), and the benchmark's premise is that the robot saw it. Each
+# episode ends with this many goal view points of its target shown to the
+# world model (`ycb.map_tour_views`, eval/prior_map.py).
+TOUR_VIEWS=${TOUR_VIEWS:-3}
+RGB_W=${RGB_W:-1280}
+RGB_H=${RGB_H:-960}
+WM_IMGSZ=${WM_IMGSZ:-1280}
 # The paper's five multi-floor scenes, 00808 (the development scene), then
 # DualMap's released three. The released layouts are read in authored form
 # from `outputs/collector_layouts` -- NOT `outputs/substituted_layouts`, which
@@ -132,6 +151,8 @@ PYCOUNT
     "eval.num_episodes=$MAX_EPISODES" \
     "ycb.obstacle_map_out=$OBS" "ycb.map_out=$OSG" "ycb.map_in=$OSG" \
     "agent.osg_world_model_weights=$WM_WEIGHTS" \
+    "eval.rgb_width=$RGB_W" "eval.rgb_height=$RGB_H" "detector.imgsz=$WM_IMGSZ" \
+    "ycb.map_tour_views=$TOUR_VIEWS" \
     ycb.obstacle_map_union=true \
     eval.behaviour_log=true eval.save_viz=false \
     "${extra[@]}" "output_dir=$OUT/$scene" > "$OUT/$scene.log" 2>&1
