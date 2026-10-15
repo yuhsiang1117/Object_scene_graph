@@ -9,6 +9,7 @@
 # Arms:
 #   osg      `mfv2_osg` over pass 1's maps (OBS / OSG below), as the paper's
 #            multi-floor arm loads them (scripts/run_mf5_pass2.sh)
+#   osg_gate `mfv2_osg_gate`: the same, with the STOP gate -- its A/B partner
 #   ascent   `mfv2_ascent`, no prior map; needs scripts/serve_perception.sh
 #
 # Pass 1 must have run (scripts/run_prior_maps.sh) and its audit passed
@@ -35,8 +36,8 @@ SCENES=("$@")
   00862-LT9Jq6dN3Ea 00873-bxsVRursffK 00878-XB4GS9ShBRE)
 
 case "$ARM" in
-  osg)
-    PRESET=mfv2_osg
+  osg|osg_gate)
+    PRESET=mfv2_$ARM
     MAX_PARALLEL=${MAX_PARALLEL:-2}
     INPUTS=("ycb.obstacle_map_in=$OBS" ycb.obstacle_map_union=true
             ycb.seed_storeys_from_obstacle_map=true ycb.storey_seed_tol_m=0.75

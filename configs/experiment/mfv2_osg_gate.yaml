@@ -1,0 +1,28 @@
+# @package _global_
+#
+# `mfv2_osg` plus the STOP gate (agent/stop_gate.py): one variable, so the pair
+# (mfv2_osg, mfv2_osg_gate) on the same seed and maps is the A/B.
+#
+# The recogniser is MobileCLIP-S2's margin of the query over a fixed confuser
+# list (the indoor vocabulary plus the 80 COCO classes), chosen offline on
+# outputs/verifier_set by scripts/eval_verifiers.py. At the range a STOP is
+# taken from (<= 1.5 m; 250 true detections, 131 false positives):
+#
+#     MobileCLIP margin > 0, generic confusers    r 0.95  q 0.46   milliseconds
+#     llama-3.2-11b-vision (the pipeline's VLM)   r 0.75  q 0.56   5-28 s a call
+#     llama-3.2-90b-vision                        r 0.75  q 0.27   ~47 s a call
+#
+# r = P(accept | the target), q = P(accept | a false positive). The gate reads
+# its rejection through the presence filter at those same rates.
+#
+#   python scripts/run_eval.py +experiment=mfv2_osg_gate ...same inputs as mfv2_osg
+defaults:
+  - mfv2_osg
+  - _self_
+
+verification:
+  stop_gate: clip
+  stop_gate_confusers: generic
+  stop_gate_clip_margin: 0.0
+  stop_gate_recall: 0.95
+  stop_gate_q: 0.46

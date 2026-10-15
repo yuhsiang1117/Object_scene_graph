@@ -152,3 +152,21 @@ def test_the_crop_grows_the_box_and_stays_in_the_frame():
     rgb = np.zeros((100, 200, 3), np.uint8)
     assert crop_with_margin(rgb, [50, 40, 90, 60]).shape[:2] == (32, 64)
     assert crop_with_margin(rgb, [0, 0, 200, 100]).shape[:2] == (100, 200)
+
+
+def test_the_generic_confusers_name_no_benchmark_object_and_are_fixed():
+    from osg.agent.stop_gate import confuser_vocabulary, generic_confusers
+    from osg.core.config.ycb import YCB_TARGET_LABELS
+
+    generic = generic_confusers()
+    assert "bottle" in generic and "chair" in generic and len(generic) == len(set(generic))
+    multi_word_targets = {v for v in YCB_TARGET_LABELS.values() if " " in v}
+    assert not multi_word_targets & set(generic)
+    cfg = SimpleNamespace(verification=SimpleNamespace(stop_gate_confusers="generic"),
+                          detector=SimpleNamespace(vocabulary=["tin can", "lamp"]))
+    assert confuser_vocabulary(cfg) == generic
+    cfg.verification.stop_gate_confusers = "detector"
+    assert confuser_vocabulary(cfg) == ["tin can", "lamp"]
+    cfg.verification.stop_gate_confusers = "both"
+    with pytest.raises(ValueError):
+        confuser_vocabulary(cfg)

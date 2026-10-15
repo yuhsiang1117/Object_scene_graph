@@ -10,10 +10,13 @@ further -- and by the false positive's kind (on another benchmark object, or on
 the furniture). Continuous scores also get a rank AUC.
 
   score       the detector's own confidence (what the agent uses now)
-  clip_bg     MobileCLIP-S2 margin: cos(crop, "a photo of a <query>") minus the
-              best of the detector's background vocabulary. Target-agnostic.
-  clip_all    the same, with every other benchmark query among the confusers.
-              Knows the query set, as DualMap's class list does.
+  clip_generic  MobileCLIP-S2 margin: cos(crop, "a photo of a <query>") minus the
+                best of a fixed confuser list -- the indoor vocabulary plus the
+                80 COCO classes (`stop_gate.generic_confusers`). What the gate
+                uses by default; names no benchmark object.
+  clip_bg       the same over the arm's detector vocabulary, which on the YCB
+                arms already names eight benchmark objects
+  clip_all      the arm's vocabulary plus every benchmark query
   vlm[m]         the pipeline's VLM verifier (`verification/verifier.py`) on model
                  m, yes/no on the full frame with the candidate boxed
   vlm_choice[m]  the same, forced choice between the query and the background
@@ -78,8 +81,9 @@ def clip_margins(rows: List[dict], root: Path, background: List[str],
     from osg.perception.feature_encoder import FeatureEncoder
 
     encoder = FeatureEncoder(backbone="mobileclip_s2", device="cuda")
-    from osg.agent.stop_gate import background_for
+    from osg.agent.stop_gate import background_for, generic_confusers
 
+    generic = generic_confusers()
     feats = encoder.encode_images([read_rgb(root / r["crop"]) for r in rows])
     prompt = "a photo of a {}"
     for row, f in zip(rows, feats):
@@ -97,28 +101,45 @@ def clip_margins(rows: List[dict], root: Path, background: List[str],
             s_all = max(s_bg, float(np.max(oth @ f)))
         row["clip_bg"] = s_t - s_bg
         row["clip_all"] = s_t - s_all
+        gen = encoder.encode_text([prompt.format(c) for c in background_for(query, generic)])
+        row["clip_generic"] = s_t - float(np.max(gen @ f))
 
 
 def vlm_answers(rows: List[dict], root: Path, cfg, background: List[str],
-                model: str) -> List[str]:
-    """Ask `model` about every row; returns the two row keys it wrote."""
+                model: str, workers: int = 4) -> List[str]:
+    """Ask `model` about every row; returns the two row keys it wrote.
+
+    `workers` requests in flight at once: a hosted VLM answers in 2-15 s, and
+    one at a time a few hundred detections take hours. Each worker builds its
+    own client and verifiers, so the error counts that tell an API failure
+    from a "no" cannot race."""
+    import threading
+    from concurrent.futures import ThreadPoolExecutor
+
+    from osg.agent.stop_gate import background_for
     from osg.llm.client import ChatClient
     from osg.verification.verifier import VLMVerifier
 
     short = model.split("/")[-1]
-    client = ChatClient(
-        (cfg.verification.base_url or cfg.llm.base_url), model,
-        (getattr(cfg.verification, "api_key", "") or cfg.llm.api_key),
-        cfg.llm.timeout_s, cfg.llm.max_image_px, cfg.llm.send_response_format,
-    )
-    yesno = VLMVerifier(client, accept_confidence=cfg.verification.accept_confidence,
-                        choice_mode=False)
-    choice = VLMVerifier(client, accept_confidence=cfg.verification.accept_confidence,
-                         choice_mode=True,
-                         categories=[c.replace("_", " ") for c in background] + ["none"])
-    from osg.agent.stop_gate import background_for
+    local = threading.local()
 
-    for i, row in enumerate(rows):
+    def verifiers():
+        if not hasattr(local, "pair"):
+            client = ChatClient(
+                (cfg.verification.base_url or cfg.llm.base_url), model,
+                (getattr(cfg.verification, "api_key", "") or cfg.llm.api_key),
+                cfg.llm.timeout_s, cfg.llm.max_image_px, cfg.llm.send_response_format,
+            )
+            local.pair = (
+                VLMVerifier(client, accept_confidence=cfg.verification.accept_confidence,
+                            choice_mode=False),
+                VLMVerifier(client, accept_confidence=cfg.verification.accept_confidence,
+                            choice_mode=True, categories=["none"]),
+            )
+        return local.pair
+
+    def one(row: dict) -> None:
+        yesno, choice = verifiers()
         frame = read_rgb(root / row["frame"])
         box = np.asarray(row["bbox_xyxy"], dtype=float)
         choice.categories = background_for(row["label"], background) + ["none"]
@@ -129,8 +150,13 @@ def vlm_answers(rows: List[dict], root: Path, cfg, background: List[str],
             row[name + "_s"] = round(time.time() - t0, 2)
             # The verifier fails OPEN on an API error; an error is not an answer.
             row[name] = None if verifier.n_errors > errors else bool(accepted)
-        if (i + 1) % 20 == 0:
-            print(f"  {short} {i + 1}/{len(rows)}", flush=True)
+
+    done = 0
+    with ThreadPoolExecutor(max_workers=max(1, int(workers))) as pool:
+        for _ in pool.map(one, rows):
+            done += 1
+            if done % 20 == 0:
+                print(f"  {short} {done}/{len(rows)}", flush=True)
     return [f"vlm[{short}]", f"vlm_choice[{short}]"]
 
 
@@ -158,7 +184,8 @@ def report(rows: List[dict], vlm_keys: Sequence[str] = ()) -> Dict[str, dict]:
     print("| verifier | range | AUC | r = P(accept|target) | q = P(accept|FP) | "
           "q, FP on scene | q, FP on another YCB object | n target / n FP |")
     print("|---|---|---:|---:|---:|---:|---:|---:|")
-    for key, threshold in ([("score", None), ("clip_bg", 0.0), ("clip_all", 0.0)]
+    for key, threshold in ([("score", None), ("clip_generic", 0.0), ("clip_bg", 0.0),
+                            ("clip_all", 0.0)]
                            + [(k, None) for k in vlm_keys]):
         if not any(r.get(key) is not None for r in rows):
             continue
@@ -206,6 +233,7 @@ def main(argv: Optional[List[str]] = None) -> int:
     ap.add_argument("--no-vlm", action="store_true")
     ap.add_argument("--vlm-model", action="append", default=[],
                     help="repeatable; default the preset's verification.vlm_model")
+    ap.add_argument("--workers", type=int, default=4, help="VLM requests in flight")
     ap.add_argument("--vlm-n", type=int, default=150,
                     help="VLM calls are capped at this many targets AND this many FPs")
     ap.add_argument("--vlm-max-range", type=float, default=3.0,
@@ -240,7 +268,8 @@ def main(argv: Optional[List[str]] = None) -> int:
         else:
             for model in (args.vlm_model or [str(cfg.verification.vlm_model)]):
                 vlm_keys += vlm_answers(pos[: args.vlm_n] + neg[: args.vlm_n],
-                                        args.set_dir, cfg, background, model)
+                                        args.set_dir, cfg, background, model,
+                                        workers=args.workers)
     out = report(rows, vlm_keys)
     if args.json:
         args.json.write_text(json.dumps({"summary": out, "rows": rows}, indent=1))

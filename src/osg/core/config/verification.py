@@ -264,9 +264,21 @@ class VerificationConfig:
     # and the detector's background vocabulary, instead of yes/no.
     stop_gate_model: str = ""
     stop_gate_choice: bool = False
-    # `clip`: reject when cos(crop, query) does not beat the best background
-    # class by this margin (MobileCLIP-S2, the region proposer's encoder).
+    # `clip`: reject when cos(crop, query) does not beat the best confuser by
+    # this margin (MobileCLIP-S2, the region proposer's encoder).
     stop_gate_clip_margin: float = 0.0
+    # What the query must beat (and what the VLM's forced choice lists):
+    # "generic" -- the indoor background vocabulary plus the 80 COCO classes,
+    # fixed and independent of any benchmark -- or "detector", the arm's own
+    # detector vocabulary, which on the YCB arms already names eight of the
+    # benchmark's own objects. Measured on outputs/verifier_set (<= 1.5 m, 250
+    # targets / 131 false positives, scripts/eval_verifiers.py), margin 0:
+    #     generic   r 0.95  q 0.46
+    #     detector  r 0.90  q 0.31, but a true coffee can kept 9 times of 19:
+    #               "tin can" is in that vocabulary and "coffee can" is not
+    # Most of the rejecting is done by naming other small objects; "generic"
+    # does it without naming this benchmark's.
+    stop_gate_confusers: str = "generic"
     # A rejection is identity evidence with these rates, applied through the
     # presence filter exactly as a failed attempt applies the VLM's
     # (eval/attempts.py); set them to what eval_verifiers.py measured.

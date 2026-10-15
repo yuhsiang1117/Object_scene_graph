@@ -9,10 +9,14 @@ positive is a real object, so the detector re-detects it on arrival, the
 absence sensor has nothing to say, and the attempt is spent.
 
 So just before a STOP that rests on a live detection of the target, the gate
-asks a recogniser that is not the detector -- a VLM on the full frame with the
-candidate boxed, or MobileCLIP's margin of the query over the detector's
-background vocabulary -- whether the boxed object is the query. A "no" is
-identity evidence: the candidate is released without an attempt, its presence
+asks a recogniser that is not the detector -- MobileCLIP's margin of the query
+over a fixed confuser list, or a VLM on the full frame with the candidate
+boxed -- whether the boxed object is the query. Measured offline
+(scripts/eval_verifiers.py, <= 1.5 m): the margin keeps 95% of true targets
+and 54% of false positives are rejected; the pipeline's VLM (llama-3.2-11b)
+keeps 75% and rejects 44%, at 5-28 s a call.
+
+A "no" is identity evidence: the candidate is released without an attempt, its presence
 takes one reading at the gate's own (r, q) through the same filter a failed
 attempt uses (`eval/attempts.py`), and its identity count rises by one, so two
 rejections retire it exactly as two failed attempts would.
@@ -156,7 +160,7 @@ class StopGate:
         return margin > float(self.nav.cfg.verification.stop_gate_clip_margin)
 
     def _background(self) -> list:
-        return background_for(self.nav.target, self.nav.cfg.detector.vocabulary)
+        return background_for(self.nav.target, confuser_vocabulary(self.nav.cfg))
 
     # --------------------------------------------------------------- verdict
 
@@ -177,6 +181,27 @@ class StopGate:
         self.n_rejected += 1
         nav.release_candidate()
         nav.hold_explore()
+
+
+def generic_confusers() -> list:
+    """The indoor background vocabulary plus the 80 COCO classes: a fixed,
+    published list that names small household objects without naming any
+    benchmark's."""
+    from ..core.config.detector import DEFAULT_VOCABULARY
+    from ..perception.detector import COCO_CLASSES
+
+    out = list(DEFAULT_VOCABULARY)
+    out += [c for c in COCO_CLASSES if c not in out]
+    return out
+
+
+def confuser_vocabulary(cfg) -> list:
+    which = str(getattr(cfg.verification, "stop_gate_confusers", "generic"))
+    if which == "generic":
+        return generic_confusers()
+    if which == "detector":
+        return list(cfg.detector.vocabulary)
+    raise ValueError(f"verification.stop_gate_confusers must be generic|detector, got {which!r}")
 
 
 def background_for(target: str, vocabulary) -> list:
