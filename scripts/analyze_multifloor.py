@@ -178,9 +178,33 @@ def episode_row(record: Dict[str, Any]) -> Dict[str, Any]:
         "steps": int(record.get("steps") or 0),
         "spl_recorded": float(record.get("spl") or 0.0),
         "commits": commits(record),
+        # The climb, for section 3b.
+        "need": (None if start_y is None or floor_y is None
+                 else 0 if abs(float(start_y) - floor_y) <= FLOOR_DY_M
+                 else (1 if floor_y > float(start_y) else -1)),
+        "flights_up": int(stats.get("flight_switch_up", 0) or 0),
+        "flights_down": int(stats.get("flight_switch_down", 0) or 0),
+        "climbs": int(stats.get("climb_start", 0) or 0),
+        "climbs_ok": int(stats.get("climb_ok", 0) or 0),
+        "climb_ends": {k[len("climb_end_"):]: int(v) for k, v in stats.items()
+                       if k.startswith("climb_end_")},
+        "climb_steps": climb_steps(record),
+        "y_range": None if y_range is None else float(y_range),
     }
     row.update(scored(record))
     return row
+
+
+def climb_steps(record: Dict[str, Any]) -> int:
+    """Steps spent in the CLIMB state, from `state_log` ([step, state] at each change)."""
+    log = record.get("state_log") or []
+    end = int(record.get("steps") or 0)
+    total = 0
+    for i, (step, state) in enumerate(log):
+        if state == "climb":
+            nxt = int(log[i + 1][0]) if i + 1 < len(log) else end
+            total += max(0, nxt - int(step))
+    return total
 
 
 def pct(k: int, n: int) -> str:
@@ -258,6 +282,32 @@ def report(runs: "OrderedDict[str, List[Dict[str, Any]]]", flips: bool) -> Dict[
          "left the start storey when the object was on it", "switch attempts / ep",
          "median first switch step"],
         floor_rows,
+    )
+
+    climb_rows = []
+    for name, rows in runs.items():
+        moving = [r for r in rows if r["need"] in (1, -1)]
+        pursued = [r for r in moving if r["flights_up"] + r["flights_down"] > 0]
+        wrong = [r for r in pursued
+                 if (r["flights_up"] if r["need"] > 0 else r["flights_down"]) == 0]
+        ends = Counter()
+        for r in rows:
+            ends.update(r["climb_ends"])
+        n_climbs = sum(r["climbs"] for r in rows)
+        climb_rows.append([
+            name,
+            str(n_climbs),
+            pct(sum(r["climbs_ok"] for r in rows), n_climbs),
+            ", ".join(f"{k} {v}" for k, v in ends.most_common(4)) or "-",
+            f"{sum(r['climb_steps'] for r in rows) / max(len(rows), 1):.0f}",
+            pct(len(wrong), len(pursued)),
+            pct(sum((r["y_range"] or 0.0) >= 1.5 for r in moving), len(moving)),
+        ])
+    table(
+        "3b. Stair climbs",
+        ["run", "climbs", "ended on a storey", "how climbs ended", "steps climbing / ep",
+         "only wrong-way flights (of those pursuing one)", "rose 1.5 m+ (had to change storey)"],
+        climb_rows,
     )
 
     commit_rows = []
