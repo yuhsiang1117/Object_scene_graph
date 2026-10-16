@@ -14,6 +14,7 @@ the furniture). Continuous scores also get a rank AUC.
                 best of a fixed confuser list -- the indoor vocabulary plus the
                 80 COCO classes (`stop_gate.generic_confusers`). What the gate
                 uses by default; names no benchmark object.
+  clip_indoor   the same over the indoor background vocabulary alone (41)
   clip_bg       the same over the arm's detector vocabulary, which on the YCB
                 arms already names eight benchmark objects
   clip_all      the arm's vocabulary plus every benchmark query
@@ -82,6 +83,7 @@ def clip_margins(rows: List[dict], root: Path, background: List[str],
 
     encoder = FeatureEncoder(backbone="mobileclip_s2", device="cuda")
     from osg.agent.stop_gate import background_for, generic_confusers
+    from osg.core.config.detector import DEFAULT_VOCABULARY
 
     generic = generic_confusers()
     feats = encoder.encode_images([read_rgb(root / r["crop"]) for r in rows])
@@ -103,6 +105,9 @@ def clip_margins(rows: List[dict], root: Path, background: List[str],
         row["clip_all"] = s_t - s_all
         gen = encoder.encode_text([prompt.format(c) for c in background_for(query, generic)])
         row["clip_generic"] = s_t - float(np.max(gen @ f))
+        indoor = encoder.encode_text(
+            [prompt.format(c) for c in background_for(query, DEFAULT_VOCABULARY)])
+        row["clip_indoor"] = s_t - float(np.max(indoor @ f))
 
 
 def vlm_answers(rows: List[dict], root: Path, cfg, background: List[str],
@@ -175,6 +180,35 @@ def fmt(x: Optional[float], digits: int = 2) -> str:
     return "-" if x is None else f"{x:.{digits}f}"
 
 
+def sweep(rows: List[dict], max_range: float = 1.5,
+          margins: Sequence[float] = (-0.02, -0.01, 0.0, 0.01, 0.02)) -> None:
+    """r and q of each CLIP margin at a few thresholds, at STOP range, with the
+    class whose targets it keeps least often."""
+    near = [r for r in rows if r["range_m"] <= max_range]
+    keys = [k for k in ("clip_generic", "clip_indoor", "clip_bg", "clip_all")
+            if any(r.get(k) is not None for r in near)]
+    if not keys:
+        return
+    print(f"\nCLIP margin sweep, <= {max_range} m:\n")
+    print("| confusers | " + " | ".join(f"margin {m:+.2f}" for m in margins) + " |")
+    print("|---|" + "---|" * len(margins))
+    for key in keys:
+        cells = []
+        for m in margins:
+            pos = [r for r in near if r["true"]]
+            neg = [r for r in near if not r["true"]]
+            r_ = sum(x[key] > m for x in pos) / max(len(pos), 1)
+            q_ = sum(x[key] > m for x in neg) / max(len(neg), 1)
+            by: Dict[str, List[int]] = {}
+            for x in pos:
+                k = by.setdefault(x["label"], [0, 0])
+                k[0] += 1
+                k[1] += x[key] > m
+            worst = min(by.items(), key=lambda kv: kv[1][1] / kv[1][0])
+            cells.append(f"r {r_:.2f} q {q_:.2f} (min {worst[0]} {worst[1][1]}/{worst[1][0]})")
+        print(f"| {key} | " + " | ".join(cells) + " |")
+
+
 def report(rows: List[dict], vlm_keys: Sequence[str] = ()) -> Dict[str, dict]:
     out: Dict[str, dict] = {}
     print(f"\n{len(rows)} detections: {sum(r['true'] for r in rows)} on the target, "
@@ -184,8 +218,8 @@ def report(rows: List[dict], vlm_keys: Sequence[str] = ()) -> Dict[str, dict]:
     print("| verifier | range | AUC | r = P(accept|target) | q = P(accept|FP) | "
           "q, FP on scene | q, FP on another YCB object | n target / n FP |")
     print("|---|---|---:|---:|---:|---:|---:|---:|")
-    for key, threshold in ([("score", None), ("clip_generic", 0.0), ("clip_bg", 0.0),
-                            ("clip_all", 0.0)]
+    for key, threshold in ([("score", None), ("clip_generic", 0.0), ("clip_indoor", 0.0),
+                            ("clip_bg", 0.0), ("clip_all", 0.0)]
                            + [(k, None) for k in vlm_keys]):
         if not any(r.get(key) is not None for r in rows):
             continue
@@ -210,6 +244,7 @@ def report(rows: List[dict], vlm_keys: Sequence[str] = ()) -> Dict[str, dict]:
             print(f"| {key} | {name} | {fmt(auc)} | {fmt(rates['r'])} | {fmt(rates['q'])} | "
                   f"{fmt(scene['q'])} | {fmt(ycb['q'])} | {rates['n_true']} / {rates['n_fp']} |")
             out[f"{key}/{name}"] = {"auc": auc, **rates, "q_scene": scene["q"], "q_ycb": ycb["q"]}
+    sweep(rows)
     print()
     for key in vlm_keys:
         latency = [r[key + "_s"] for r in rows if r.get(key + "_s") is not None]

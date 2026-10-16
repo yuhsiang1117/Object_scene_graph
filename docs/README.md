@@ -77,7 +77,8 @@ Append-only measurements and the reasoning behind decisions. Large because they 
 [REGION_PROPOSAL_RESULT.md](history/REGION_PROPOSAL_RESULT.md) · [REGION_FALSE_ADMISSION.md](history/REGION_FALSE_ADMISSION.md) ·
 [PERCEPTION_RESULT_FINAL.md](history/PERCEPTION_RESULT_FINAL.md) · [PERCEPTION_GAP.md](history/PERCEPTION_GAP.md) ·
 [PERCEPTION_INVESTIGATION.md](history/PERCEPTION_INVESTIGATION.md) · [FEATURE_MEMORY_PROBE.md](history/FEATURE_MEMORY_PROBE.md) ·
-[FEATURE_MEMORY_ONLINE.md](history/FEATURE_MEMORY_ONLINE.md) · [ASSET_SUBSTITUTION_EVIDENCE.md](history/ASSET_SUBSTITUTION_EVIDENCE.md)
+[FEATURE_MEMORY_ONLINE.md](history/FEATURE_MEMORY_ONLINE.md) · [ASSET_SUBSTITUTION_EVIDENCE.md](history/ASSET_SUBSTITUTION_EVIDENCE.md) ·
+[VERIFIER_EVAL.md](history/VERIFIER_EVAL.md) (what tells the target from a false positive: the VLM vs a CLIP margin, r and q at STOP range)
 
 **Superseded** — [INVESTIGATION.md](history/INVESTIGATION.md) (by S71; names a stack that no
 longer exists) · [PROPOSAL_FUSION_RESULT.md](history/PROPOSAL_FUSION_RESULT.md) (by
