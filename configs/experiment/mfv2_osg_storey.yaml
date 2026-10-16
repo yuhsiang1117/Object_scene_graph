@@ -1,0 +1,30 @@
+# @package _global_
+#
+# `mfv2_osg_gate2` with the storey decided by a belief over storeys
+# (`exploration/storey_belief.py`) instead of three mechanisms none of which is
+# one. Measured on Benchmark v2 seed 42 (outputs/mfv2/osg_s42):
+#
+#   * 9 of the 28 episodes that had to go DOWN pursued only flights going UP:
+#     the "nothing near is left here" gate takes the nearest flight either way,
+#     toward a storey invented 1.8 m off (00821: from 0.13 m to "1.93 m");
+#   * of the 11 episodes that left the object's own storey, 7 were sent by
+#     `floor_disproved_after_failed_attempts` after two false-positive STOPs;
+#   * the container posterior's storey vote abstains by design (`mean` + margin).
+#
+# The belief scores each storey by the target-labelled tracks on it (by height,
+# weighted by presence) and discounts what this episode has already covered;
+# the agent asks for the best other storey once it is 1.3x this one, and while
+# it knows two storeys it never switches undirected. Storey disproval by failed
+# attempts is off: a false-positive STOP says nothing about the storey, and the
+# coverage term is what moves belief off a searched one.
+#
+#   python scripts/run_eval.py +experiment=mfv2_osg_storey ...same inputs as mfv2_osg
+defaults:
+  - mfv2_osg_gate2
+  - _self_
+
+exploration:
+  storey_belief: true
+
+agent:
+  floor_disproved_after_failed_attempts: 0

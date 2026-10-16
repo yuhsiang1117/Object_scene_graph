@@ -36,6 +36,7 @@ from ..mapping.costmap import PLANE, Costmap2D, nearest_free_xy
 from ..mapping.frontier import Frontier, FrontierExtractor
 from ..planning.controller import TURN_LEFT, TURN_RIGHT, _wrap, agent_heading
 from .search_belief import InspectionLog, build_container_candidates, select_candidate
+from .storey_belief import StoreyBelief, target_tracks
 from ..core.labels import normalize_label, same_label
 from .selector import frontier_goal_xy, select_frontier
 
@@ -86,6 +87,9 @@ class WorldView:
     goal_xy: Optional[np.ndarray]
     floor_id: int = 0
     value_map: object = None
+    #: `{layer key: (height, costmap)}` for every storey the agent knows, when
+    #: the storey belief is on; None otherwise.
+    storeys: Optional[dict] = None
 
 
 @dataclass
@@ -155,6 +159,16 @@ class ExplorationStrategy:
         self.frontier_reach_m = (
             float(self.cfg.voronoi_goal_near_m) + FRONTIER_ARRIVAL_TOL_M + 0.1
         )
+        # The second exception, also read once: one storey's height, which is
+        # what tells a storey from a landing (`exploration.storey_belief`).
+        self.storey_belief: Optional[StoreyBelief] = (
+            StoreyBelief(
+                self.cfg,
+                float(getattr(getattr(cfg, "floor", None), "new_level_m", 1.8)),
+                stats,
+            )
+            if bool(getattr(self.cfg, "storey_belief", False)) else None
+        )
         self.reset()
 
     def reset(self) -> None:
@@ -170,6 +184,8 @@ class ExplorationStrategy:
         self._last_select_step = -100
         self.forced_floor = None
         self._floor_arrived_step, self._floor_seen = 0, None
+        if self.storey_belief is not None:
+            self.storey_belief.reset()
         # What has already been searched, and how well (C3). A visit multiplies
         # a surface's belief by (1 - d) rather than zeroing it, so a place
         # glanced at from four metres stays plausible and one inspected closely
@@ -229,6 +245,21 @@ class ExplorationStrategy:
         self._exhausted_floor: Optional[int] = None
         self._empty_rounds: int = 0
         self._empty_floor: Optional[int] = None
+
+    def note_position(self, floor_id: int, agent_xy) -> None:
+        """One step's position, for the storey belief's coverage; off, a no-op."""
+        if self.storey_belief is not None:
+            self.storey_belief.note(floor_id, agent_xy)
+
+    def _knows_another_storey(self, world: WorldView) -> bool:
+        """With the storey belief on and a second storey known, every storey
+        an undirected switch could find is already scored by the belief, so the
+        geometric gate does not get to pick one."""
+        return (
+            self.storey_belief is not None
+            and bool(world.storeys)
+            and self.storey_belief.knows_another_storey(world.storeys)
+        )
 
     def storey_exhausted(self, floor_id: int) -> bool:
         """Did the last real round find no frontier on THIS storey?"""
@@ -308,6 +339,12 @@ class ExplorationStrategy:
             if not arrived and spent < int(self.cfg.search_max_steps):
                 return None  # still on the way: stay committed to this surface
             self.mark_searched(world.step, arrived=arrived)
+        if self.storey_belief is not None and world.storeys and self.forced_floor is None:
+            with self.profiler.timeit("storey_belief"):
+                self.requested_floor = self.storey_belief.decide(
+                    world.step, world.storeys,
+                    target_tracks(world.object_layer, world.target), world.floor_id,
+                )
         with self.profiler.timeit("frontier_extract"):
             frontiers = self.frontier_extractor.extract(
                 world.costmap, world.agent_xy,
@@ -330,7 +367,10 @@ class ExplorationStrategy:
         if not frontiers and not bool(self.cfg.search_posterior):
             # Nothing left on this floor is the strongest possible "no near
             # frontier", so the portal gate still gets its chance.
-            floor_switch(None)
+            if self.storey_belief is not None and self.requested_floor is not None:
+                floor_switch(None, int(self.requested_floor))
+            elif not self._knows_another_storey(world):
+                floor_switch(None)
             return None
         # Async scoring request (never blocks); use whatever scores exist now
         self.scorer.request(frontiers, world.scene_graph, world.target, world.keyframes)
@@ -487,7 +527,10 @@ class ExplorationStrategy:
         # Nothing near left on this floor? Consider leaving it. Checked BEFORE
         # committing to a far frontier, because "the best thing here is 12 m
         # away" is exactly ASCENT's condition for reasoning about storeys.
-        if floor_switch(None if best is None else best.path_cost):
+        if self._knows_another_storey(world):
+            self.stats["undirected_switch_skipped"] = (
+                self.stats.get("undirected_switch_skipped", 0) + 1)
+        elif floor_switch(None if best is None else best.path_cost):
             return None
 
         if best is None or best.path_cost is None:
@@ -594,35 +637,9 @@ class ExplorationStrategy:
             return {}
         return {int(c.ref_id): float(c.prior) / peak for c in cands}
 
-    def _select_surface(self, world: WorldView, best_frontier, stay_on_floor: bool = False):
-        """The best mapped surface, if it beats the best frontier on b*d/c.
-
-        Both sides are the same index -- `select_frontier` already returns
-        score/path_cost -- so the comparison is like for like, with
-        search_frontier_weight naming the one judgement call: what unmapped
-        space is worth against a plausible surface.
-        """
-        if not self.cfg.search_posterior:
-            return None
-        if not world.scene_graph.containers:
-            return None
-        agent_xy = world.agent_xy
-        present = self._ground(world)
-        cands = build_container_candidates(
-            world.scene_graph,
-            world.target,
-            self.search_log,
-            detect_prob=float(self.cfg.search_detect_prob),
-            last_known_xy=self._last_known_target_xy(world),
-            proximity_len_m=float(self.cfg.search_proximity_len_m),
-            proximity_floor=float(self.cfg.search_proximity_floor),
-            surface_mass=float(self.cfg.search_surface_mass),
-            plane=PLANE,
-            affinity_source=self.affinity,
-            present=present,
-        )
-        if not cands:
-            return None
+    def _storey_vote(self, world: WorldView, cands, stay_on_floor: bool):
+        """The container posterior's storey vote: the surfaces on this floor,
+        or None when it asked for another storey (`requested_floor`)."""
         # Choose a storey from the posterior before doing any 2D geometry.
         # Path cost is meaningful only within a floor; aggregate the remaining
         # probability mass here and delegate vertical travel to FloorPolicy.
@@ -734,6 +751,45 @@ class ExplorationStrategy:
         if int(selected_floor) == int(world.floor_id):
             self.requested_floor = None
         cands = [c for c in cands if int(c.floor_key) == int(world.floor_id)]
+        return cands
+
+    def _select_surface(self, world: WorldView, best_frontier, stay_on_floor: bool = False):
+        """The best mapped surface, if it beats the best frontier on b*d/c.
+
+        Both sides are the same index -- `select_frontier` already returns
+        score/path_cost -- so the comparison is like for like, with
+        search_frontier_weight naming the one judgement call: what unmapped
+        space is worth against a plausible surface.
+        """
+        if not self.cfg.search_posterior:
+            return None
+        if not world.scene_graph.containers:
+            return None
+        agent_xy = world.agent_xy
+        present = self._ground(world)
+        cands = build_container_candidates(
+            world.scene_graph,
+            world.target,
+            self.search_log,
+            detect_prob=float(self.cfg.search_detect_prob),
+            last_known_xy=self._last_known_target_xy(world),
+            proximity_len_m=float(self.cfg.search_proximity_len_m),
+            proximity_floor=float(self.cfg.search_proximity_floor),
+            surface_mass=float(self.cfg.search_surface_mass),
+            plane=PLANE,
+            affinity_source=self.affinity,
+            present=present,
+        )
+        if not cands:
+            return None
+        if self.storey_belief is not None:
+            # The storey is the belief's call, made in `select`; here the
+            # surfaces compete on this floor only.
+            cands = [c for c in cands if int(c.floor_key) == int(world.floor_id)]
+        else:
+            cands = self._storey_vote(world, cands, stay_on_floor)
+            if cands is None:
+                return None
         # Drive to a pose you can STAND in, not to the middle of the furniture.
         # A container's centre is inside the desk; the follower ends wherever the
         # navmesh allows, arrival is never registered, and the surface is scored

@@ -358,6 +358,12 @@ class NavAgent:
         return self.exploration.search_log_events
 
     @property
+    def storey_belief_log(self) -> list:
+        """Each change in the storey belief (exploration.storey_belief)."""
+        belief = self.exploration.storey_belief
+        return belief.log if belief is not None else []
+
+    @property
     def frontier_select_log(self) -> list:
         return self.exploration.frontier_select_log
 
@@ -882,6 +888,7 @@ class NavAgent:
                     n_cleared = self.costmap.clear_footprint(self._agent_xy, clear_m)
                     self.stats["footprint_cells_cleared"] = (
                         self.stats.get("footprint_cells_cleared", 0) + n_cleared)
+            self.exploration.note_position(self.floors.current_id, self._agent_xy)
             if self.image_text is not None:
                 self._update_value_map(frame, self.floor_layer)
             # Tests and external callers may inject an image-text scorer
@@ -1278,7 +1285,18 @@ class NavAgent:
             goal_xy=self._goal_xy,
             floor_id=self.floors.current_id,
             value_map=self.floor_layer.value_map,
+            storeys=self._storey_layers(),
         )
+
+    def _storey_layers(self) -> Optional[dict]:
+        """`{key: (height, costmap)}` for the storey belief, or None when off."""
+        if self.exploration.storey_belief is None:
+            return None
+        layers = getattr(self.floors.stack, "_layers", {})
+        return {
+            int(k): (float(h), getattr(layers.get(int(k)), "costmap", None))
+            for k, h in self.floors.known_levels().items()
+        }
 
     def _explore(self, frame: FrameData) -> None:
         """Run one selection round and act on what it chose.

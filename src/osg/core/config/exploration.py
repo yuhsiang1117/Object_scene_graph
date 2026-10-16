@@ -157,6 +157,25 @@ class ExplorationConfig:
     # see this: 0 * margin is 0. Within this window the round explores here
     # instead; containers appear as the storey is mapped.
     empty_storey_settle_steps: int = 0
+    # A belief over storeys decides whether, and where, to change storey
+    # (`exploration/storey_belief.py`): target-labelled tracks by height and
+    # presence, discounted by this episode's coverage of each storey. On, it
+    # replaces the container posterior's storey vote, and the geometric
+    # "nothing near left" gate may no longer switch undirected while a second
+    # storey is known. Measured on Benchmark v2 seed 42 without it: 9 of 28
+    # episodes that had to go down only ever pursued flights going UP, toward a
+    # storey invented 1.8 m above (00821: 1.93 m from 0.13).
+    storey_belief: bool = False
+    # pi_k = w * anchor_k + (1 - w) / K: how much the target-labelled tracks
+    # outweigh "it could be on any storey".
+    storey_anchor_weight: float = 0.8
+    # How likely having been within `storey_cover_radius_m` of a stretch of
+    # floor means having seen the object there (the discount 1 - d * cover).
+    storey_detect_prob: float = 0.85
+    # Ask for another storey once its belief is this many times this one's.
+    storey_switch_ratio: float = 1.3
+    storey_cover_radius_m: float = 2.0
+    storey_block_m: float = 0.5
     # Belief carried by the single most plausible mapped surface. The candidate
     # priors are affinity x proximity normalised so the best of them equals this,
     # which separates the ORDERING (what the proximity model is for) from the

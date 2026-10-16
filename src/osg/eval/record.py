@@ -250,6 +250,10 @@ def build_episode_record(
         "attempt_log": outcome.attempt_log,
         "presence_events": getattr(agent, "presence_events", []),
         "search_log_events": getattr(agent, "search_log_events", []),
+        # Each change in the storey belief: per storey its belief, the anchor
+        # mass and the coverage behind it, and the storey asked for.
+        **({"storey_belief_log": agent.storey_belief_log}
+           if getattr(agent, "storey_belief_log", None) else {}),
         # The close-look ledger and the closest range each surface was ever
         # glanced from (agent/close_look.py): what the search looked at, from
         # where, and whether the detector answered.
