@@ -27,6 +27,7 @@ date (superseded, never run) also say so at the top.
 | [DUALMAP_OFFICIAL_RERUN.md](DUALMAP_OFFICIAL_RERUN.md) | DualMap re-run on its own released benchmark — the source of the 30.2 % cross-anchor figure the paper compares against — and what that benchmark can and cannot resolve. |
 | [CROSS_ANCHOR_REPRODUCTION.md](CROSS_ANCHOR_REPRODUCTION.md) | Whether the paper's single-floor cross-anchor headline re-derives, what was ruled out, and the 2026-09-27 re-run on the original prior maps. **Read before quoting Table I.** |
 | [ZERO_SHOT_AUDIT.md](ZERO_SHOT_AUDIT.md) | Every piece of hand-authored per-benchmark knowledge in the pipeline. |
+| [BENCHMARK_V2.md](BENCHMARK_V2.md) | The multi-floor moved-object set as re-built for the review: generation rules, episode classes and start storeys, the success rule, where objects are moved, and what the prior map holds. |
 
 ## Figures and the video
 
