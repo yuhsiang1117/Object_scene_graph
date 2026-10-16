@@ -1,0 +1,13 @@
+# @package _global_
+#
+# ABLATION (Table III on the multi-floor set): `mfv2_osg` without
+# belief-guided surface scoring -- the single-floor table's override
+# (`exploration.search_posterior=false`).
+#
+#   python scripts/run_eval.py +experiment=mfv2_osg_no_search ...same inputs as mfv2_osg
+defaults:
+  - mfv2_osg
+  - _self_
+
+exploration:
+  search_posterior: false

@@ -1,0 +1,15 @@
+# @package _global_
+#
+# ABLATION (Table III on the multi-floor set): `mfv2_osg` without
+# presence-belief revision -- the same single override as the single-floor
+# table (`scene_graph.presence.enabled=false`). Without a filter a failed
+# attempt falls back to blacklisting its track (eval/attempts.py).
+#
+#   python scripts/run_eval.py +experiment=mfv2_osg_no_presence ...same inputs as mfv2_osg
+defaults:
+  - mfv2_osg
+  - _self_
+
+scene_graph:
+  presence:
+    enabled: false

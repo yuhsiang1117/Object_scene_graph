@@ -1,0 +1,18 @@
+# @package _global_
+#
+# ABLATION (Table III on the multi-floor set): `mfv2_osg` without VLM-based
+# absence verification. NOT the single-floor table's `verification=off`: that
+# group also loosens the candidate gates (min_obs, min_score, min_evidence;
+# configs/verification/off.yaml), so it removes the VLM and changes what may
+# become a candidate at once. This arm runs the VLM only as the absence sensor
+# (`absence_only: true`), so switching that use off removes every VLM call and
+# nothing else: the arrival reading falls back to the detector's silence, at
+# `detector_absence_recall`, under the expectation gate.
+#
+#   python scripts/run_eval.py +experiment=mfv2_osg_no_vlm ...same inputs as mfv2_osg
+defaults:
+  - mfv2_osg
+  - _self_
+
+verification:
+  absence_use_vlm: false
