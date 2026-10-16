@@ -33,3 +33,10 @@ eval:
   # single-attempt runs still give first-attempt SR, which
   # `scripts/analyze_multifloor.py` reports for every arm.
   attempts: 3
+
+verification:
+  # What a failed attempt rules out, as the OSG arm has it: the place within
+  # `scene_graph.fp_disable_radius_m` (0.5 m) of the burnt cloud. Without it
+  # the smoke (00800 toy airplane) spent all three attempts in 35 steps on one
+  # ceiling fixture re-detected a cell over.
+  failed_attempt_disables_place: true

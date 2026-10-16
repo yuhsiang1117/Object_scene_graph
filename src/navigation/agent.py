@@ -841,7 +841,21 @@ class AscentNavAgent:
         om.clouds = {}
         self._try_to_navigate = False
         self._try_to_navigate_step = 0
-        om._disabled_object_map[om._map == 1] = 1
+        burn = om._map == 1
+        if (bool(getattr(self.cfg.verification, "failed_attempt_disables_place", False))
+                and burn.any()):
+            # The place, not just the cells this cloud happened to fill: the
+            # same false positive seen from a step further on lands in the
+            # next cells and is a new goal at once (00800 toy airplane: three
+            # attempts in 35 steps, one spot). The radius and the switch are
+            # the OSG arm's own (`eval/attempts.py`), so both arms get it.
+            import cv2
+
+            r = int(round(float(self.cfg.scene_graph.fp_disable_radius_m) * om.pixels_per_meter))
+            if r > 0:
+                kernel = cv2.getStructuringElement(cv2.MORPH_ELLIPSE, (2 * r + 1, 2 * r + 1))
+                burn = cv2.dilate(burn.astype(np.uint8), kernel).astype(bool)
+        om._disabled_object_map[burn] = 1
         om._map.fill(0)
         self.cur_dis_to_goal = float("inf")
         self.min_distance_xy = float("inf")

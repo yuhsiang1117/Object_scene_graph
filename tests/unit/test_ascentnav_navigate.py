@@ -325,6 +325,24 @@ def test_a_failed_attempt_burns_the_cloud_it_stopped_on():
     assert a.giveup_log[-1][1] == "failed_attempt"
 
 
+def test_with_place_disabling_the_burn_covers_the_radius_around_the_cloud():
+    """`failed_attempt_disables_place` (the OSG arm's switch) with its radius,
+    0.5 m = 10 cells at 20 px/m: a re-detection one cell over is not a new goal."""
+    a = _committed()
+    a.cfg.verification.failed_attempt_disables_place = True
+    a.cfg.scene_graph.fp_disable_radius_m = 0.5
+    a.object_map._map[300, 300] = 1
+    a.rearm(1000)
+    d = a.object_map._disabled_object_map
+    assert d[300, 300] and d[300, 309] and d[309, 300]
+    assert not d[300, 312] and not d[312, 300]
+    b = _committed()
+    b.cfg.verification.failed_attempt_disables_place = False
+    b.object_map._map[300, 300] = 1
+    b.rearm(1000)
+    assert b.object_map._disabled_object_map.sum() == 1, "off: the reference burn only"
+
+
 def test_the_episode_loop_reaches_the_ascent_rearm():
     """`rearm_after_failed_attempt` finds `rearm` by name; the ASCENT agent has
     no object layer, so this is the only thing it does for this policy."""
