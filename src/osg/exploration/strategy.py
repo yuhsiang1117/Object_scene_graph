@@ -124,6 +124,12 @@ class ExplorationStrategy:
             getattr(getattr(getattr(cfg, "scene_graph", None), "presence", None),
                     "min_presence", 0.45)
         )
+        # Likewise the candidate gate's identity limit, so the storey belief
+        # gives up on a track exactly when the candidate gate does.
+        self._max_identity_rejections = int(
+            getattr(getattr(getattr(cfg, "scene_graph", None), "presence", None),
+                    "max_identity_rejections", 2)
+        )
         self.planner = planner
         self.scorer = scorer
         self.viewpoint_planner = viewpoint_planner
@@ -343,7 +349,11 @@ class ExplorationStrategy:
             with self.profiler.timeit("storey_belief"):
                 self.requested_floor = self.storey_belief.decide(
                     world.step, world.storeys,
-                    target_tracks(world.object_layer, world.target), world.floor_id,
+                    target_tracks(world.object_layer, world.target,
+                                  max_rejections=self._max_identity_rejections,
+                                  rejection_discount=float(getattr(
+                                      self.cfg, "storey_rejection_discount", 0.3))),
+                    world.floor_id,
                 )
         with self.profiler.timeit("frontier_extract"):
             frontiers = self.frontier_extractor.extract(

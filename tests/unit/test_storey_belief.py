@@ -124,6 +124,19 @@ def test_target_tracks_reads_label_height_and_presence():
     assert target_tracks(layer, "tin can") == [(0.9, 0.7), (3.9, 0.5)]
 
 
+def test_identity_evidence_takes_a_present_false_positive_out():
+    """Presence says something is there; a rejection says it is not the target."""
+    def t(**kw):
+        base = dict(label="pitcher", presence=SimpleNamespace(p=0.9), c=(0.0, 0.5, 0.0),
+                    identity_rejections=0, failed_attempts=0)
+        base.update(kw)
+        return SimpleNamespace(**base)
+    tracks = [t(), t(identity_rejections=1), t(identity_rejections=2), t(failed_attempts=1)]
+    layer = SimpleNamespace(tracks=lambda: tracks, center_of=lambda tr: np.array(tr.c))
+    got = target_tracks(layer, "pitcher", max_rejections=2, rejection_discount=0.3)
+    assert [round(w, 3) for _, w in got] == [0.9, 0.27]
+
+
 # ----------------------------------------------------------- in the strategy
 
 def _strategy(belief: bool):

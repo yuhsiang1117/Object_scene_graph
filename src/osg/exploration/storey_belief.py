@@ -211,18 +211,30 @@ class StoreyBelief:
         return len(storeys) >= 2
 
 
-def target_tracks(object_layer, target: str):
-    """`(centre_y, presence)` of every live, target-labelled track.
+def target_tracks(object_layer, target: str, max_rejections: int = 2,
+                  rejection_discount: float = 0.3):
+    """`(centre_y, weight)` of every live, target-labelled track.
 
-    Blacklisted tracks are left out: a failed attempt or a disabled place has
-    already tested them. A track without a presence filter counts at 0.5.
+    The weight is the chance the track is the target where it is: its
+    presence belief times what its IDENTITY evidence leaves. Presence alone
+    answers "is something still there", and a false positive the detector
+    keeps firing on stays present -- measured on 00862 (seed 42, same-floor
+    pitcher): three STOP-gate rejections later its storey's anchor still read
+    1.0. So a track the agent's own candidate gate has given up on (a failed
+    attempt, or `max_rejections` identity rejections) weighs nothing, and each
+    rejection short of that multiplies its weight by `rejection_discount`.
+    Blacklisted tracks are left out; a track without a presence filter counts
+    at 0.5.
     """
     out = []
     for track in object_layer.tracks():
         if not same_label(getattr(track, "label", ""), target):
             continue
+        rejected = int(getattr(track, "identity_rejections", 0) or 0)
+        if int(getattr(track, "failed_attempts", 0) or 0) > 0 or rejected >= int(max_rejections):
+            continue
         centre = np.asarray(object_layer.center_of(track), dtype=float)
         presence = getattr(track, "presence", None)
         p = float(presence.p) if presence is not None else 0.5
-        out.append((float(centre[1]), p))
+        out.append((float(centre[1]), p * float(rejection_discount) ** rejected))
     return out

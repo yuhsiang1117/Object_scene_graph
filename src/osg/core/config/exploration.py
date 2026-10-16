@@ -175,6 +175,10 @@ class ExplorationConfig:
     # Ask for another storey once its belief is this many times this one's.
     storey_switch_ratio: float = 1.3
     storey_cover_radius_m: float = 2.0
+    # Each identity rejection (STOP gate, unreachable verdict) multiplies a
+    # track's weight in the storey belief by this; a failed attempt or the
+    # candidate gate's own limit removes it (`storey_belief.target_tracks`).
+    storey_rejection_discount: float = 0.3
     storey_block_m: float = 0.5
     # Belief carried by the single most plausible mapped surface. The candidate
     # priors are affinity x proximity normalised so the best of them equals this,
