@@ -30,8 +30,7 @@ def _paint(cm, x0, x1, z0, z1, height, grid=FREE, top=False, floor=None):
     rr, cc = np.mgrid[r0:r1, c0:c1]
     xz = cm.origin[None, None, :] + (np.stack([rr, cc], axis=-1) + 0.5) * cm.resolution
     h = height(xz[..., 0], xz[..., 1]) if callable(height) else np.full(rr.shape, float(height))
-    layer = cm.height_top if top else cm.height
-    layer[r0:r1, c0:c1] = h
+    (cm.height_top if top else cm.height)[r0:r1, c0:c1] = h
     if floor is not None:
         cm.grid[r0:r1, c0:c1] = np.where(h - float(floor) > 0.15, OCCUPIED, FREE)
     else:
@@ -115,14 +114,29 @@ def test_a_wall_on_this_floor_is_not_walked_through():
     assert plan_stair_route(cm, 0.0, (-2.0, 0.0), 0.0, +1, target_y=3.0) is None
 
 
-def test_the_top_layer_restores_treads_the_minimum_lost():
+def test_open_treads_seen_from_below_are_climbed_on_the_upper_level():
+    """The minimum keeps the floor beneath open treads; the top level has them."""
     cm = _map()
-    _paint(cm, -4, 0, -2, 2, 0.0)
-    _paint(cm, 0, 5, -0.5, 0.5, 0.0)                            # min: the floor seen UNDER open treads
+    for top in (False, True):                                    # floors are in both layers
+        _paint(cm, -4, 0, -2, 2, 0.0, top=top)
+        _paint(cm, 5, 9, -2, 2, 3.06, top=top)
+    _paint(cm, 0, 5, -0.5, 0.5, 0.0)                             # min: the floor seen UNDER open treads
     _paint(cm, 0, 5, -0.5, 0.5, lambda x, z: np.floor(x / 0.28) * 0.17, floor=0.0, top=True)
-    _paint(cm, 5, 9, -2, 2, 3.06)
     route = plan_stair_route(cm, 0.0, (-2.0, 0.0), 0.0, +1, target_y=3.06)
     assert route is not None and route.heights[-1] > 2.9
+
+
+def test_a_slab_over_a_descent_does_not_hide_its_treads():
+    """From the storey above, the slab over the lower flight wins the top layer."""
+    cm = _map()
+    for top in (False, True):
+        _paint(cm, -4, 0, -2, 2, 3.06, top=top)
+        _paint(cm, 5, 9, -2, 2, 0.0, top=top)
+    _paint(cm, 0, 5, -0.5, 0.5, lambda x, z: 3.06 - np.floor(x / 0.28) * 0.17, floor=3.06)
+    _paint(cm, 0, 5, -0.5, 0.5, 3.06, top=True)                 # top: the slab seen over the treads
+    _paint(cm, 0, 2, -0.5, 0.5, lambda x, z: 3.06 - np.floor(x / 0.28) * 0.17, top=True)
+    route = plan_stair_route(cm, 3.06, (-2.0, 0.0), 3.06, -1, target_y=0.0)
+    assert route is not None and route.reaches_target and abs(route.heights[-1]) < 0.05
 
 
 def test_record_top_keeps_the_highest_point_below_the_camera():

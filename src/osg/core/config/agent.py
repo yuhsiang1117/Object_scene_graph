@@ -398,10 +398,16 @@ class AgentConfig:
     # with exact tread heights the carrot climb took 275 steps for 2.8 m.
     climb_route: bool = False
     climb_route_start_m: float = 2.5
-    climb_route_lookahead_m: float = 0.7
+    climb_route_lookahead_m: float = 0.5
     climb_route_deadband_deg: float = 20.0
     climb_route_replan_steps: int = 10
     climb_route_stall_steps: int = 40
+    # The least height a route must gain to be walked when it does not reach
+    # flat floor. From the foot of a flight the camera sees no tread surface
+    # above its own height (~0.88 m), only risers: on 00821 the mapped treads
+    # ended 0.85 m up, so a metre was never on offer. The walk is re-planned
+    # as the eyes rise.
+    climb_route_min_gain_m: float = 0.3
     # Stamp the detector's `stairs` masks into the stair-evidence grids on every
     # keyframe. Until now that happened only on the single frame of a periodic
     # look-down, and `down_look_every` defaults to 0, so on every ycb preset the

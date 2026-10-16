@@ -75,7 +75,15 @@ class ClimbPolicy:
         self._route = None
         self._route_plan_step = -100
         self._route_probe_step = -100
-        self._route_blocked = 0
+        self._route_blocks = 0
+        self._route_queue: list = []
+        self._route_short = False
+        self._route_sweep_axis = 0.0
+        self._route_sweep_side = 1.0
+        # Where forward steps were refused this episode, for the planner.
+        self._route_bumps: list = []
+        self._route_scanned = False
+        self._route_explores = 0
         self._route_last_xy = None
         self._route_failures = 0
         self._route_best_togo = float("inf")
@@ -188,7 +196,11 @@ class ClimbPolicy:
         self._climb_paused_steps = 0
         if self.step_count - self._route_plan_step > 5:
             self._route = None              # planned for another pose: plan again
-        self._route_blocked = 0
+        self._route_blocks = 0
+        self._route_queue = []
+        self._route_short = False
+        self._route_scanned = False
+        self._route_explores = 0
         self._route_last_xy = None
         self._route_failures = 0
         self._route_best_togo = float("inf")
@@ -357,7 +369,8 @@ class ClimbPolicy:
         here = float(self.floors.estimator.height_of(int(self.floors.current_id)))
         return 1 if float(target) > here else -1
 
-    def _plan_route(self, frame: FrameData, agent_xy: np.ndarray, direction: int):
+    def _plan_route(self, frame: FrameData, agent_xy: np.ndarray, direction: int,
+                    explore: bool = False):
         from ..mapping.stair_route import plan_stair_route
 
         floor_id = (self._climb_from_floor
@@ -370,6 +383,9 @@ class ClimbPolicy:
                 self.costmap, floor_y, agent_xy, standing, int(direction),
                 target_y=self.nav._goal_floor_y_cache,
                 storey_m=float(self.cfg.floor.new_level_m),
+                bumps_xy=self._route_bumps,
+                min_gain_m=float(getattr(self.cfg.agent, "climb_route_min_gain_m", 0.3)),
+                explore=explore,
             )
         key = "climb_route_plans" if route is not None else "climb_route_none"
         self.stats[key] = self.stats.get(key, 0) + 1
@@ -419,9 +435,28 @@ class ClimbPolicy:
 
     def _route_action(self, frame: FrameData, agent_xy: np.ndarray) -> Optional[str]:
         """Follow the route: turn toward a point `climb_route_lookahead_m` along
-        it, walk forward within the deadband, turn off a wall after two blocked
-        steps. None hands the step to the carrot cascade (no route at all)."""
+        it and walk forward within the deadband. None hands the step to the
+        carrot cascade (no route at all).
+
+        Blocked forwards are the hard part. Turns are 30 degrees, so the agent
+        faces a flight's axis to within 15 at best, and the simulator does not
+        slide a blocked step along the wall: a forward that touches an edge
+        goes nowhere (`eval.allow_sliding: false`). Re-centring on the route
+        after a turn walks straight back into the same edge -- measured at the
+        foot of the 00800 probe flight, 40 steps on one spot, where every
+        heading with a -z component is blocked and the way on is 90 degrees
+        off the route. So a block starts a sweep (`_route_sweep`).
+        """
         self._record_climb_surfaces(frame)
+        moved = (float(np.linalg.norm(agent_xy - self._route_last_xy))
+                 if self._route_last_xy is not None else 1.0)
+        self._route_last_xy = np.asarray(agent_xy, dtype=float).copy()
+        blocked = self.nav._last_action == FORWARD_ACTION and moved < 0.03
+        if moved >= 0.05:
+            self._route_blocks = 0
+            self._route_short = False
+        if self._route_queue:
+            return self._route_queue.pop(0)
         step = int(self.step_count)
         route = self._route
         replan = route is None or step - self._route_plan_step >= int(
@@ -434,25 +469,56 @@ class ClimbPolicy:
             fresh = self._plan_route(frame, agent_xy, self._climb_direction or 1)
             self._route_plan_step = step
             if fresh is None:
-                self._route_failures += 1
+                if not self._route_scanned:
+                    # Nothing walkable in view -- typically a landing, facing its
+                    # wall, with the next flight behind (00821's switchback:
+                    # the first leg in 19 steps, then "lost" at the turn). Look
+                    # round once, recording surfaces, before giving up.
+                    # Pitched down: the camera never sees the floor within
+                    # ~1.4 m of itself, and on a landing that ring is all
+                    # there is (00821: the route from the landing was one cell
+                    # long). A descent is already pitched.
+                    self._route_scanned = True
+                    n = max(1, int(round(360.0 / float(self.cfg.agent.turn_deg))))
+                    self._route_plan_step = -100
+                    self.stats["climb_route_scan"] = self.stats.get("climb_route_scan", 0) + 1
+                    if self._climb_pitched:
+                        self._route_queue = ["turn_left"] * (n - 1)
+                        return "turn_left"
+                    self._route_queue = ["turn_left"] * n + ["look_up"]
+                    return "look_down"
+                adopted = False
+                if self._route_explores < 2:
+                    # Looked round and still nothing: walk to the far end of
+                    # this level and look again. On 00821 the upper leg starts
+                    # behind the wall between the two legs, out of sight from
+                    # where the lower leg arrives.
+                    wander = self._plan_route(frame, agent_xy, self._climb_direction or 1,
+                                              explore=True)
+                    if wander is not None:
+                        self._route_explores += 1
+                        self._route_scanned = False      # look again when there
+                        self._route = route = wander
+                        self._route_best_togo = float("inf")
+                        adopted = True
+                        self.stats["climb_route_explore"] = (
+                            self.stats.get("climb_route_explore", 0) + 1)
+                if not adopted:
+                    self._route_failures += 1
                 if route is None:
                     return None
             else:
                 self._route_failures = 0
+                self._route_scanned = False
                 self._route = route = fresh
                 self._route_best_togo = float("inf")
         i = int(np.argmin(np.linalg.norm(route.xy - agent_xy, axis=1)))
-        ahead = float(route.cost_m[i]) + float(getattr(self.cfg.agent, "climb_route_lookahead_m", 0.7))
-        j = min(int(np.searchsorted(route.cost_m, ahead)), len(route.xy) - 1)
+        look = float(getattr(self.cfg.agent, "climb_route_lookahead_m", 0.5))
+        if self._route_short:
+            look = 0.25
+        j = min(int(np.searchsorted(route.cost_m, float(route.cost_m[i]) + look)), len(route.xy) - 1)
         goal = np.asarray(route.xy[j], dtype=float)
         self._flight_carrot_xy = goal          # what `_traced_climb` records
-        moved = (float(np.linalg.norm(agent_xy - self._route_last_xy))
-                 if self._route_last_xy is not None else 1.0)
-        self._route_last_xy = np.asarray(agent_xy, dtype=float).copy()
-        if self.nav._last_action == FORWARD_ACTION and moved < 0.03:
-            self._route_blocked += 1
-        elif moved >= 0.03:
-            self._route_blocked = 0
         delta = goal - agent_xy
         err = float(np.arctan2(delta[1], delta[0]) - agent_heading(frame.T_wc))
         err = float(np.degrees((err + np.pi) % (2 * np.pi) - np.pi))
@@ -460,16 +526,52 @@ class ClimbPolicy:
         # turn to the RIGHT -- `WaypointController` (planning/controller.py)
         # has always turned that way. (`_climb_align_action` below turns left
         # for a positive error; it is off in every current preset.)
-        if self._route_blocked >= 2:
-            # Pressing into a wall or a banister: turn off it and look again.
-            self._route_blocked = 0
+        toward = "turn_right" if err >= 0 else "turn_left"
+        if blocked:
+            # Remember where the step was refused, and plan round it.
+            h = agent_heading(frame.T_wc)
+            self._route_bumps.append(np.asarray(agent_xy, dtype=float)
+                                     + 0.25 * np.array([np.cos(h), np.sin(h)]))
             self._route_plan_step = -100
-            self.stats["climb_route_unblock"] = self.stats.get("climb_route_unblock", 0) + 1
-            return "turn_right" if err >= 0 else "turn_left"
+            return self._route_sweep(frame, err)
         deadband = float(getattr(self.cfg.agent, "climb_route_deadband_deg", 20.0))
         if abs(err) > deadband and float(np.linalg.norm(delta)) > 0.15:
-            return "turn_right" if err > 0 else "turn_left"
+            return toward
         return FORWARD_ACTION
+
+    _SWEEP = (1, -1, 2, -2, 3, -3, 4, -4)
+
+    def _route_sweep(self, frame: FrameData, err_deg: float) -> str:
+        """The forward just taken went nowhere: try headings further and further
+        either side of the route direction -- 30 degrees toward the error's
+        side, 30 away, 60 toward, 60 away, out to 120 -- each committed to with
+        a forward step. Any real motion ends the sweep (`_route_action`); a
+        sweep that runs out re-plans with a short lookahead and starts over.
+        """
+        turn = float(self.cfg.agent.turn_deg)
+        heading = float(np.degrees(agent_heading(frame.T_wc)))
+        if self._route_blocks == 0:
+            # The reachable heading nearest the route direction, the sweep's axis.
+            self._route_sweep_axis = heading + round(err_deg / turn) * turn
+            self._route_sweep_side = 1.0 if err_deg >= 0 else -1.0
+        self._route_blocks += 1
+        self.stats["climb_route_blocked"] = self.stats.get("climb_route_blocked", 0) + 1
+        if self._route_blocks > len(self._SWEEP):
+            self._route_blocks = 0
+            self._route_short = True
+            self._route_plan_step = -100
+            self.stats["climb_route_sweep_exhausted"] = (
+                self.stats.get("climb_route_sweep_exhausted", 0) + 1)
+            return FORWARD_ACTION
+        offset = self._SWEEP[self._route_blocks - 1] * self._route_sweep_side * turn
+        want = float((self._route_sweep_axis + offset - heading + 180.0) % 360.0 - 180.0)
+        n = int(round(abs(want) / turn))
+        if n == 0:
+            return FORWARD_ACTION
+        # A POSITIVE angle is a turn to the RIGHT (see `_route_action`).
+        action = "turn_right" if want > 0 else "turn_left"
+        self._route_queue = [action] * (n - 1) + [FORWARD_ACTION]
+        return action
 
     def _route_arrived(self, frame: FrameData, agent_xy: np.ndarray) -> bool:
         """At the end of a route that reaches the storey, standing at its height."""
@@ -477,8 +579,11 @@ class ClimbPolicy:
         if route is None or not route.reaches_target:
             return False
         standing = float(frame.camera_position[1]) - float(self.cfg.agent.camera_height)
-        return (float(np.linalg.norm(route.end_xy - agent_xy)) < 0.5
-                and abs(standing - float(route.heights[-1])) < 0.2)
+        # The route ends on FLAT floor, so standing within a tread of its height
+        # is standing on the storey -- not two steps short of it, which 0.2 m
+        # allowed on 00821 (ended at -0.17 for a floor at 0.13).
+        return (float(np.linalg.norm(route.end_xy - agent_xy)) < 0.4
+                and abs(standing - float(route.heights[-1])) < 0.1)
 
     def _route_stalled(self, agent_xy: np.ndarray) -> bool:
         """No progress along the route -- walking distance still to go -- for
