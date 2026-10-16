@@ -170,3 +170,105 @@ def test_the_generic_confusers_name_no_benchmark_object_and_are_fixed():
     cfg.verification.stop_gate_confusers = "both"
     with pytest.raises(ValueError):
         confuser_vocabulary(cfg)
+
+
+# --------------------------------------------- the approach's close view (v2)
+
+def _nav_v2(view="approach", unseen="allow", det=False, from_prior=False, seen_live=True):
+    nav, track = _nav(mode="clip", det=det)
+    nav.cfg.verification.stop_gate_view = view
+    nav.cfg.verification.stop_gate_unseen = unseen
+    nav.cfg.verification.stop_gate_close_m = 1.5
+    track.from_prior, track.seen_live = from_prior, seen_live
+    return nav, track
+
+
+def _sighting(score=0.6):
+    return SimpleNamespace(label="cracker box", score=score, bbox_xyxy=np.array([5, 5, 40, 40]))
+
+
+def _frame():
+    return SimpleNamespace(rgb=np.zeros((60, 80, 3), np.uint8))
+
+
+def test_with_nothing_in_frame_the_best_close_sighting_is_judged():
+    """Most STOPs end where the object has left the frame (49 of 66 on
+    Benchmark v2's seed 42): judge what the approach saw within reach."""
+    nav, track = _nav_v2()
+    gate = StopGate(nav)
+    seen = []
+    gate._judge = lambda rgb, det: seen.append((rgb.shape, det.score)) or False
+    gate.note_sighting(_frame(), _sighting(0.5), 1.2)
+    gate.note_sighting(_frame(), _sighting(0.7), 1.4)
+    gate.note_sighting(_frame(), _sighting(0.4), 0.9)
+    assert gate.check(SimpleNamespace()) == TURN_ACTION
+    assert seen == [((60, 80, 3), 0.7)], "the most confident close view, once"
+    assert gate.log[-1]["view"] == "approach"
+    assert track.identity_rejections == 1
+
+
+def test_a_far_sighting_is_not_a_close_view():
+    nav, _ = _nav_v2()
+    gate = _gate(nav, False)
+    gate.note_sighting(_frame(), _sighting(0.9), 2.4)
+    gate.note_sighting(_frame(), _sighting(0.9), None)
+    assert gate.close_view is None
+    assert gate.check(SimpleNamespace()) is None
+    assert nav.stats["stop_gate_nothing_to_judge"] == 1
+
+
+def test_a_new_approach_forgets_the_last_ones_view():
+    nav, _ = _nav_v2()
+    gate = _gate(nav, False)
+    gate.note_sighting(_frame(), _sighting(), 1.0)
+    gate.new_approach()
+    assert gate.check(SimpleNamespace()) is None
+
+
+def test_the_frame_mode_keeps_no_view():
+    nav, _ = _nav_v2(view="frame")
+    gate = _gate(nav, False)
+    gate.note_sighting(_frame(), _sighting(), 1.0)
+    assert gate.close_view is None
+
+
+def test_a_live_detection_is_still_judged_first():
+    nav, _ = _nav_v2(det=True)
+    gate = StopGate(nav)
+    scores = []
+    gate._judge = lambda rgb, det: scores.append(det.score) or True
+    gate.note_sighting(_frame(), _sighting(0.6), 1.0)
+    assert gate.check(SimpleNamespace()) is None
+    assert scores == [0.8] and gate.log[-1]["view"] == "frame"
+
+
+def test_unseen_reject_releases_a_stop_nothing_close_backs():
+    nav, track = _nav_v2(unseen="reject")
+    gate = _gate(nav, True)
+    assert gate.check(SimpleNamespace()) == TURN_ACTION
+    assert nav.released == 1 and track.identity_rejections == 1
+    assert nav.stats["stop_gate_unseen_reject"] == 1
+    assert gate.log[-1]["view"] == "unseen"
+
+
+def test_unseen_reject_lets_the_stale_anchor_gamble_through():
+    nav, track = _nav_v2(unseen="reject", from_prior=True, seen_live=False)
+    assert _gate(nav, False).check(SimpleNamespace()) is None
+    assert nav.released == 0 and track.identity_rejections == 0
+
+
+def test_unseen_reject_respects_the_episode_cap():
+    nav, _ = _nav_v2(unseen="reject")
+    nav.cfg.verification.stop_gate_max_per_episode = 1
+    gate = _gate(nav, True)
+    assert gate.check(SimpleNamespace()) == TURN_ACTION
+    nav._candidate_id = 7
+    assert gate.check(SimpleNamespace()) is None
+    assert nav.stats["stop_gate_episode_cap"] == 1
+
+
+def test_bad_view_or_unseen_values_fail_loudly():
+    for kw in ({"view": "best"}, {"unseen": "maybe"}):
+        nav, _ = _nav_v2(**kw)
+        with pytest.raises(ValueError):
+            StopGate(nav)

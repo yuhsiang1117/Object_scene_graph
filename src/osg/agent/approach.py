@@ -134,6 +134,9 @@ class ApproachPolicy:
             bbox_px = max(0.0, x2 - x1) * max(0.0, y2 - y1)
             depth = self.nav._detection_depth(det, frame)
             self.last_good_range_m = None if depth is None else float(depth)
+            gate = getattr(self.nav, "stop_gate", None)
+            if gate is not None:
+                gate.note_sighting(frame, det, self.last_good_range_m)
             # Log (step, bbox_px, depth) for terminal calibration.
             self.bbox_log.append(
                 (self.nav.step_count, round(float(bbox_px), 1),
@@ -732,6 +735,9 @@ class ApproachPolicy:
         self.returning = False
         self.returned = False
         self._return_from_d = float("inf")
+        gate = getattr(self.nav, "stop_gate", None)
+        if gate is not None:
+            gate.new_approach()
         if self.nav._direct_approach:
             # A driver (navmesh or pointnav) covers the FULL distance to the
             # object, so the short-leg cap (approach_max_steps ~= 3 m) would cut

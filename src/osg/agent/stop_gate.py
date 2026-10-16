@@ -21,11 +21,16 @@ takes one reading at the gate's own (r, q) through the same filter a failed
 attempt uses (`eval/attempts.py`), and its identity count rises by one, so two
 rejections retire it exactly as two failed attempts would.
 
-What it deliberately does not do:
+With nothing in the STOP frame -- 49 of 66 STOPs on Benchmark v2's seed 42,
+because the approach ends where the object has left the view -- the shipped
+gate lets the STOP stand. `stop_gate_view: approach` judges instead the most
+confident sighting of this approach within `stop_gate_close_m`, the range the
+recogniser was measured at; `stop_gate_unseen: reject` releases a STOP that no
+such sighting backs (42 false positives and 3 true targets on those runs). A
+stale-anchor stop -- a prior track never seen live -- is let through either
+way: `stop_at_stale_anchor_once` takes that gamble on purpose.
 
-* judge a stop with no detection behind it (a stale-anchor stop, a stop on
-  the last metre of a path): there is nothing in the frame to judge, and the
-  absence sensor already ran;
+What it deliberately does not do:
 * treat a failed call as a "no" -- an error is no information, as for the
   absence sensor;
 * reject without bound. A wrong recogniser costs a trip each time it rejects
@@ -56,6 +61,12 @@ class StopGate:
         self.mode = str(getattr(vc, "stop_gate", "off") or "off")
         if self.mode not in MODES:
             raise ValueError(f"verification.stop_gate must be one of {MODES}, got {self.mode!r}")
+        view = str(getattr(vc, "stop_gate_view", "frame"))
+        if view not in ("frame", "approach"):
+            raise ValueError(f"verification.stop_gate_view must be frame|approach, got {view!r}")
+        unseen = str(getattr(vc, "stop_gate_unseen", "allow"))
+        if unseen not in ("allow", "reject"):
+            raise ValueError(f"verification.stop_gate_unseen must be allow|reject, got {unseen!r}")
         self._vlm = None
         self.reset()
 
@@ -63,10 +74,29 @@ class StopGate:
         self.rejections_by_track: dict = {}
         self.n_rejected = 0
         self.log: list = []
+        self.new_approach()
+
+    def new_approach(self) -> None:
+        # (score, rgb, detection, range, step) of this approach's most
+        # confident sighting within `stop_gate_close_m`.
+        self.close_view: Optional[tuple] = None
 
     @property
     def on(self) -> bool:
         return self.mode != "off"
+
+    def note_sighting(self, frame, det, range_m: Optional[float]) -> None:
+        """The approach saw the target. Keep the best close view, for a STOP
+        taken where the object has left the frame (`stop_gate_view`)."""
+        vc = self.nav.cfg.verification
+        if not self.on or str(getattr(vc, "stop_gate_view", "frame")) != "approach":
+            return
+        if range_m is None or float(range_m) > float(vc.stop_gate_close_m):
+            return
+        if self.close_view is not None and float(det.score) <= self.close_view[0]:
+            return
+        self.close_view = (float(det.score), frame.rgb.copy(), det, float(range_m),
+                           int(self.nav.step_count))
 
     # ------------------------------------------------------------- the check
 
@@ -88,16 +118,33 @@ class StopGate:
             stats["stop_gate_track_cap"] = stats.get("stop_gate_track_cap", 0) + 1
             return None
         det = nav._best_target_detection(frame)
+        rgb, view = getattr(frame, "rgb", None), "frame"
+        if det is None and self.close_view is not None:
+            _, rgb, det, _, _ = self.close_view
+            view = "approach"
         if det is None:
-            stats["stop_gate_nothing_to_judge"] = stats.get("stop_gate_nothing_to_judge", 0) + 1
-            return None
+            stale = (bool(getattr(track, "from_prior", False))
+                     and not bool(getattr(track, "seen_live", False)))
+            if str(getattr(vc, "stop_gate_unseen", "allow")) != "reject" or stale:
+                stats["stop_gate_nothing_to_judge"] = (
+                    stats.get("stop_gate_nothing_to_judge", 0) + 1)
+                return None
+            # Never seen within reach of the recogniser: the claim that this
+            # is the target rests on a sighting from further than any
+            # recogniser -- the detector included -- was measured at.
+            stats["stop_gate_unseen_reject"] = stats.get("stop_gate_unseen_reject", 0) + 1
+            self.log.append({"step": int(nav.step_count), "track_id": int(track_id),
+                             "view": "unseen", "verdict": False})
+            stats["stop_gate_log"] = self.log
+            self._reject(track)
+            return TURN_ACTION
         stats["stop_gate_calls"] = stats.get("stop_gate_calls", 0) + 1
         with nav.profiler.timeit("stop_gate"):
-            verdict = self._judge(frame, det)
+            verdict = self._judge(rgb, det)
         entry = {
             "step": int(nav.step_count), "track_id": int(track_id),
             "label": str(det.label), "score": round(float(det.score), 3),
-            "verdict": verdict,
+            "view": view, "verdict": verdict,
         }
         self.log.append(entry)
         stats["stop_gate_log"] = self.log
@@ -113,10 +160,10 @@ class StopGate:
 
     # ------------------------------------------------------------ recognisers
 
-    def _judge(self, frame, det) -> Optional[bool]:
+    def _judge(self, rgb, det) -> Optional[bool]:
         if self.mode == "vlm":
-            return self._judge_vlm(frame, det)
-        return self._judge_clip(frame, det)
+            return self._judge_vlm(rgb, det)
+        return self._judge_clip(rgb, det)
 
     def _vlm_verifier(self):
         if self._vlm is None:
@@ -138,18 +185,18 @@ class StopGate:
             )
         return self._vlm
 
-    def _judge_vlm(self, frame, det) -> Optional[bool]:
+    def _judge_vlm(self, rgb, det) -> Optional[bool]:
         verifier = self._vlm_verifier()
         errors = verifier.n_errors
-        accepted = verifier.verify_bbox(frame.rgb, det.bbox_xyxy, self.nav.target)
+        accepted = verifier.verify_bbox(rgb, det.bbox_xyxy, self.nav.target)
         # The verifier fails OPEN on an API error; an error is not an answer.
         return None if verifier.n_errors > errors else bool(accepted)
 
-    def _judge_clip(self, frame, det) -> Optional[bool]:
+    def _judge_clip(self, rgb, det) -> Optional[bool]:
         encoder = getattr(getattr(self.nav, "region_proposer", None), "encoder", None)
         if encoder is None:
             return None  # no encoder loaded on this arm: no opinion
-        crop = crop_with_margin(frame.rgb, det.bbox_xyxy)
+        crop = crop_with_margin(rgb, det.bbox_xyxy)
         feat = encoder.encode_image(crop)
         if feat is None:
             return None

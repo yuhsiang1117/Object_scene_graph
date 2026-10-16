@@ -288,3 +288,19 @@ class VerificationConfig:
     # times is let stop, and an episode rejects at most this many stops.
     stop_gate_max_per_track: int = 2
     stop_gate_max_per_episode: int = 4
+    # WHAT is judged. "frame": the target detection in the STOP frame, and
+    # nothing when there is none. On Benchmark v2 (outputs/mfv2/osg*_s42) that
+    # was 17 STOPs of 66: the approach ends where the object is out of frame.
+    # "approach": with nothing in the frame, the most confident sighting of
+    # the approach within `stop_gate_close_m` -- the distance the recogniser
+    # was measured at. 37 of the 79 STOPs on a false positive had one.
+    stop_gate_view: str = "frame"
+    stop_gate_close_m: float = 1.5
+    # A STOP with nothing to judge -- not in frame, never seen this approach
+    # within `stop_gate_close_m`: "allow" (the shipped behaviour) or "reject",
+    # released without an attempt exactly as a recogniser's "no". On the same
+    # runs those STOPs were 42 false positives, 0 successes; the 3 true-target
+    # STOPs whose last sighting was 1.5-3 m away succeeded. A stale-anchor
+    # STOP (a prior track never seen live; `stop_at_stale_anchor_once`) is
+    # that rule's deliberate gamble and is let through.
+    stop_gate_unseen: str = "allow"
