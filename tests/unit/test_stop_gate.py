@@ -267,6 +267,46 @@ def test_unseen_reject_respects_the_episode_cap():
     assert nav.stats["stop_gate_episode_cap"] == 1
 
 
+def _prior_layer(nav, tracks):
+    readings = []
+    layer = SimpleNamespace(
+        presence_filter=SimpleNamespace(
+            apply_reading=lambda t, present, r, q: readings.append((t.id, present, r, q))),
+        tracks=lambda include_blacklisted=False: list(tracks),
+    )
+    nav.object_layer = layer
+    return readings
+
+
+def _prior_track(tid, label="cracker box", from_prior=True, crop=True):
+    return SimpleNamespace(id=tid, label=label, from_prior=from_prior,
+                           best_crop=np.zeros((8, 8, 3), np.uint8) if crop else None)
+
+
+def test_vetting_reads_each_target_labelled_prior_track_through_presence():
+    nav, _ = _nav(mode="clip")
+    nav.cfg.verification.stop_gate_vet_prior = True
+    tracks = [_prior_track(1), _prior_track(2), _prior_track(3, label="lamp"),
+              _prior_track(4, from_prior=False), _prior_track(5, crop=False)]
+    readings = _prior_layer(nav, tracks)
+    gate = StopGate(nav)
+    verdicts = {1: True, 2: False}
+    seen = []
+    gate._clip_verdict = lambda crop: verdicts[seen.append(1) or len(seen)]
+    out = gate.vet_prior()
+    assert readings == [(1, True, 0.9, 0.2), (2, False, 0.9, 0.2)]
+    assert (out["judged"], out["accepted"], out["rejected"], out["no_crop"]) == (2, 1, 1, 1)
+    assert nav.stats["prior_vet_rejected"] == 1
+
+
+def test_vetting_is_off_unless_asked_and_never_in_vlm_mode():
+    for mode, on in (("clip", False), ("vlm", True)):
+        nav, _ = _nav(mode=mode)
+        nav.cfg.verification.stop_gate_vet_prior = on
+        readings = _prior_layer(nav, [_prior_track(1)])
+        assert StopGate(nav).vet_prior() is None and readings == []
+
+
 def test_bad_view_or_unseen_values_fail_loudly():
     for kw in ({"view": "best"}, {"unseen": "maybe"}):
         nav, _ = _nav_v2(**kw)

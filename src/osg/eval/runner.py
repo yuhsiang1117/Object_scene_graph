@@ -233,6 +233,7 @@ def run_eval(cfg) -> dict:
             # "verify_stop_gate_q" "verify_stop_gate_max_per_track"
             # "verify_stop_gate_max_per_episode" "verify_stop_gate_confusers"
             # "verify_stop_gate_view" "verify_stop_gate_close_m" "verify_stop_gate_unseen"
+            # "verify_stop_gate_vet_prior"
             **_algorithm_fingerprint(cfg),
         },
     }

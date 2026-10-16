@@ -304,3 +304,14 @@ class VerificationConfig:
     # STOP (a prior track never seen live; `stop_at_stale_anchor_once`) is
     # that rule's deliberate gamble and is let through.
     stop_gate_unseen: str = "allow"
+    # Vet the PRIOR map before the episode: every pass-1 track carrying the
+    # target's label has its saved best crop judged by the gate's recogniser,
+    # read through the presence filter at the gate's (r, q) -- a "no" leaves it
+    # under the commit bar until a live sighting brings it back, nothing is
+    # deleted. Pass 1 bakes false positives into the map: over Benchmark v2's
+    # 37 (scene, label) pairs, 90 target-labelled prior tracks, 52 of them not
+    # the object; the margin at 0 kept 34 of the 38 true ones and 9 of the 52
+    # false (outputs/maps_v2_osg). On seed 42, static episodes starting on the
+    # other storey went 4 of 17, most failing on a first commit to a wrong
+    # same-label track on the start storey.
+    stop_gate_vet_prior: bool = False

@@ -98,6 +98,49 @@ class StopGate:
         self.close_view = (float(det.score), frame.rgb.copy(), det, float(range_m),
                            int(self.nav.step_count))
 
+    def vet_prior(self) -> Optional[dict]:
+        """Judge the prior map's target-labelled tracks before the episode.
+
+        Each pass-1 track carrying the target's label is judged on its saved
+        best crop and read through the presence filter at the gate's (r, q):
+        a "no" leaves a reloaded track under the commit bar, a "yes" raises
+        it, and a later live sighting can undo either -- nothing is deleted.
+        VLM mode is not used here: a model call per prior track before the
+        first step is the stall the control loop must not take.
+        """
+        vc = self.nav.cfg.verification
+        if self.mode != "clip" or not bool(getattr(vc, "stop_gate_vet_prior", False)):
+            return None
+        layer = getattr(self.nav, "object_layer", None)
+        presence = getattr(layer, "presence_filter", None)
+        if layer is None:
+            return None
+        target = normalize_label(self.nav.target)
+        out = {"judged": 0, "accepted": 0, "rejected": 0, "no_crop": 0, "no_opinion": 0,
+               "tracks": []}
+        for track in layer.tracks(include_blacklisted=True):
+            if not getattr(track, "from_prior", False) or normalize_label(track.label) != target:
+                continue
+            crop = getattr(track, "best_crop", None)
+            if crop is None or getattr(crop, "size", 0) == 0:
+                out["no_crop"] += 1
+                continue
+            with self.nav.profiler.timeit("stop_gate_vet"):
+                verdict = self._clip_verdict(crop)
+            if verdict is None:
+                out["no_opinion"] += 1
+                continue
+            out["judged"] += 1
+            out["accepted" if verdict else "rejected"] += 1
+            out["tracks"].append([int(track.id), bool(verdict)])
+            if presence is not None:
+                presence.apply_reading(track, bool(verdict), float(vc.stop_gate_recall),
+                                       float(vc.stop_gate_q))
+        stats = self.nav.stats
+        for k in ("judged", "accepted", "rejected"):
+            stats[f"prior_vet_{k}"] = stats.get(f"prior_vet_{k}", 0) + out[k]
+        return out
+
     # ------------------------------------------------------------- the check
 
     def check(self, frame) -> Optional[str]:
@@ -193,10 +236,12 @@ class StopGate:
         return None if verifier.n_errors > errors else bool(accepted)
 
     def _judge_clip(self, rgb, det) -> Optional[bool]:
+        return self._clip_verdict(crop_with_margin(rgb, det.bbox_xyxy))
+
+    def _clip_verdict(self, crop) -> Optional[bool]:
         encoder = getattr(getattr(self.nav, "region_proposer", None), "encoder", None)
         if encoder is None:
             return None  # no encoder loaded on this arm: no opinion
-        crop = crop_with_margin(rgb, det.bbox_xyxy)
         feat = encoder.encode_image(crop)
         if feat is None:
             return None

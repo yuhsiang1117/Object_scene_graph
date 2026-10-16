@@ -52,6 +52,13 @@ def run_episode(cfg, env, agent, episode, target, frame, detector, debug=None) -
         initial_floor_y=float(frame.camera_position[HEIGHT_AXIS])
         - float(cfg.agent.camera_height),
     )
+    # The prior's target-labelled tracks judged before the first step, when the
+    # arm asks for it (`verification.stop_gate_vet_prior`).
+    vet = getattr(getattr(agent, "stop_gate", None), "vet_prior", None)
+    if outcome.map_note is not None and callable(vet):
+        verdicts = vet()
+        if verdicts is not None:
+            outcome.map_note["vetting"] = verdicts
     # The occupancy ASCENT's navigation built, if this run was given one. AFTER
     # the scene-graph snapshot, because that is what creates the per-storey
     # layers this pastes into -- on a fresh stack there is only the one floor

@@ -1,0 +1,21 @@
+# @package _global_
+#
+# `mfv2_osg_gate2` plus vetting the PRIOR map before each episode
+# (`verification.stop_gate_vet_prior`): the same recogniser that judges a STOP
+# judges every pass-1 track carrying the target's label, on its saved crop,
+# and the verdict is one presence reading at the gate's (r, q).
+#
+# Pass 1 bakes false positives into the map it hands pass 2. Offline, over
+# outputs/maps_v2_osg's 90 target-labelled tracks (38 the object, 52 not), the
+# gate's margin at 0 -- the threshold chosen on outputs/verifier_set, not
+# re-tuned here -- keeps 34 of 38 and 9 of 52. On seed 42, static episodes
+# that start on the other storey went 4 of 17 for OSG, most failing on a first
+# commit to a wrong same-label track where they started.
+#
+#   python scripts/run_eval.py +experiment=mfv2_osg_gate2_vet ...same inputs as mfv2_osg
+defaults:
+  - mfv2_osg_gate2
+  - _self_
+
+verification:
+  stop_gate_vet_prior: true
