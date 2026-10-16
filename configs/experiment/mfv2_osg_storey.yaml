@@ -16,7 +16,9 @@
 # the agent asks for the best other storey once it is 1.3x this one, and while
 # it knows two storeys it never switches undirected. Storey disproval by failed
 # attempts is off: a false-positive STOP says nothing about the storey, and the
-# coverage term is what moves belief off a searched one.
+# coverage term is what moves belief off a searched one. The prior's landings
+# are taken out of the storeys before the episode (`ycb.drop_prior_landings`):
+# 00800's pass-1 graph holds a landing at 1.74 m that a descent "arrives" on.
 #
 #   python scripts/run_eval.py +experiment=mfv2_osg_storey ...same inputs as mfv2_osg
 defaults:
@@ -25,6 +27,9 @@ defaults:
 
 exploration:
   storey_belief: true
+
+ycb:
+  drop_prior_landings: true
 
 agent:
   floor_disproved_after_failed_attempts: 0

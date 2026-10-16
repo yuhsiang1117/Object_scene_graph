@@ -90,10 +90,12 @@ class FloorStack:
         current: int = 0,
         track_height: bool = False,
         planner_factory=None,
+        track_top: bool = False,
         value_map_factory=None,
     ) -> None:
         self.resolution_m = float(resolution_m)
         self._track_height = bool(track_height)
+        self._track_top = bool(track_top)
         self._room_seg_kwargs = dict(room_seg_kwargs or {})
         self._room_ids = RoomIdCounter()
         self._planner_factory = planner_factory
@@ -110,7 +112,8 @@ class FloorStack:
         fid = int(floor_id)
         if fid not in self._layers:
             costmap = Costmap2D(
-                resolution=self.resolution_m, track_height=self._track_height
+                resolution=self.resolution_m, track_height=self._track_height,
+                track_top=self._track_top,
             )
             self._layers[fid] = FloorLayer(
                 floor_id=fid,

@@ -19,7 +19,8 @@ HEIGHT_AXIS = 1
 
 class Costmap2D:
     def __init__(
-        self, resolution: float = 0.05, size_m: float = 20.0, track_height: bool = False
+        self, resolution: float = 0.05, size_m: float = 20.0, track_height: bool = False,
+        track_top: bool = False,
     ) -> None:
         self.resolution = resolution
         n = int(size_m / resolution)
@@ -44,6 +45,16 @@ class Costmap2D:
         # it (see `_record_heights`).
         self.height_synthetic: Optional[np.ndarray] = (
             np.zeros((n, n), dtype=bool) if track_height else None
+        )
+        # Highest surface seen per cell BELOW the camera that saw it, world y,
+        # NaN where unseen -- the stair route's layer (`mapping/stair_route.py`).
+        # `height` keeps the minimum, which is the right surface to stand on
+        # everywhere except under an open staircase: seen from below, the floor
+        # beneath the treads wins the minimum and the upper flight is gone for
+        # good. The maximum below the camera keeps the treads, and makes walls
+        # and railings tall instead of floor-high. Only with `track_top`.
+        self.height_top: Optional[np.ndarray] = (
+            np.full((n, n), np.nan, dtype=np.float32) if (track_height and track_top) else None
         )
         self._grow_listeners: List[Callable[[int, int, int, int], None]] = []
 
@@ -94,7 +105,8 @@ class Costmap2D:
     # their shapes ever diverge from it.
     _PARALLEL_LAYERS = (("height", np.nan, np.float32),
                         ("stair_mask", False, bool),
-                        ("height_synthetic", False, bool))
+                        ("height_synthetic", False, bool),
+                        ("height_top", np.nan, np.float32))
 
     def conform_layers(self) -> None:
         """Re-shape every parallel layer to match `grid`, blanking what cannot
@@ -125,11 +137,8 @@ class Costmap2D:
         new[h // 2 : h // 2 + h, w // 2 : w // 2 + w] = self.grid
         self.grid = new
         # Every parallel layer must grow with it or the shapes silently diverge
-        for name, fill, dtype in (
-            ("height", np.nan, np.float32), ("stair_mask", False, bool),
-            ("height_synthetic", False, bool),
-        ):
-            old = getattr(self, name)
+        for name, fill, dtype in self._PARALLEL_LAYERS:
+            old = getattr(self, name, None)
             if old is not None:
                 grown = np.full((h * 2, w * 2), fill, dtype=dtype)
                 grown[h // 2 : h // 2 + h, w // 2 : w // 2 + w] = old
@@ -190,6 +199,9 @@ class Costmap2D:
         # tall furniture never displace the surface underneath them.
         if self.height is not None:
             self._record_heights(pts[np.abs(rel_h) < height_span])
+        if self.height_top is not None:
+            self.record_top(pts[np.abs(rel_h) < height_span],
+                            cap_y=float(frame.camera_position[HEIGHT_AXIS]))
 
         cam_rc = self.world_to_grid(cam_xy)
         self._raycast_batch(cam_rc, xy[floor_mask], xy[obst_mask])
@@ -291,6 +303,24 @@ class Costmap2D:
         # np.fmin.at ignores NaN on the accumulator side, so first-write cells
         # take the value and later writes keep the running minimum.
         np.fmin.at(cur, flat, ys)
+
+    def record_top(self, pts: np.ndarray, cap_y: float) -> None:
+        """Fold world points into `height_top`: per cell, the highest point at
+        or below `cap_y` (the observing camera's height). A no-op without the
+        layer. Public because the climb records it while the occupancy update
+        is suppressed on the stairs."""
+        if self.height_top is None or pts.shape[0] == 0:
+            return
+        pts = pts[pts[:, HEIGHT_AXIS] <= float(cap_y)]
+        if pts.shape[0] == 0:
+            return
+        rc = np.floor((pts[:, list(PLANE)] - self.origin) / self.resolution).astype(np.int64)
+        h, w = self.grid.shape
+        inb = (rc[:, 0] >= 0) & (rc[:, 0] < h) & (rc[:, 1] >= 0) & (rc[:, 1] < w)
+        if not inb.any():
+            return
+        flat = rc[inb, 0] * w + rc[inb, 1]
+        np.fmax.at(self.height_top.reshape(-1), flat, pts[inb, HEIGHT_AXIS].astype(np.float32))
 
     def height_gradient(self, cell_m: float = 0.1) -> Tuple[np.ndarray, np.ndarray]:
         """ZONDA's traversability signal, coarsened to `cell_m`.

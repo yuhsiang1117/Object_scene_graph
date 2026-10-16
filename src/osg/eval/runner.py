@@ -236,6 +236,9 @@ def run_eval(cfg) -> dict:
             # "verify_stop_gate_vet_prior"
             # "storey_belief" "storey_anchor_weight" "storey_detect_prob" "storey_switch_ratio"
             # "storey_cover_radius_m" "storey_block_m"
+            # "climb_route" "climb_route_start_m" "climb_route_lookahead_m"
+            # "climb_route_deadband_deg" "climb_route_replan_steps" "climb_route_stall_steps"
+            # "drop_prior_landings"
             **_algorithm_fingerprint(cfg),
         },
     }

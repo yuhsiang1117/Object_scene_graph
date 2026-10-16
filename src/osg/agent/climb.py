@@ -71,6 +71,15 @@ class ClimbPolicy:
         # is the sole way into State.CLIMB and always writes it first. One
         # AttributeError away from being a bug; initialised here.
         self._climb_relink_step = 0
+        # The stair route (`agent.climb_route`, mapping/stair_route.py).
+        self._route = None
+        self._route_plan_step = -100
+        self._route_probe_step = -100
+        self._route_blocked = 0
+        self._route_last_xy = None
+        self._route_failures = 0
+        self._route_best_togo = float("inf")
+        self._route_progress_step = 0
 
     # -------------------------------------------------- the agent's own state
     # Named exactly as on NavAgent so the moved bodies did not have to change.
@@ -126,6 +135,8 @@ class ClimbPolicy:
         it is enough.
         """
         agent_xy = frame.camera_position[list(PLANE)]
+        if self._route_on and self._route_from_here(frame, agent_xy):
+            return True
         if self.nav.stairs._on_a_staircase(agent_xy):
             return True
         reach = float(getattr(self.cfg.agent, "stair_reach_m", 0.6))
@@ -175,6 +186,13 @@ class ClimbPolicy:
         self._carrot_disable_end = False
         self._climb_last_dist = None
         self._climb_paused_steps = 0
+        if self.step_count - self._route_plan_step > 5:
+            self._route = None              # planned for another pose: plan again
+        self._route_blocked = 0
+        self._route_last_xy = None
+        self._route_failures = 0
+        self._route_best_togo = float("inf")
+        self._route_progress_step = int(self.step_count)
         # The stair cells near the agent, for `_left_the_stairs`; None when the
         # detector has no evidence here, in which case the height test decides.
         layer = self.floor_layer
@@ -252,9 +270,17 @@ class ClimbPolicy:
             # taller (config: climb_to_target_storey_tol_m).
             here = float(self.floors.estimator.height_of(self._climb_from_floor))
             needed = max(needed, abs(float(self.nav._goal_floor_y_cache) - here) - tol)
+        routed = self._route_on and self._route is not None
+        if routed and self._route_arrived(frame, agent_xy):
+            self._end_climb(True, "route_end")
+            return "look_up" if self._climb_pitched else TURN_ACTION
         if (
             bool(getattr(self.cfg.floor, "no_level_on_flight", False))
             and dy >= needed
+            # A route knows where the floor is; a height threshold computed
+            # from a storey estimate can end the climb on the treads (00800's
+            # prior puts the lower floor at 0.64 for a true 0.16).
+            and not routed
         ):
             self._end_climb(True, "storey_of_height")
             return "look_up" if self._climb_pitched else TURN_ACTION
@@ -266,7 +292,11 @@ class ClimbPolicy:
         if self._climb_steps > int(getattr(self.cfg.agent, "climb_max_steps", 80)):
             self._end_climb(False, "budget")
             return "look_up" if self._climb_pitched else TURN_ACTION
-        if self._carrot_stalled(agent_xy) and dy < 0.3:
+        if routed:
+            if self._route_stalled(agent_xy) or self._route_failures >= 3:
+                self._end_climb(False, "stalled" if self._route_failures < 3 else "route_lost")
+                return "look_up" if self._climb_pitched else TURN_ACTION
+        elif self._carrot_stalled(agent_xy) and dy < 0.3:
             self._end_climb(False, "stalled")
             return "look_up" if self._climb_pitched else TURN_ACTION
         # One flight is not one storey. When the treads run out part-way -- on a
@@ -274,6 +304,7 @@ class ClimbPolicy:
         # than handing back to exploration 2.3 m into a 3.2 m descent.
         if (
             bool(getattr(self.cfg.agent, "climb_relink_flights", False))
+            and not routed                       # a route already runs through landings
             and self._flight_carrot(frame, agent_xy) is None
             and self.step_count - self._climb_relink_step >= 10
         ):
@@ -297,9 +328,166 @@ class ClimbPolicy:
         if self._climb_direction < 0 and not self._climb_pitched:
             self._climb_pitched = True
             return self._traced_climb(frame, agent_xy, "look_down", standing=None, dy=dy)
+        if self._route_on:
+            action = self._route_action(frame, agent_xy)
+            if action is not None:
+                return self._traced_climb(
+                    frame, agent_xy, action,
+                    standing=cam_y - float(self.cfg.agent.camera_height), dy=dy)
         return self._traced_climb(
             frame, agent_xy, self._carrot_action(frame, agent_xy),
             standing=cam_y - float(self.cfg.agent.camera_height), dy=dy)
+    # ------------------------------------------------------------ stair route
+
+    @property
+    def _route_on(self) -> bool:
+        return bool(getattr(self.cfg.agent, "climb_route", False))
+
+    def _route_direction(self) -> int:
+        """Which way the pursuit goes: the climb's own, else the flight's, else
+        the storey asked for against this one; 0 when nothing says."""
+        if self.nav.state is State.CLIMB and self._climb_direction:
+            return int(self._climb_direction)
+        kind = str(getattr(getattr(self.floors, "pursuit_flight", None), "kind", "") or "")
+        if kind in ("up", "down"):
+            return 1 if kind == "up" else -1
+        target = self.nav._goal_floor_y_cache
+        if target is None:
+            return 0
+        here = float(self.floors.estimator.height_of(int(self.floors.current_id)))
+        return 1 if float(target) > here else -1
+
+    def _plan_route(self, frame: FrameData, agent_xy: np.ndarray, direction: int):
+        from ..mapping.stair_route import plan_stair_route
+
+        floor_id = (self._climb_from_floor
+                    if self.nav.state is State.CLIMB and self._climb_from_floor is not None
+                    else int(self.floors.current_id))
+        floor_y = float(self.floors.estimator.height_of(int(floor_id)))
+        standing = float(frame.camera_position[1]) - float(self.cfg.agent.camera_height)
+        with self.profiler.timeit("stair_route"):
+            route = plan_stair_route(
+                self.costmap, floor_y, agent_xy, standing, int(direction),
+                target_y=self.nav._goal_floor_y_cache,
+                storey_m=float(self.cfg.floor.new_level_m),
+            )
+        key = "climb_route_plans" if route is not None else "climb_route_none"
+        self.stats[key] = self.stats.get(key, 0) + 1
+        return route
+
+    def _route_from_here(self, frame: FrameData, agent_xy: np.ndarray) -> bool:
+        """Is there a walk from where the agent stands onto the stairs, within
+        `climb_route_start_m`? Then the climb starts here, wherever the pursuit
+        goal is: on 00821 the flight's foot was 1.5 m beside the true one, and
+        the agent passed within 1.1 m of the real foot on its way there."""
+        if self.step_count - self._route_probe_step < 5:
+            return False
+        self._route_probe_step = int(self.step_count)
+        direction = self._route_direction()
+        if direction == 0:
+            return False
+        route = self._plan_route(frame, agent_xy, direction)
+        if route is None:
+            return False
+        floor_y = float(self.floors.estimator.height_of(int(self.floors.current_id)))
+        start_m = float(getattr(self.cfg.agent, "climb_route_start_m", 2.5))
+        if route.leaves_floor_after_m(floor_y) > start_m:
+            return False
+        self._route = route
+        self._route_plan_step = int(self.step_count)
+        self.stats["climb_route_start"] = self.stats.get("climb_route_start", 0) + 1
+        return True
+
+    def _record_climb_surfaces(self, frame: FrameData) -> None:
+        """Keep the route's height layer current while the occupancy update is
+        suppressed on the stairs -- the upper flight is only seen from the
+        lower one."""
+        cm = self.costmap
+        if getattr(cm, "height_top", None) is None or not bool(getattr(self.floors, "on_stairs", False)):
+            return
+        from ..core.geometry import backproject
+
+        m = self.cfg.mapping
+        pts = backproject(frame.depth, frame.intrinsics, frame.T_wc,
+                          stride=int(m.depth_stride), max_depth=float(m.max_range_m))
+        if pts.shape[0] == 0:
+            return
+        floor_y = float(self.floors.estimator.height_of(int(self._climb_from_floor)))
+        cm.ensure_contains(frame.camera_position[list(PLANE)], margin_m=float(m.max_range_m) + 1.0)
+        cm.record_top(pts[np.abs(pts[:, 1] - floor_y) < 3.5],
+                      cap_y=float(frame.camera_position[1]))
+
+    def _route_action(self, frame: FrameData, agent_xy: np.ndarray) -> Optional[str]:
+        """Follow the route: turn toward a point `climb_route_lookahead_m` along
+        it, walk forward within the deadband, turn off a wall after two blocked
+        steps. None hands the step to the carrot cascade (no route at all)."""
+        self._record_climb_surfaces(frame)
+        step = int(self.step_count)
+        route = self._route
+        replan = route is None or step - self._route_plan_step >= int(
+            getattr(self.cfg.agent, "climb_route_replan_steps", 10))
+        if route is not None and not replan:
+            off = float(np.min(np.linalg.norm(route.xy - agent_xy, axis=1)))
+            at_end = float(np.linalg.norm(route.end_xy - agent_xy)) < 0.4
+            replan = off > 0.6 or (at_end and not route.reaches_target)
+        if replan:
+            fresh = self._plan_route(frame, agent_xy, self._climb_direction or 1)
+            self._route_plan_step = step
+            if fresh is None:
+                self._route_failures += 1
+                if route is None:
+                    return None
+            else:
+                self._route_failures = 0
+                self._route = route = fresh
+                self._route_best_togo = float("inf")
+        i = int(np.argmin(np.linalg.norm(route.xy - agent_xy, axis=1)))
+        ahead = float(route.cost_m[i]) + float(getattr(self.cfg.agent, "climb_route_lookahead_m", 0.7))
+        j = min(int(np.searchsorted(route.cost_m, ahead)), len(route.xy) - 1)
+        goal = np.asarray(route.xy[j], dtype=float)
+        self._flight_carrot_xy = goal          # what `_traced_climb` records
+        moved = (float(np.linalg.norm(agent_xy - self._route_last_xy))
+                 if self._route_last_xy is not None else 1.0)
+        self._route_last_xy = np.asarray(agent_xy, dtype=float).copy()
+        if self.nav._last_action == FORWARD_ACTION and moved < 0.03:
+            self._route_blocked += 1
+        elif moved >= 0.03:
+            self._route_blocked = 0
+        delta = goal - agent_xy
+        err = float(np.arctan2(delta[1], delta[0]) - agent_heading(frame.T_wc))
+        err = float(np.degrees((err + np.pi) % (2 * np.pi) - np.pi))
+        if self._route_blocked >= 2:
+            # Pressing into a wall or a banister: turn off it and look again.
+            self._route_blocked = 0
+            self._route_plan_step = -100
+            self.stats["climb_route_unblock"] = self.stats.get("climb_route_unblock", 0) + 1
+            return "turn_left" if err >= 0 else "turn_right"
+        deadband = float(getattr(self.cfg.agent, "climb_route_deadband_deg", 20.0))
+        if abs(err) > deadband and float(np.linalg.norm(delta)) > 0.15:
+            return "turn_left" if err > 0 else "turn_right"
+        return FORWARD_ACTION
+
+    def _route_arrived(self, frame: FrameData, agent_xy: np.ndarray) -> bool:
+        """At the end of a route that reaches the storey, standing at its height."""
+        route = self._route
+        if route is None or not route.reaches_target:
+            return False
+        standing = float(frame.camera_position[1]) - float(self.cfg.agent.camera_height)
+        return (float(np.linalg.norm(route.end_xy - agent_xy)) < 0.5
+                and abs(standing - float(route.heights[-1])) < 0.2)
+
+    def _route_stalled(self, agent_xy: np.ndarray) -> bool:
+        """No progress along the route -- walking distance still to go -- for
+        `climb_route_stall_steps`."""
+        route = self._route
+        i = int(np.argmin(np.linalg.norm(route.xy - agent_xy, axis=1)))
+        togo = float(route.cost_m[-1] - route.cost_m[i])
+        if togo < self._route_best_togo - 0.2:
+            self._route_best_togo = togo
+            self._route_progress_step = int(self.step_count)
+        return int(self.step_count) - self._route_progress_step > int(
+            getattr(self.cfg.agent, "climb_route_stall_steps", 40))
+
     def _oracle_action(self, frame: FrameData, agent_xy: np.ndarray) -> Optional[str]:
         """`agent.climb_oracle`: Habitat's follower walks the staircase.
 

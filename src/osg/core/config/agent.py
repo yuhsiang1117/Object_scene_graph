@@ -386,6 +386,22 @@ class AgentConfig:
     # ~0.3 m, spending ~370 steps on a flight. Never compare an arm with this on
     # against a sensor-only one as if it were one.
     climb_oracle: bool = False
+    # Climb along a WALKED route through the height layer (mapping/stair_route.py)
+    # instead of at a carrot on a flight blob: cells joined only where their
+    # surfaces differ by a riser, walls on this floor left out, the goal flat
+    # floor near the storey asked for; followed by turning toward a point
+    # `climb_route_lookahead_m` ahead and walking within the deadband, not by
+    # the PointNav policy. A route from where the agent stands that leaves the
+    # floor within `climb_route_start_m` starts the climb there. Measured before
+    # it (outputs/mfv2/diag_climb): on 00821 the blob's foot sat 1.5 m beside
+    # the real one and two 300-step climbs rose 0.01 m; on the probe flight
+    # with exact tread heights the carrot climb took 275 steps for 2.8 m.
+    climb_route: bool = False
+    climb_route_start_m: float = 2.5
+    climb_route_lookahead_m: float = 0.7
+    climb_route_deadband_deg: float = 20.0
+    climb_route_replan_steps: int = 10
+    climb_route_stall_steps: int = 40
     # Stamp the detector's `stairs` masks into the stair-evidence grids on every
     # keyframe. Until now that happened only on the single frame of a periodic
     # look-down, and `down_look_every` defaults to 0, so on every ycb preset the

@@ -92,6 +92,8 @@ class FloorPolicy:
             # stair detector will actually read it. Cross-floor exploration
             # needs it to see portals, so it implies track_height too.
             track_height=self._stairs_on or self._cross_floor_on,
+            # The stair route's layer (`agent.climb_route`), paid for only then.
+            track_top=bool(getattr(cfg.agent, "climb_route", False)),
             planner_factory=lambda: HybridVoronoiPlanner(
                 collision_m=cfg.agent.agent_radius + cfg.mapping.inflate_margin_m,
                 goal_near_m=cfg.exploration.voronoi_goal_near_m,

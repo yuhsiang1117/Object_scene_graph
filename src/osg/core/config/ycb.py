@@ -167,6 +167,10 @@ class YCBAuthoredConfig:
     # A storey is added only when the stack has none within
     # `storey_seed_tol_m`; existing layers are never moved.
     seed_storeys_from_obstacle_map: bool = False
+    # After the obstacle paste, take the prior's landings out of the storeys
+    # (eval/prior_map.py:drop_prior_landings): 00800's pass-1 graph holds a
+    # landing at 1.74 m that a descent "arrives" on.
+    drop_prior_landings: bool = False
     storey_seed_tol_m: float = 1.0
     # Score a STOP by horizontal distance to the OBJECT, the released DualMap
     # benchmark's rule, instead of habitat's geodesic distance to an authored

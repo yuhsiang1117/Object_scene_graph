@@ -13,6 +13,8 @@
 #   osg_gate2 `mfv2_osg_gate2`: the gate judging the approach's close view
 #   osg_gate2_vet     gate2, and the prior's target-labelled tracks vetted before the episode
 #   osg_storey        gate2, and the storey decided by a belief over storeys
+#   osg_climb         osg_storey, and the stairs climbed along a route (step 3)
+#   osg_storey_oracle osg_storey with the navmesh walking the stairs (ceiling)
 #   osg_climb_oracle  ablation: the staircase walked by the navmesh follower
 #   osg_affinity_llm  the affinity prior from the LLM for every class, grounded
 #   osg_affinity_flat ablation: no affinity prior
@@ -32,7 +34,7 @@ cd "$(dirname "$0")/.."
 set -a; [ -f docker/.env ] && . <(grep -vE '^(UID|GID)=' docker/.env); set +a
 umask 002
 
-ARM=${1:?arm: osg | osg_gate | osg_gate2 | osg_gate2_vet | osg_storey | osg_climb_oracle | osg_affinity_llm | osg_affinity_flat | osg_no_presence | osg_no_search | osg_no_vlm | ascent | ascent_yoloe}
+ARM=${1:?arm: osg | osg_gate | osg_gate2 | osg_gate2_vet | osg_storey | osg_climb | osg_storey_oracle | osg_climb_oracle | osg_affinity_llm | osg_affinity_flat | osg_no_presence | osg_no_search | osg_no_vlm | ascent | ascent_yoloe}
 SEED=${2:?seed, e.g. 42}
 shift 2
 OBS=${OBS:-outputs/maps_v2_ascent}
@@ -44,7 +46,7 @@ SCENES=("$@")
   00862-LT9Jq6dN3Ea 00873-bxsVRursffK 00878-XB4GS9ShBRE)
 
 case "$ARM" in
-  osg|osg_gate|osg_gate2|osg_gate2_vet|osg_storey|osg_climb_oracle|osg_affinity_llm|osg_affinity_flat|osg_no_presence|osg_no_search|osg_no_vlm)
+  osg|osg_gate|osg_gate2|osg_gate2_vet|osg_storey|osg_climb|osg_storey_oracle|osg_climb_oracle|osg_affinity_llm|osg_affinity_flat|osg_no_presence|osg_no_search|osg_no_vlm)
     PRESET=mfv2_$ARM
     MAX_PARALLEL=${MAX_PARALLEL:-2}
     if [ "$ARM" = osg_affinity_llm ] && [ ! -f outputs/affinity_cache_llm_only.json ] \

@@ -1,0 +1,21 @@
+# @package _global_
+#
+# `mfv2_osg_storey` with the climb walked along a route through the height
+# layer (`agent.climb_route`, mapping/stair_route.py) instead of at a carrot on
+# a flight blob, followed by turning toward the route rather than by the
+# PointNav policy. The step-3 arm: the storey decided by a belief, the stairs
+# taken by a route.
+#
+# Why (outputs/mfv2/diag_climb, seed 42): on 00821 the blob's foot sat 1.5 m
+# beside the true foot of a switchback and two 300-step climbs rose 0.01 m; on
+# 00800 the descent's "top" was 1.9 m down the flight. Steps between cells are
+# what a walker can take, so a switchback is routed round its landing and
+# furniture or the drop over a banister never joins the staircase.
+#
+#   python scripts/run_eval.py +experiment=mfv2_osg_climb ...same inputs as mfv2_osg
+defaults:
+  - mfv2_osg_storey
+  - _self_
+
+agent:
+  climb_route: true

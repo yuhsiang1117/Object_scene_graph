@@ -381,6 +381,8 @@ def load_obstacle_map(cfg, agent, scene: str) -> Optional[dict]:
     pairs = [dict(pair, osg_floor=int(keys[pair["osg_floor"]]))
              for pair in result["pasted"]]
     stored_first = result["stored_first"]
+    landings = (drop_prior_landings(cfg, agent)
+                if bool(getattr(cfg.ycb, "drop_prior_landings", False)) else [])
 
     return {
         "path": str(paths[0]),
@@ -395,9 +397,54 @@ def load_obstacle_map(cfg, agent, scene: str) -> Optional[dict]:
                        sorted({str(p.get("matched_by")) for p in pairs})),
         "storeys_seeded": seeded,
         "storeys_uncorroborated": loose,
+        "landings_dropped": landings,
         "union_snapshots": result["used"] if union else [],
         "union_skipped": result["skipped"],
     }
+
+
+def drop_prior_landings(cfg, agent) -> list:
+    """Take the prior's LANDINGS out of the storeys the agent can arrive on.
+
+    A pass-1 graph stores a landing as a storey: 00800's holds 3.16, 1.74 and
+    0.64 m for real floors at 3.16 and 0.16, 00821's holds -2.40 beside -3.47.
+    Every restored layer is a level to the floor estimator, so a descent
+    "arrives" when it passes 1.74 -- measured with the navmesh walking the
+    stairs (outputs/mfv2/diag_climb/oracle_00800): the estimator committed the
+    landing at 1.53, the climb ended there, and the agent climbed back up.
+
+    Landings are found as the storey belief finds them (greedy by mapped area,
+    a storey at least `floor.new_level_m` from every other), which is also why
+    this runs AFTER the obstacle paste: the area is the pasted occupancy. Not
+    by "no snapshot corroborates it" -- 00878's top storey is real and was
+    never walked in pass 1. A landing's tracks are re-filed to the storey their
+    height says; its level and layer go. The layer the agent starts on is
+    never dropped. Returns the dropped heights.
+    """
+    from ..exploration.storey_belief import StoreyBelief
+
+    stack = agent._floor_stack
+    layers = {int(k): (float(layer.floor_y), layer.costmap) for k, layer in stack._layers.items()}
+    belief = StoreyBelief(cfg.exploration, float(cfg.floor.new_level_m), stats={})
+    storeys, rep, _ = belief.storeys(layers)
+    landings = [k for k in layers if rep[k] != k and k != int(stack.current_id)]
+    if not landings:
+        return []
+    estimator = getattr(getattr(agent, "floors", None), "estimator", None)
+    layer_obj = getattr(agent, "object_layer", None)
+    if layer_obj is not None:
+        for track in layer_obj.tracks(include_blacklisted=True, include_proposals=True):
+            if int(getattr(track, "floor_key", -1)) in landings:
+                y = float(layer_obj.center_of(track)[1])
+                track.floor_key = int(StoreyBelief.storey_of_height(y, storeys))
+    dropped = []
+    for k in landings:
+        dropped.append(round(float(layers[k][0]), 2))
+        stack._layers.pop(k, None)
+        if estimator is not None:
+            estimator._levels.pop(k, None)
+            getattr(estimator, "_samples", {}).pop(k, None)
+    return dropped
 
 
 def tour_target_views(cfg, env, agent, episode) -> int:
