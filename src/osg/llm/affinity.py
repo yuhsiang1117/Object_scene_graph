@@ -14,7 +14,9 @@ trajectories to a geometric heuristic while adding a network dependency. A prior
 you can read and diff is the difference between using a model and trusting one.
 
 The static table always wins where it has an entry: a model must not quietly
-rewrite a prior someone chose deliberately.
+rewrite a prior someone chose deliberately. Switching the table off is a
+decision, not a drift -- `exploration.affinity_table: false` wraps the provider
+in `SoleAffinity`, and then the model ranks every class.
 """
 from __future__ import annotations
 
@@ -128,3 +130,31 @@ class AffinityProvider:
                                        encoding="utf-8")
         except OSError as exc:
             logger.warning("could not write affinity cache: %s", exc)
+
+
+class SoleAffinity:
+    """A source that answers for EVERY class (`exploration.affinity_table:
+    false`): `graph.priors.affinity_scores` skips the static table when its
+    source says `sole_source`. Wrapping an `AffinityProvider` makes the model
+    the whole prior; wrapping None makes the prior flat -- the ablation.
+    """
+
+    sole_source = True
+
+    def __init__(self, provider: Optional[AffinityProvider] = None) -> None:
+        self.provider = provider
+
+    def __call__(self, target: str) -> Optional[List[str]]:
+        return None if self.provider is None else self.provider(target)
+
+    def ground(self, present) -> None:
+        if self.provider is not None:
+            self.provider.ground(present)
+
+    @property
+    def n_calls(self) -> int:
+        return 0 if self.provider is None else self.provider.n_calls
+
+    @property
+    def n_errors(self) -> int:
+        return 0 if self.provider is None else self.provider.n_errors

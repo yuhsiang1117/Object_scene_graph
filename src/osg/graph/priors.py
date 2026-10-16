@@ -200,7 +200,9 @@ def affinity_scores(target: str, source=None, present=None) -> dict:
     abstained.
     """
     key = normalize_label(target)
-    ranked = CONTAINER_AFFINITY.get(key)
+    # A source that answers for every class (`llm.affinity.SoleAffinity`,
+    # `exploration.affinity_table: false`) replaces the table outright.
+    ranked = None if getattr(source, "sole_source", False) else CONTAINER_AFFINITY.get(key)
     if ranked is not None and present is not None:
         # Drop a category only when it is one the scene graph COULD have built
         # and this map does not have. A name the graph never produces at all

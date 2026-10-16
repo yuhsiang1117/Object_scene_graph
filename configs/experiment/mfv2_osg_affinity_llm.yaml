@@ -1,0 +1,27 @@
+# @package _global_
+#
+# `mfv2_osg` with the affinity prior (where does this class of object rest?)
+# coming from the LLM for EVERY class, ranked over the containers this map
+# actually holds -- the review's "affinity produced by the LLM before each
+# episode". The shipped arm uses the hand-written `graph.priors.CONTAINER_AFFINITY`
+# for the classes it lists (DualMap's targets: bowl, cracker box, tin can,
+# banana, ...) and the LLM only for the rest.
+#
+# Its own cache file, seeded from outputs/affinity_cache.json before the run
+# (scripts/run_mfv2.sh does it), so the classes both arms ask the model about
+# get the same answer and the running arms' cache is never written to.
+#
+# Measured on Benchmark v2 (scripts/describe_benchmark.py, seed 42): of the 36
+# relocations, 20 land on a container category in the shipped prior's top 3
+# for that class, and 33 on one it ranks at all.
+#
+#   python scripts/run_eval.py +experiment=mfv2_osg_affinity_llm ...same inputs as mfv2_osg
+defaults:
+  - mfv2_osg
+  - _self_
+
+exploration:
+  affinity_llm: true
+  affinity_table: false
+  affinity_grounded: true
+  affinity_cache: outputs/affinity_cache_llm_only.json

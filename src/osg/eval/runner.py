@@ -124,7 +124,7 @@ def run_eval(cfg) -> dict:
         "algorithm": {
             # Explicit field inventory: the values are populated by the typed
             # serializer, while these names make additions reviewable in diffs.
-            # "affinity_cache" "affinity_grounded" "affinity_llm"
+            # "affinity_cache" "affinity_grounded" "affinity_llm" "affinity_table"
             # "approach_abandon_steps" "approach_false_arrival_m"
             # "approach_navigable_goal" "approach_retarget_m"
             # "approach_close_clearance_m" "approach_close_source"

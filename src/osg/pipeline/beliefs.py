@@ -35,10 +35,17 @@ def build_affinity_prior(cfg):
     surface in the house -- the undirected wandering C3 exists to replace.
     """
     ec = cfg.exploration
-    if ec is None or not ec.affinity_llm:
+    if ec is None:
         return None
+    table = bool(getattr(ec, "affinity_table", True))
+    if not ec.affinity_llm:
+        if table:
+            return None
+        from ..llm.affinity import SoleAffinity
+
+        return SoleAffinity(None)           # no table, no model: a flat prior
     from ..graph.containers import CONTAINER_CATEGORIES
-    from ..llm.affinity import AffinityProvider
+    from ..llm.affinity import AffinityProvider, SoleAffinity
     from ..llm.client import ChatClient
 
     client = None
@@ -47,10 +54,11 @@ def build_affinity_prior(cfg):
             cfg.llm.base_url, cfg.llm.text_model, cfg.llm.api_key,
             cfg.llm.timeout_s, cfg.llm.max_image_px, cfg.llm.send_response_format,
         )
-    return AffinityProvider(
+    provider = AffinityProvider(
         client, sorted(CONTAINER_CATEGORIES),
         cache_path=str(ec.affinity_cache or "") or None,
     )
+    return provider if table else SoleAffinity(provider)
 
 
 def build_presence_filter(cfg):

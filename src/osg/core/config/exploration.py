@@ -248,6 +248,15 @@ class ExplorationConfig:
     # very surfaces that were never inspected.
     search_unreached_credit: float = 0.25
     affinity_llm: bool = False
+    # The hand-written table (`graph.priors.CONTAINER_AFFINITY`) is
+    # authoritative where it has the class, and the LLM answers only for the
+    # rest -- on the YCB benchmarks the table covers DualMap's targets (bowl,
+    # cracker box, tin can, banana, ...) and the LLM the multi-floor ones. The
+    # review asked for the prior to come from the model for every episode:
+    # false skips the table, so with `affinity_llm` the LLM ranks every class
+    # (grounded on this map's containers under `affinity_grounded`), and
+    # without it there is no affinity at all -- the flat-prior ablation.
+    affinity_table: bool = True
     # Rank affinity over the container categories the MAP actually contains,
     # rather than over all of CONTAINER_CATEGORIES.
     #
