@@ -238,7 +238,7 @@ def run_eval(cfg) -> dict:
             # "storey_cover_radius_m" "storey_block_m" "storey_rejection_discount"
             # "climb_route" "climb_route_start_m" "climb_route_lookahead_m"
             # "climb_route_deadband_deg" "climb_route_replan_steps" "climb_route_stall_steps"
-            # "climb_route_min_gain_m"
+            # "climb_route_min_gain_m" "climb_route_start_gain_m" "climb_route_probe_steps"
             # "drop_prior_landings"
             **_algorithm_fingerprint(cfg),
         },

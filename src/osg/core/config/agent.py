@@ -408,6 +408,11 @@ class AgentConfig:
     # ended 0.85 m up, so a metre was never on offer. The walk is re-planned
     # as the eyes rise.
     climb_route_min_gain_m: float = 0.3
+    # A climb STARTS on a route only if it reaches the storey or gains this
+    # much: 00878's 0.3 m route up something step-like began three climbs.
+    climb_route_start_gain_m: float = 0.5
+    # How often a storey request with nothing to drive to tries a route.
+    climb_route_probe_steps: int = 10
     # Stamp the detector's `stairs` masks into the stair-evidence grids on every
     # keyframe. Until now that happened only on the single frame of a periodic
     # look-down, and `down_look_every` defaults to 0, so on every ycb preset the

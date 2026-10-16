@@ -84,9 +84,10 @@ class ClimbPolicy:
         self._route_bumps: list = []
         self._route_scanned = False
         self._route_explores = 0
+        self._route_best_dy = 0.0
+        self._route_seek_step = -100
         self._route_last_xy = None
         self._route_failures = 0
-        self._route_best_togo = float("inf")
         self._route_progress_step = 0
 
     # -------------------------------------------------- the agent's own state
@@ -201,9 +202,9 @@ class ClimbPolicy:
         self._route_short = False
         self._route_scanned = False
         self._route_explores = 0
+        self._route_best_dy = 0.0
         self._route_last_xy = None
         self._route_failures = 0
-        self._route_best_togo = float("inf")
         self._route_progress_step = int(self.step_count)
         # The stair cells near the agent, for `_left_the_stairs`; None when the
         # detector has no evidence here, in which case the height test decides.
@@ -391,6 +392,47 @@ class ClimbPolicy:
         self.stats[key] = self.stats.get(key, 0) + 1
         return route
 
+    def route_to_storey(self, frame: FrameData, target_key: int):
+        """A pursuit along a stair route to the storey asked for, or None.
+
+        For when `FloorPolicy.try_switch` has nothing to drive to: the old
+        flight search needs a blob it accepts from where the agent happens to
+        be, and on 00862 (seed 42, static 50007) the belief asked for the
+        lower storey 37 times over 1000 steps and no switch was ever tried.
+        A route that leaves the floor within the planning radius is a
+        staircase walked to, not a sightline. Rate-limited to every
+        `climb_route_probe_steps`."""
+        if not self._route_on:
+            return None
+        every = int(getattr(self.cfg.agent, "climb_route_probe_steps", 10))
+        if self.step_count - self._route_seek_step < every:
+            return None
+        self._route_seek_step = int(self.step_count)
+        layer = self.floors.stack.by_key(int(target_key))
+        if layer is None:
+            return None
+        target_y = float(layer.floor_y)
+        here = float(self.floors.estimator.height_of(int(self.floors.current_id)))
+        direction = 1 if target_y > here else -1
+        agent_xy = frame.camera_position[list(PLANE)]
+        saved = self.nav._goal_floor_y_cache
+        self.nav._goal_floor_y_cache = target_y
+        try:
+            route = self._plan_route(frame, agent_xy, direction)
+        finally:
+            self.nav._goal_floor_y_cache = saved
+        if route is None or (not route.reaches_target
+                             and route.gain_m < float(getattr(
+                                 self.cfg.agent, "climb_route_start_gain_m", 0.5))):
+            return None
+        off = np.flatnonzero(np.abs(route.heights - here) > 0.15)
+        goal = route.xy[off[0]] if len(off) else route.end_xy
+        goal = self.floors.pursue_route(frame, int(self.step_count), goal, target_y,
+                                        "up" if direction > 0 else "down")
+        if goal is not None:
+            self.stats["climb_route_seek"] = self.stats.get("climb_route_seek", 0) + 1
+        return goal
+
     def _route_from_here(self, frame: FrameData, agent_xy: np.ndarray) -> bool:
         """Is there a walk from where the agent stands onto the stairs, within
         `climb_route_start_m`? Then the climb starts here, wherever the pursuit
@@ -404,6 +446,12 @@ class ClimbPolicy:
             return False
         route = self._plan_route(frame, agent_xy, direction)
         if route is None:
+            return False
+        if not route.reaches_target and route.gain_m < float(getattr(
+                self.cfg.agent, "climb_route_start_gain_m", 0.5)):
+            # 00878 (seed 42, static 50003): a 0.3 m "route" up something
+            # step-like 4 m from the stairs started three climbs, two of
+            # which pressed into it for their whole 300-step budget.
             return False
         floor_y = float(self.floors.estimator.height_of(int(self.floors.current_id)))
         start_m = float(getattr(self.cfg.agent, "climb_route_start_m", 2.5))
@@ -499,7 +547,6 @@ class ClimbPolicy:
                         self._route_explores += 1
                         self._route_scanned = False      # look again when there
                         self._route = route = wander
-                        self._route_best_togo = float("inf")
                         adopted = True
                         self.stats["climb_route_explore"] = (
                             self.stats.get("climb_route_explore", 0) + 1)
@@ -511,7 +558,6 @@ class ClimbPolicy:
                 self._route_failures = 0
                 self._route_scanned = False
                 self._route = route = fresh
-                self._route_best_togo = float("inf")
         i = int(np.argmin(np.linalg.norm(route.xy - agent_xy, axis=1)))
         look = float(getattr(self.cfg.agent, "climb_route_lookahead_m", 0.5))
         if self._route_short:
@@ -586,13 +632,13 @@ class ClimbPolicy:
                 and abs(standing - float(route.heights[-1])) < 0.1)
 
     def _route_stalled(self, agent_xy: np.ndarray) -> bool:
-        """No progress along the route -- walking distance still to go -- for
-        `climb_route_stall_steps`."""
-        route = self._route
-        i = int(np.argmin(np.linalg.norm(route.xy - agent_xy, axis=1)))
-        togo = float(route.cost_m[-1] - route.cost_m[i])
-        if togo < self._route_best_togo - 0.2:
-            self._route_best_togo = togo
+        """No HEIGHT gained in the climb's direction for
+        `climb_route_stall_steps` -- not "no progress along the route", which
+        every re-plan reset: 00878's two budget-length climbs re-planned 133
+        times and never looked stalled. The look-round and the walk to a
+        landing's far end take ~25 steps between gains."""
+        if self._climb_max_dy > self._route_best_dy + 0.1:
+            self._route_best_dy = float(self._climb_max_dy)
             self._route_progress_step = int(self.step_count)
         return int(self.step_count) - self._route_progress_step > int(
             getattr(self.cfg.agent, "climb_route_stall_steps", 40))

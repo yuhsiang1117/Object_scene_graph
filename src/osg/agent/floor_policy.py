@@ -532,6 +532,32 @@ class FloorPolicy:
             return False
         return True
 
+    def pursue_route(self, frame, step: int, goal_xy, target_y: float, kind: str):
+        """Start a pursuit toward where a stair ROUTE leaves this floor
+        (`agent.climb_route`), when `try_switch` found no flight or portal to
+        the storey asked for. Bookkept exactly as a flight pursuit, so the
+        deadline, the failure memory and the climb's direction all apply; the
+        flight is a stand-in with no cells, which every flight-cell carrot
+        reads as "none"."""
+        from types import SimpleNamespace
+
+        goal_xy = np.asarray(goal_xy, dtype=float)
+        if self._portal_failed_here(goal_xy):
+            return None
+        self.pursuing = True
+        self.pursuit_flight = SimpleNamespace(
+            kind=str(kind), cells_rc=np.zeros((0, 2), dtype=int), heights=np.zeros(0),
+            n_cells=0, foot_xy=goal_xy.copy(), top_xy=goal_xy.copy(), span_m=0.0, path_m=None)
+        self._pursuit_goal_xy = goal_xy.copy()
+        self._portal_start_y = float(frame.camera_position[1])
+        self._portal_step = step
+        self.switch_policy.note_switch(step)
+        self.stats["floor_switch_attempts"] = self.stats.get("floor_switch_attempts", 0) + 1
+        self.stats["route_switch_attempts"] = self.stats.get("route_switch_attempts", 0) + 1
+        self.portal_log.append((step, [round(float(x), 2) for x in goal_xy], f"route_{kind}", 0))
+        return PortalGoal(goal_xy=goal_xy.copy(), target_y=float(target_y),
+                          deadline_steps=self.cfg.floor.portal_deadline_steps)
+
     def end_pursuit(self, reason: str) -> None:
         self.pursuing = False
         self.stats[f"portal_end_{reason}"] = self.stats.get(f"portal_end_{reason}", 0) + 1

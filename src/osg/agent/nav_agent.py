@@ -1514,6 +1514,8 @@ class NavAgent:
                 presence_of=self._presence_for_floor_evidence(),
                 stair_xyz=stair_xyz,
             )
+            if portal is None and target_floor is not None:
+                portal = self.climb.route_to_storey(frame, int(target_floor))
         if portal is None:
             return False
         self._goal_xy = portal.goal_xy

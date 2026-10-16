@@ -173,7 +173,15 @@ class ExplorationConfig:
     # floor means having seen the object there (the discount 1 - d * cover).
     storey_detect_prob: float = 0.85
     # Ask for another storey once its belief is this many times this one's.
-    storey_switch_ratio: float = 1.3
+    # Leaving pays only when the other storey's mass beats this one's by the
+    # climb's cost against the time left here, ~1 + T_climb / T_rest: climbs
+    # took 61-124 steps in the step-3 smokes and fail often enough to make
+    # ~250 the expected cost, against 300-400 steps to finish a storey, so
+    # 1.6-1.8. Smoke (outputs/mfv2/_smoke_storey, 00873 cross 50003, the
+    # pitcher moved within its storey): at 1.3, with no target track left
+    # anywhere, the coverage term asked to leave with 38% of the storey
+    # searched; at 1.8 it waits for ~55%.
+    storey_switch_ratio: float = 1.8
     storey_cover_radius_m: float = 2.0
     # Each identity rejection (STOP gate, unreachable verdict) multiplies a
     # track's weight in the storey belief by this; a failed attempt or the
