@@ -61,6 +61,11 @@ class Profiler:
                 "median_ms": 1000.0 * arr[n // 2],
                 "max_ms": 1000.0 * arr[-1],
                 "total_s": sum(arr),
+                # A real-time claim is about the tail, not the mean: the review
+                # asked for latency, and a 1-in-10 slow frame is what a robot
+                # feels. Nearest-rank, so the value is one actually measured.
+                "p90_ms": 1000.0 * arr[min(n - 1, int(0.9 * n))],
+                "p99_ms": 1000.0 * arr[min(n - 1, int(0.99 * n))],
             }
         return out
 
@@ -75,9 +80,11 @@ class Profiler:
         rep = self.report()
         with open(path, "w", newline="") as f:
             w = csv.writer(f)
-            w.writerow(["module", "count", "mean_ms", "median_ms", "max_ms", "total_s"])
+            w.writerow(["module", "count", "mean_ms", "median_ms", "max_ms", "total_s",
+                        "p90_ms", "p99_ms"])
             for name, r in sorted(rep.items()):
                 w.writerow(
                     [name, r["count"], f"{r['mean_ms']:.2f}", f"{r['median_ms']:.2f}",
-                     f"{r['max_ms']:.2f}", f"{r['total_s']:.2f}"]
+                     f"{r['max_ms']:.2f}", f"{r['total_s']:.2f}",
+                     f"{r['p90_ms']:.2f}", f"{r['p99_ms']:.2f}"]
                 )

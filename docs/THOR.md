@@ -134,6 +134,31 @@ Recording `rotate_deg` changed a pinned default, so both goldens were regenerate
 the two Stretch ones: `configs/config.yaml` puts the `ros2` group in *every* composition, so its
 value is part of every hash, though no simulator arm reads it.
 
+### Measuring latency
+
+The review asked for real-world latency, and no Thor number exists yet: the simulator's
+(`outputs/mfv2/osg_s42`, RTX 4090 shared with two other evals and the model servers) is a
+*contended* 1.74 Hz, median step 463 ms, region proposals 33% and the object layer 25% of it.
+Every robot run writes the same profiler output as a simulator run, so the measurement is a
+normal search run on a quiet device and one script:
+
+```bash
+# nothing else on the Thor's GPU (no simulator, no second pipeline)
+python scripts/run_robot.py +experiment=stretch3_search ros2.map_tag=lab ros2.target=cup
+python scripts/analyze_latency.py outputs/<that run>          # the table
+# attribution run: charge queued CUDA work to the stage that queued it (slower; do not
+# quote its rate, quote its shares)
+python scripts/run_robot.py +experiment=stretch3_search ros2.map_tag=lab ros2.target=cup \
+    eval.profile_sync=true
+```
+
+`analyze_latency.py` prints per stage the calls per control step, mean / p50 / p90 / max ms
+and the share of control-loop time, then the control rate (mean, p50, p90), then the
+**synchronous** model calls separately. Report those as they are: the arrival-time absence
+reading asks the VLM inside the step (27 s mean on NIM in simulation, 2 calls in 12
+episodes), which is a stall, not a rate. The frontier ranker and floor LLM are asynchronous
+and never block a step; their latency is the reply time, in `episodes.jsonl` (`llm_calls`).
+
 ### Watching it: two windows
 
 The bridge is the only ROS process on the Thor, so it is the only place a viewer can run. Both
