@@ -456,15 +456,19 @@ class ClimbPolicy:
         delta = goal - agent_xy
         err = float(np.arctan2(delta[1], delta[0]) - agent_heading(frame.T_wc))
         err = float(np.degrees((err + np.pi) % (2 * np.pi) - np.pi))
+        # In the (x, z) plane `agent_heading` measures, a POSITIVE error is a
+        # turn to the RIGHT -- `WaypointController` (planning/controller.py)
+        # has always turned that way. (`_climb_align_action` below turns left
+        # for a positive error; it is off in every current preset.)
         if self._route_blocked >= 2:
             # Pressing into a wall or a banister: turn off it and look again.
             self._route_blocked = 0
             self._route_plan_step = -100
             self.stats["climb_route_unblock"] = self.stats.get("climb_route_unblock", 0) + 1
-            return "turn_left" if err >= 0 else "turn_right"
+            return "turn_right" if err >= 0 else "turn_left"
         deadband = float(getattr(self.cfg.agent, "climb_route_deadband_deg", 20.0))
         if abs(err) > deadband and float(np.linalg.norm(delta)) > 0.15:
-            return "turn_left" if err > 0 else "turn_right"
+            return "turn_right" if err > 0 else "turn_left"
         return FORWARD_ACTION
 
     def _route_arrived(self, frame: FrameData, agent_xy: np.ndarray) -> bool:
