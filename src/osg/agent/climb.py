@@ -285,6 +285,10 @@ class ClimbPolicy:
                 self._carrot_xy = None
                 self._climb_last_dist = None
                 self._climb_paused_steps = 0
+        oracle = self._oracle_action(frame, agent_xy)
+        if oracle is not None:
+            return self._traced_climb(frame, agent_xy, oracle,
+                                      standing=cam_y - float(self.cfg.agent.camera_height), dy=dy)
         # Descending: tilt the camera down once so the carrot sees the treads
         # below rather than the far wall (ASCENT's phase 2, `:1120-1127`).
         align = self._climb_align_action(frame, agent_xy)
@@ -296,6 +300,35 @@ class ClimbPolicy:
         return self._traced_climb(
             frame, agent_xy, self._carrot_action(frame, agent_xy),
             standing=cam_y - float(self.cfg.agent.camera_height), dy=dy)
+    def _oracle_action(self, frame: FrameData, agent_xy: np.ndarray) -> Optional[str]:
+        """`agent.climb_oracle`: Habitat's follower walks the staircase.
+
+        The goal is the pursued flight's far end -- its top on an ascent, its
+        foot on a descent -- snapped at the target storey's height, or at that
+        end's own tread height when no storey is known. None (arrived, or the
+        follower refuses) hands the step back to the sensor-only controller,
+        whose end tests then judge the climb as they always do.
+        """
+        fn = getattr(self.nav, "_climb_nav_fn", None)
+        if fn is None:
+            return None
+        up = self._climb_direction >= 0
+        flight = getattr(self.floors, "pursuit_flight", None)
+        far_y = None
+        if flight is not None and getattr(flight, "n_cells", 0):
+            far = np.asarray(flight.top_xy if up else flight.foot_xy, dtype=float)
+            heights = np.asarray(flight.heights, dtype=float)
+            if heights.size:
+                far_y = float(heights.max() if up else heights.min())
+        else:
+            far = np.asarray(self._climb_goal_xy, dtype=float)
+        target_y = self.nav._goal_floor_y_cache
+        floor_y = float(target_y) if target_y is not None else far_y
+        action = fn(far, floor_y)
+        key = "climb_oracle_steps" if action is not None else "climb_oracle_none"
+        self.stats[key] = self.stats.get(key, 0) + 1
+        return action
+
     def _traced_climb(self, frame: FrameData, agent_xy, action: str,
                       *, standing, dy: float) -> str:
         """Record what this climb step did, when the run asked for it.

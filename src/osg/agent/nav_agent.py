@@ -99,6 +99,7 @@ class NavAgent:
         nav_fn=None,
         reachable_fn=None,
         nearest_navigable_fn=None,
+        climb_nav_fn=None,
         pointnav=None,
         ranker=None,
         floor_planner=None,
@@ -125,6 +126,9 @@ class NavAgent:
         # nearest_navigable_fn(xy, floor_y) -> the navmesh point nearest to xy
         # on the agent's island, for closing the last metre of an approach.
         self._nearest_navigable_fn = nearest_navigable_fn
+        # The privileged follower for the staircase alone (`agent.climb_oracle`,
+        # an ablation); None everywhere else.
+        self._climb_nav_fn = climb_nav_fn
         self.navigation = resolve_navigation(cfg.agent)
         self._use_navmesh = nav_fn is not None and self.navigation == "navmesh"
         if pointnav is None and self.navigation == "pointnav":

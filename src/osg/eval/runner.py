@@ -165,7 +165,7 @@ def run_eval(cfg) -> dict:
             # "cross_floor" "floor_stairs" "use_prior_stairs" "prefer_prior_stairs"
             # "prior_stairs_override_gate" "portal_failure_memory" "climb_targets" "hold_pursuit" "dwell_on_arrival" "no_level_on_flight"
             # "climb_relink_flights" "flight_relink_span_m"
-            # "climb_enabled" "stair_evidence_every_kf" "down_look_every"
+            # "climb_enabled" "climb_oracle" "stair_evidence_every_kf" "down_look_every"
             # "climb_cell_carrot" "climb_blocked_turn_after" "climb_max_steps"
             # "climb_flight_carrot" "flight_min_span_m" "flight_min_cells"
             # "explore_after_failed_attempt_steps"
@@ -300,6 +300,10 @@ def run_eval(cfg) -> dict:
             # arm built to price what the closing walk is worth ran bit-identical
             # to the arm without it, which is how this was found.
             nearest_navigable_fn=getattr(env, "nearest_navigable_xy", None),
+            # The privileged follower for the staircase only, when the climb
+            # ablation asks for it (`agent.climb_oracle`).
+            climb_nav_fn=(env.action_to_goal
+                          if bool(getattr(cfg.agent, "climb_oracle", False)) else None),
         )
         debug = DebugVideo(cfg, out_dir, ep_tag) if cfg.eval.debug_frames else None
         outcome = run_episode(cfg, env, agent, episode, target, frame, detector, debug)

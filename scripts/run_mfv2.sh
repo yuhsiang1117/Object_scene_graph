@@ -11,6 +11,7 @@
 #            multi-floor arm loads them (scripts/run_mf5_pass2.sh)
 #   osg_gate `mfv2_osg_gate`: the same, with the STOP gate -- its A/B partner
 #   osg_gate2 `mfv2_osg_gate2`: the gate judging the approach's close view
+#   osg_climb_oracle  ablation: the staircase walked by the navmesh follower
 #   ascent   `mfv2_ascent`, no prior map; needs scripts/serve_perception.sh
 #   ascent_yoloe  `mfv2_ascent_yoloe`: the same policy on the OSG arm's detector
 #
@@ -26,7 +27,7 @@ cd "$(dirname "$0")/.."
 set -a; [ -f docker/.env ] && . <(grep -vE '^(UID|GID)=' docker/.env); set +a
 umask 002
 
-ARM=${1:?arm: osg | osg_gate | osg_gate2 | ascent | ascent_yoloe}
+ARM=${1:?arm: osg | osg_gate | osg_gate2 | osg_climb_oracle | ascent | ascent_yoloe}
 SEED=${2:?seed, e.g. 42}
 shift 2
 OBS=${OBS:-outputs/maps_v2_ascent}
@@ -38,7 +39,7 @@ SCENES=("$@")
   00862-LT9Jq6dN3Ea 00873-bxsVRursffK 00878-XB4GS9ShBRE)
 
 case "$ARM" in
-  osg|osg_gate|osg_gate2)
+  osg|osg_gate|osg_gate2|osg_climb_oracle)
     PRESET=mfv2_$ARM
     MAX_PARALLEL=${MAX_PARALLEL:-2}
     INPUTS=("ycb.obstacle_map_in=$OBS" ycb.obstacle_map_union=true

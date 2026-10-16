@@ -281,7 +281,7 @@ def probe_served_models(cfg) -> None:
 
 def build_agent(
     cfg, components: dict, target: str, *, keyframe_dir=None, profiler=None,
-    nav_fn=None, reachable_fn=None, nearest_navigable_fn=None,
+    nav_fn=None, reachable_fn=None, nearest_navigable_fn=None, climb_nav_fn=None,
 ):
     """Build one policy behind the common ``act(frame)`` contract."""
     policy = components["policy"]
@@ -291,6 +291,9 @@ def build_agent(
 
         agent_cls = NavAgent
         extra["nearest_navigable_fn"] = nearest_navigable_fn
+        extra["climb_nav_fn"] = climb_nav_fn
+    elif climb_nav_fn is not None:
+        raise ValueError("agent.climb_oracle is implemented for the nav_agent policy only")
     elif policy == "ascent":
         from ..agent.ascent_agent import AscentAgent
 

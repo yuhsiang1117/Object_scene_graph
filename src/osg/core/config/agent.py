@@ -377,6 +377,15 @@ class AgentConfig:
     # staircase at all. Off by default because it changes what the agent does
     # on arrival at a portal.
     climb_enabled: bool = False
+    # AN ABLATION, NOT A MOVER: once a climb has started, Habitat's navmesh
+    # follower -- privileged, `agent.navigation=navmesh`'s own -- drives the
+    # staircase to the pursued flight's far end at the target storey's height.
+    # Everything that decides to climb, finds the stairs and gets to them stays
+    # sensor-only. It prices the climb: on Benchmark v2 seed 42 about 15 of 25
+    # cross-storey OSG episodes chose to change storey and never rose more than
+    # ~0.3 m, spending ~370 steps on a flight. Never compare an arm with this on
+    # against a sensor-only one as if it were one.
+    climb_oracle: bool = False
     # Stamp the detector's `stairs` masks into the stair-evidence grids on every
     # keyframe. Until now that happened only on the single frame of a periodic
     # look-down, and `down_look_every` defaults to 0, so on every ycb preset the

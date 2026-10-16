@@ -38,6 +38,7 @@
   "agent.climb_enabled": false,
   "agent.climb_flight_carrot": false,
   "agent.climb_max_steps": 80,
+  "agent.climb_oracle": false,
   "agent.climb_relink_flights": false,
   "agent.climb_to_target_storey_tol_m": 0.0,
   "agent.climb_turn_deadband_deg": 0.0,
