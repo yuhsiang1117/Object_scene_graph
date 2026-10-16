@@ -23,3 +23,13 @@ defaults:
 detector:
   gdino_target_url: http://localhost:13184/gdino
   gdino_target_conf: 0.4
+
+eval:
+  # The protocol's three attempts (PAPER.md, Metrics), as the OSG arm has them.
+  # v1's ASCENT arm and this preset's first Benchmark v2 runs (snapshot 8be0651,
+  # outputs/mfv2/ascent_s4*) composed to ONE: every ASCENT episode ended at its
+  # first wrong STOP while OSG had two more. A failed attempt re-arms ASCENT
+  # through its own false-positive path (`AscentNavAgent.rearm`). The
+  # single-attempt runs still give first-attempt SR, which
+  # `scripts/analyze_multifloor.py` reports for every arm.
+  attempts: 3

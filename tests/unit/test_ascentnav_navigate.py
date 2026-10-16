@@ -300,3 +300,62 @@ def test_no_stop_is_possible_during_the_opening_turns():
     actions = [a.act(f) for _ in range(13)]
     assert actions == ["turn_left"] * 13
     assert a._done_initializing is True
+
+
+# ------------------------------------------- a failed attempt under 3 attempts
+
+def test_a_failed_attempt_burns_the_cloud_it_stopped_on():
+    """DualMap's protocol grants three attempts; the reference has one. Without
+    `rearm` the next act re-derives the same goal from the same cloud and STOPs
+    again, so the episode loop (`eval/episode.py`) would spend all three on one
+    object. The hook is ASCENT's own false-positive path (`:915-922`)."""
+    a = _committed()
+    a._double_check_goal = True
+    a.object_map._map[300:310, 300:310] = 1
+    a._state = "done"
+    a.rearm(1000)
+    assert a.object_map.clouds == {}
+    assert not a.object_map.has_object(a.target)
+    assert a.object_map._disabled_object_map[300:310, 300:310].all()
+    assert not a.object_map._map.any()
+    assert a._try_to_navigate is False and a._try_to_navigate_step == 0
+    assert a._double_check_goal is True, "the latched gate carries over"
+    assert a._state == "explore"
+    assert a.stats["give_up_failed_attempt"] == 1
+    assert a.giveup_log[-1][1] == "failed_attempt"
+
+
+def test_the_episode_loop_reaches_the_ascent_rearm():
+    """`rearm_after_failed_attempt` finds `rearm` by name; the ASCENT agent has
+    no object layer, so this is the only thing it does for this policy."""
+    from types import SimpleNamespace
+
+    from osg.eval.attempts import rearm_after_failed_attempt
+
+    a = _committed()
+    a.object_map._map[300:310, 300:310] = 1
+    cfg = SimpleNamespace(agent=SimpleNamespace(max_steps=1000),
+                          verification=SimpleNamespace())
+    rearm_after_failed_attempt(a, cfg)
+    assert a.object_map.clouds == {}
+    assert a.stats["give_up_failed_attempt"] == 1
+
+
+def test_a_swapped_in_detector_does_not_join_ascents_stair_fusion():
+    """With ASCENT's own stair detector present, a target detector that names
+    "stairs" (YOLOE, `mfv2_ascent_yoloe`) must not add to the stair mask --
+    D-FINE never could, so the reference fusion is GroundingDINO's alone."""
+    from .test_ascentnav_stairs import _det
+
+    class _Stair:
+        def mask(self, rgb):
+            return np.zeros((480, 640), bool)
+
+    a = _committed()
+    a.stair_detector = _Stair()
+    raw = [_det(score=0.9, box=(0, 0, 60, 60), label="stairs")]
+    m = a._stair_det_mask(raw, np.zeros((480, 640, 3), np.uint8))
+    assert m is not None and not m.any()
+    a.stair_detector = None
+    m = a._stair_det_mask(raw, np.zeros((480, 640, 3), np.uint8))
+    assert m[0:60, 0:60].all(), "without one, the detector's stairs still count"

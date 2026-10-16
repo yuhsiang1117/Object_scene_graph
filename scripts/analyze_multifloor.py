@@ -107,17 +107,24 @@ def scored(record: Dict[str, Any]) -> Dict[str, Any]:
     """Success under both rules, from the episode's own stop poses."""
     layout = record.get("authored_layout") or {}
     floor_y = target_floor_y(layout)
-    horizontal = on_storey = False
-    for attempt in attempts_of(record)[:MAX_ATTEMPTS]:
+    horizontal = on_storey = first = False
+    for i, attempt in enumerate(attempts_of(record)[:MAX_ATTEMPTS]):
         within = float(attempt["distance_horizontal_m"]) <= SUCCESS_M
         horizontal |= within
         if within and floor_y is not None:
-            on_storey |= abs(float(attempt["position"][1]) - floor_y) <= FLOOR_DY_M
-        elif within:
-            on_storey = True        # no floor to check against: horizontal rule
+            hit = abs(float(attempt["position"][1]) - floor_y) <= FLOOR_DY_M
+        else:
+            hit = within            # no floor to check against: horizontal rule
+        on_storey |= hit
+        first |= hit and i == 0
     if not attempts_of(record):     # a record without the rule's block
         horizontal = on_storey = bool(record.get("success"))
-    return {"success": int(on_storey), "success_horizontal": int(horizontal)}
+        first = on_storey and int(record.get("attempts_used") or 1) == 1
+    # First-attempt success is what an arm allowed ONE attempt scores: the
+    # trajectory up to the first STOP does not depend on how many follow, so it
+    # compares a single-attempt run with a three-attempt one without a rerun.
+    return {"success": int(on_storey), "success_horizontal": int(horizontal),
+            "success_first": int(first)}
 
 
 def commits(record: Dict[str, Any]) -> List[Tuple[str, str]]:
@@ -195,9 +202,11 @@ def report(runs: "OrderedDict[str, List[Dict[str, Any]]]", flips: bool) -> Dict[
     names = list(runs)
     table(
         "1. Success on the object's storey (horizontal-only rule beside it)",
-        ["run", "n", "SR, same storey [Wilson 95%]", "SR, horizontal only", "rejected"],
+        ["run", "n", "SR, same storey [Wilson 95%]", "SR, first attempt",
+         "SR, horizontal only", "rejected"],
         [[name, str(len(rows)),
           pct(sum(r["success"] for r in rows), len(rows)),
+          pct(sum(r["success_first"] for r in rows), len(rows)),
           pct(sum(r["success_horizontal"] for r in rows), len(rows)),
           str(sum(r["success_horizontal"] - r["success"] for r in rows))]
          for name, rows in runs.items()],

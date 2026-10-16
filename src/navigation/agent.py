@@ -517,9 +517,14 @@ class AscentNavAgent:
         m = None
         if self.stair_detector is not None:
             m = self.stair_detector.mask(rgb)
-        for d in raw:
-            if d.label.lower().strip() in ("stairs", "stair", "staircase", "steps"):
-                m = d.mask.astype(bool) if m is None else (m | d.mask.astype(bool))
+        else:
+            # Only without ASCENT's own stair detector. D-FINE has no "stairs"
+            # class, so under it this loop never fired; an open-vocabulary
+            # target detector swapped in (`mfv2_ascent_yoloe`) does name stairs,
+            # and must not change the stair fusion it was not swapped in for.
+            for d in raw:
+                if d.label.lower().strip() in ("stairs", "stair", "staircase", "steps"):
+                    m = d.mask.astype(bool) if m is None else (m | d.mask.astype(bool))
         if self.stair_up_mode != "ascent" and self._last_seg is not None:
             rednet = self._last_seg == STAIR_CLASS_ID
             m = rednet if m is None else (m | rednet)
@@ -812,6 +817,37 @@ class AscentNavAgent:
         self.stats[f"give_up_{why}"] = self.stats.get(f"give_up_{why}", 0) + 1
         self._state = "explore"
         return self._explore(None, robot_xy, heading)
+
+    def rearm(self, max_steps: int) -> None:
+        """A failed attempt under a multi-attempt protocol (`eval/attempts.py`).
+
+        The reference has one attempt: its STOP ends the episode. DualMap's
+        protocol, which the YCB benchmarks score, grants three, and without
+        this hook the next `act` re-derives the same goal from the same cloud
+        and STOPs on it again -- three attempts spent in three steps, which is
+        the single-attempt arm under another name. So a failed attempt is
+        handled exactly as ASCENT handles its own "might be a false positive"
+        (`ascent_policy.py:915-922`): clear the cloud, burn its cells, explore.
+        Nothing else is reset -- the maps, the floors, the latched
+        double-check gate and the step budget carry over, as for OSG's
+        `rearm`. The next `act` explores, because there is no goal left.
+        """
+        self._best_view = None
+        om = self.object_map
+        poses = getattr(self.obstacle_map, "_camera_positions", None) or []
+        robot_xy = poses[-1][:2] if len(poses) else (np.nan, np.nan)
+        self.giveup_log.append((self.step_count, "failed_attempt",
+                                [round(float(v), 2) for v in robot_xy]))
+        om.clouds = {}
+        self._try_to_navigate = False
+        self._try_to_navigate_step = 0
+        om._disabled_object_map[om._map == 1] = 1
+        om._map.fill(0)
+        self.cur_dis_to_goal = float("inf")
+        self.min_distance_xy = float("inf")
+        self.approach_stop_reason = None
+        self.stats["give_up_failed_attempt"] = self.stats.get("give_up_failed_attempt", 0) + 1
+        self._state = "explore"
 
     # ---------------------------------------------------------------- stairs
 

@@ -11,6 +11,7 @@
 #            multi-floor arm loads them (scripts/run_mf5_pass2.sh)
 #   osg_gate `mfv2_osg_gate`: the same, with the STOP gate -- its A/B partner
 #   ascent   `mfv2_ascent`, no prior map; needs scripts/serve_perception.sh
+#   ascent_yoloe  `mfv2_ascent_yoloe`: the same policy on the OSG arm's detector
 #
 # Pass 1 must have run (scripts/run_prior_maps.sh) and its audit passed
 # (scripts/audit_map_coverage.py --graphs): a prior that does not hold the
@@ -24,7 +25,7 @@ cd "$(dirname "$0")/.."
 set -a; [ -f docker/.env ] && . <(grep -vE '^(UID|GID)=' docker/.env); set +a
 umask 002
 
-ARM=${1:?arm: osg | ascent}
+ARM=${1:?arm: osg | osg_gate | ascent | ascent_yoloe}
 SEED=${2:?seed, e.g. 42}
 shift 2
 OBS=${OBS:-outputs/maps_v2_ascent}
@@ -45,8 +46,8 @@ case "$ARM" in
     for need in "$OBS" "$OSG"; do
       [ -d "$need" ] || { echo "no pass-1 map at $need -- run scripts/run_prior_maps.sh" >&2; exit 2; }
     done ;;
-  ascent)
-    PRESET=mfv2_ascent
+  ascent|ascent_yoloe)
+    PRESET=mfv2_$ARM
     MAX_PARALLEL=1
     INPUTS=() ;;
   *) echo "unknown arm $ARM" >&2; exit 2 ;;
