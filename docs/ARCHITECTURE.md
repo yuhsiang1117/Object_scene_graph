@@ -42,10 +42,12 @@ Each line is one module. `nav_agent.py` owns the FSM state and nothing else.
 | `agent/candidate.py` | what becomes a goal — presence, identity, evidence, reachability, and the optional VLM gate |
 | `agent/approach.py` | the terminal walk and the stop decision, plus the arrival sweep |
 | `agent/floor_policy.py` | storeys, portals, stairs, the climb. Inert unless `floor.enabled` |
+| `agent/climb.py` | the climb itself — a flight carrot, or a stair route followed step by step (`agent.climb_route`) |
 | `agent/close_look.py` | the close look at a surface — the frame an absence decision is allowed to rest on |
 | `exploration/strategy.py` | where to go next — frontiers and mapped surfaces under one index |
 | `exploration/search_belief.py` | `b(x)`, `d(x)`, and the inspection log that retires a searched surface |
 | `exploration/selector.py` | the frontier half of that index |
+| `exploration/storey_belief.py` | which storey the object is on — track evidence against coverage (`exploration.storey_belief`) |
 | `objects/presence.py` | is the object still at its mapped pose |
 | `objects/object_layer.py` | tracks, association, and the candidate gates |
 | `perception/region_proposer.py` | region-proposal fusion: finds the target when the detector will not name it |
@@ -55,6 +57,8 @@ Each line is one module. `nav_agent.py` owns the FSM state and nothing else.
 | `graph/map_store.py` | the snapshot pass 1 writes and pass 2 loads |
 | `mapping/floors.py`, `floor_stack.py` | which storey the agent stands on; one occupancy grid per storey |
 | `mapping/stairs.py`, `portals.py` | where the agent can change storey, and where it can see another one |
+| `mapping/stair_route.py` | a walkable route up or down a staircase, one riser at a time |
+| `planning/creep.py` | the approach's last metre, turned toward the goal (`agent.approach_creep_steer_deg`) |
 | `pipeline/components.py` | which detector, scorer, verifier, benchmark |
 | `pipeline/beliefs.py` | which belief models, with which constants |
 | `perception/vocabulary.py` | which query strings the detector is asked about |
@@ -68,7 +72,7 @@ Each line is one module. `nav_agent.py` owns the FSM state and nothing else.
 
 ---
 
-## The four mechanisms
+## The mechanisms
 
 ### 1. Presence — is it still there?
 
@@ -232,6 +236,63 @@ observations — same range, lighting and viewing angle on the same geometry —
 multiplying their likelihoods turns one correlated detector failure into
 overwhelming evidence of absence. Doing it dropped SR from 0.429 to 0.286. The
 sweep's job is to give the detector a chance, not to vote.
+
+### 5. The storey — which one, and how to get there
+
+`exploration/storey_belief.py`, `mapping/stair_route.py`, `agent/climb.py`.
+Benchmark v2 (`docs/BENCHMARK_V2.md`) starts half its episodes on another
+storey, and on seed 42 the paper's arm reached the object's storey in 11 of 29
+of them. Three mechanisms decided the storey before this, and none was a belief:
+the "nothing near is left here" gate took the nearest flight either way (9 of 28
+episodes that had to go down pursued only flights going up), two false-positive
+STOPs "disproved" the storey the agent stood on (7 of the 11 that left the
+object's own storey), and the container posterior's storey vote abstains by
+design.
+
+**The storey belief** scores each known storey by the target-labelled tracks on
+it and discounts what this episode has already covered:
+
+```
+    P_k ∝ (w·a_k + (1 − w)/K) · (1 − d·c_k)        a_k = 1 − Π_t (1 − p_t)
+```
+
+`p_t` is a track's presence weighted by its identity evidence (`0.3^rejections`,
+zero after a failed attempt) — presence alone let a false positive the gate had
+already rejected keep its storey at `a = 1.0`. `c_k` is the share of the storey's
+free 0.5 m blocks the agent has passed within 2 m of. The agent asks for another
+storey once it is 1.8× this one, and while it knows two storeys it never switches
+undirected. Storeys are the estimator's levels merged greedy-by-area at
+`new_level_m` — a single-linkage merge chained 0.64, 1.74 and 3.16 m into one —
+and the prior map's stair landings are dropped at load (`ycb.drop_prior_landings`):
+00800's pass-1 graph held a landing at 1.74 m that a descent "arrived" on.
+
+**The stair route** replaces the flight blob as the thing the climb walks.
+`find_flights` finds a staircase as a blob of intermediate-height cells, and a
+blob has no notion of walking: on 00821 its foot sat 1.5 m beside the real one
+and two 300-step climbs rose 0.01 m. `plan_stair_route` asks which surfaces can
+be walked to one riser at a time — a Dijkstra over 0.1 m cells with two surface
+levels each (the lowest seen, and the highest seen below the camera, because an
+open flight seen from below shows the floor beneath its treads), riser ≤ 0.25 m,
+walls at this floor's height excluded — to flat floor near the storey asked for.
+A follower turns toward a point 0.5 m along it and sweeps headings round a
+refused step (`eval.allow_sliding: false` makes a step that touches an edge go
+nowhere).
+
+**What it bought, seed 42, the same four scenes (57 episodes):** started on
+another storey and succeeded 5/29 → 8/29, reached the object's storey 11/29 →
+14/29, flights pursued the wrong way 6/29 → 0/22, steps spent climbing per
+episode 227 → 49. The storey belief alone, with the old flight climb, did as well
+on the episodes it has finished (`mfv2_osg_storey`) — so the belief is the gain,
+and the route is cheaper rather than better.
+
+**A descent was pursued to the wrong end.** `find_flights` stores a descending
+flight's *highest* tread in `foot_xy`; `mouth_xy` read `foot_xy` as every
+flight's lowest tread and returned `top_xy` for a descent — the lowest tread
+seen, under the storey the agent stood on. Every arm through 2026-10-17 ran that
+way: no episode on 00862 or 00873 that had to go down ever did. From a distance
+even the highest tread seen is a metre down the flight — the camera sees a tread
+only along a line steeper than the flight — so `floor.descent_goal: extrapolated`
+walks up the flight's own slope to where it meets the floor (`descent_mouth_xy`).
 
 ---
 
