@@ -275,6 +275,16 @@ class AgentConfig:
     # unconditional press, which is what every measured ascent arm ran on.
     pointnav_creep_stall_steps: int = 0
     pointnav_creep_stall_eps: float = 0.05
+    # Steer the creep (planning/creep.py, OSG's approach only): turn toward the
+    # goal when it is more than this many degrees off the heading, and sweep
+    # headings round a refused forward, instead of the blind forward above.
+    # 0 keeps the blind creep. Benchmark v2 seed 42: 00862's banana stopped
+    # 1.15 m from the object after ten forwards into the table it sat on, and
+    # 00873's pitcher at 1.10 m in all four OSG arms.
+    approach_creep_steer_deg: float = 0.0
+    # With the steered creep: forwards that fail to close on the goal by
+    # `pointnav_creep_stall_eps` before it reports a stall (turns do not count).
+    approach_creep_stall_steps: int = 6
     pointnav_stop_means_blocked: bool = True
 
     # Navigation/termination controls imported with the ASCENT behavior

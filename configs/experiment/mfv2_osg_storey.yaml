@@ -13,7 +13,7 @@
 #
 # The belief scores each storey by the target-labelled tracks on it (by height,
 # weighted by presence) and discounts what this episode has already covered;
-# the agent asks for the best other storey once it is 1.3x this one, and while
+# the agent asks for the best other storey once it is 1.8x this one, and while
 # it knows two storeys it never switches undirected. Storey disproval by failed
 # attempts is off: a false-positive STOP says nothing about the storey, and the
 # coverage term is what moves belief off a searched one. The prior's landings

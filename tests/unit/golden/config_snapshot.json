@@ -6,6 +6,8 @@
   "agent.approach_close_clearance_m": 0.0,
   "agent.approach_close_last_metre_m": 0.0,
   "agent.approach_close_source": "navmesh",
+  "agent.approach_creep_stall_steps": 6,
+  "agent.approach_creep_steer_deg": 0.0,
   "agent.approach_depth_stop": true,
   "agent.approach_false_arrival_m": 0.0,
   "agent.approach_goal_tolerance_m": 0.12,

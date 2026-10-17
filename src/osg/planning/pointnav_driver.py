@@ -281,6 +281,15 @@ class PointNavDriver:
             return NavStep(None, "policy_stop")
         return NavStep(ACTION_NAMES[idx], "moving")
 
+    def polar(self, goal_xy: np.ndarray) -> Tuple[float, float]:
+        """(rho, theta) of `goal_xy` from this step's pose, theta positive to
+        the LEFT, without acting -- for a caller that drives the creep itself
+        (`planning/creep.py`)."""
+        if self._pos_ccw is None:
+            raise RuntimeError("PointNavDriver.observe(frame) must be called each step")
+        return rho_theta(self._pos_ccw, self._heading_ccw,
+                         to_ccw_frame(np.asarray(goal_xy, dtype=float)))
+
     def __call__(
         self,
         goal_xy: np.ndarray,

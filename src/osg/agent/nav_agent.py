@@ -49,6 +49,7 @@ from ..perception.vocabulary import target_vocabulary
 from ..pipeline.beliefs import build_affinity_prior, build_presence_filter
 from ..perception.keyframe import KeyframeSelector, KeyframeStore
 from ..planning.controller import WaypointController, agent_heading
+from ..planning.creep import SteeredCreep
 from ..planning.escape import ActionHistoryEscape
 from ..planning.planner import PlanResult, StraightLinePlanner
 from ..planning.voronoi_planner import HybridVoronoiPlanner
@@ -441,6 +442,12 @@ class NavAgent:
         self._candidate_id: Optional[int] = None
         self._goal_xy: Optional[np.ndarray] = None
         self._last_action: Optional[str] = None
+        self._creep = SteeredCreep(
+            turn_deg=float(self.cfg.agent.turn_deg),
+            steer_deg=float(getattr(self.cfg.agent, "approach_creep_steer_deg", 0.0) or 0.0),
+            stall_steps=int(getattr(self.cfg.agent, "approach_creep_stall_steps", 6)),
+            stall_eps=float(getattr(self.cfg.agent, "pointnav_creep_stall_eps", 0.05)),
+        )
         self._goto_deadline = 10**9
         self._target_obj_xy: Optional[np.ndarray] = None
         self._goal_floor_y_cache: Optional[float] = None
@@ -2228,6 +2235,18 @@ class NavAgent:
                 float(self.cfg.agent.pointnav_approach_creep_m)
                 if self.state is State.APPROACH else 0.0
             )
+            # Inside the creep radius, a creep that turns toward the goal and
+            # sweeps round a refused step instead of a blind forward
+            # (`agent.approach_creep_steer_deg`, planning/creep.py).
+            steer = float(getattr(self.cfg.agent, "approach_creep_steer_deg", 0.0) or 0.0)
+            if creep > 0.0 and steer > 0.0:
+                rho, theta = self.pointnav.polar(goal_xy)
+                if float(self.cfg.agent.pointnav_arrival_m) <= rho < creep:
+                    action, reason = self._creep.step(
+                        goal_xy, frame.camera_position[list(PLANE)], rho, theta,
+                        self._last_action)
+                    self.stats[f"pointnav_{reason}"] = self.stats.get(f"pointnav_{reason}", 0) + 1
+                    return action
             # `.step` rather than `__call__`: the action is the same, but the
             # REASON is the only way to tell "I am there" from "the network gave
             # up" from "I stopped closing", and an arm whose whole question is
