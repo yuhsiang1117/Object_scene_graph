@@ -193,3 +193,23 @@ def test_the_mouth_is_what_the_flight_ranking_measures():
 
     assert chosen is near_mouth, "the flight whose ENTRANCE is nearest"
     assert np.allclose(mouth_xy(chosen), [1.0, 0.0])
+
+
+def test_with_descent_goal_mouth_a_descent_is_entered_at_its_highest_tread():
+    """`find_flights` keeps a descent's highest tread in `foot_xy`; under
+    `floor.descent_goal: mouth` that is the entrance the ranking measures."""
+    from osg.agent.floor_policy import FloorPolicy
+    from osg.mapping.stairs import mouth_xy
+    near_top = SimpleNamespace(kind="down", foot_xy=np.array([1.0, 0.0]),
+                               top_xy=np.array([9.0, 0.0]), cells_rc=np.zeros((1, 2), int))
+    far_top = SimpleNamespace(kind="down", foot_xy=np.array([8.0, 0.0]),
+                              top_xy=np.array([0.5, 0.0]), cells_rc=np.zeros((1, 2), int))
+    policy = FloorPolicy.__new__(FloorPolicy)
+    policy.cfg = SimpleNamespace(floor=SimpleNamespace(descent_goal="mouth"))
+    policy._on_stair_mask = lambda _f: False
+    policy.stats = {}
+    chosen = FloorPolicy._best_flight(policy, [near_top, far_top], np.array([0.0, 0.0]))
+    assert chosen is near_top
+    assert np.allclose(mouth_xy(chosen, descent="mouth"), [1.0, 0.0])
+    # The legacy reading sends the same agent to the far end.
+    assert np.allclose(mouth_xy(chosen), [9.0, 0.0])

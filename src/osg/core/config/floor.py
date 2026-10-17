@@ -186,6 +186,16 @@ class FloorConfig:
     climb_targets: str = "portals"
     flight_min_span_m: float = 1.0
     flight_min_cells: int = 150
+    # Where a DESCENDING flight's pursuit goes (`mapping.stairs.mouth_xy`).
+    # "lowest_tread" is what every arm through 2026-10-17 ran: `mouth_xy` read
+    # `Flight.foot_xy` as every flight's lowest tread, but `find_flights` stores
+    # a descent's HIGHEST tread there, so a descent was pursued to the lowest
+    # tread seen -- the far end, under this storey. Benchmark v2 seed 42: no
+    # episode on 00862 or 00873 that had to go down ever did. "mouth" is the
+    # highest tread seen; "extrapolated" walks up the flight's own slope from
+    # it to where the slope meets this floor (`descent_mouth_xy`), because
+    # from a distance the top treads are hidden behind the lip.
+    descent_goal: str = "lowest_tread"
     # Rank flights by whether the STAIR MAP says they are stairs, and drop
     # flights that lead where no storey is known to be. 0/False is the shipped
     # behaviour: nearest foot wins, whatever it is.

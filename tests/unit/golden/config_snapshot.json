@@ -334,6 +334,7 @@
   "floor.climb_limit_m": 0.2,
   "floor.climb_targets": "portals",
   "floor.cross_floor": false,
+  "floor.descent_goal": "lowest_tread",
   "floor.dwell_on_arrival": false,
   "floor.early_switch_step": 30,
   "floor.enabled": false,

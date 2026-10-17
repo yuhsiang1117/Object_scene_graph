@@ -153,8 +153,9 @@ class Flight:
     layer rather than a detector mask.
 
     `cells_rc` index the costmap grid; `heights` are absolute world y per cell.
-    `foot_xy` is the lowest tread (the mouth on this floor for an ascent),
-    `top_xy` the highest. `kind` is "up" or "down" relative to `floor_y`.
+    `foot_xy` is the tread nearest THIS storey -- the lowest of an ascent, the
+    highest of a descent (`find_flights`) -- and `top_xy` the far end. `kind`
+    is "up" or "down" relative to `floor_y`.
     """
 
     kind: str
@@ -177,23 +178,89 @@ class Flight:
         return int(self.cells_rc.shape[0])
 
 
-def mouth_xy(flight) -> np.ndarray:
+DESCENT_GOALS = ("lowest_tread", "mouth", "extrapolated")
+
+
+def mouth_xy(flight, descent: str = "lowest_tread", floor_y: Optional[float] = None,
+             resolution: Optional[float] = None) -> np.ndarray:
     """Where the agent steps ON to this flight, from its OWN storey.
 
-    `Flight.foot_xy` is the lowest tread and `top_xy` the highest, which makes
-    the foot the mouth of an ASCENT and the top the mouth of a DESCENT. Using
-    the foot for both sends a descending agent to the bottom of the staircase
-    -- a point on the storey it has not reached yet, typically several metres
-    away and under the treads.
+    An ascent's is its lowest tread, `foot_xy`. A descent's is its top, and
+    `find_flights` stores the descent's HIGHEST tread in `foot_xy` too -- but
+    this function was written (eb263bc) reading `foot_xy` as the lowest tread
+    of every flight, so for a descent it returned `top_xy`, the LOWEST tread
+    seen: the far end, on the storey below. `descent` (`floor.descent_goal`):
 
-    Measured on 00821 (scripts/probe_climb_osg.py, the `pasted` variant): the
-    goal handed to the mover was 1.73 m from the true descent entrance and
-    3.92 m from the flight's own bottom, the agent circled at the top for 52
-    steps turning 30 times against 21 forwards, and the climb ended `stalled`
-    with dy 0.00 m.
+      lowest_tread  that, as every arm measured through 2026-10-17 ran it
+      mouth         the highest tread seen (`foot_xy`)
+      extrapolated  the lip, where the flight's slope meets this floor
+                    (`descent_mouth_xy`), else the highest tread seen
+
+    Measured on Benchmark v2 seed 42 (mfv2_osg_climb): 00862's descending
+    pursuits went to (-0.93, -2.22) and (-0.22, -3.82) for a flight whose top is
+    at (-0.69, -1.23), 00873's 2-3 m from its top at (-4.4, -4.3), and no
+    episode on either that had to go down ever did.
     """
-    return np.asarray(
-        flight.foot_xy if flight.kind == "up" else flight.top_xy, dtype=float)
+    if flight.kind == "up":
+        return np.asarray(flight.foot_xy, dtype=float)
+    if descent == "lowest_tread":
+        return np.asarray(flight.top_xy, dtype=float)
+    if descent == "extrapolated" and floor_y is not None and resolution is not None:
+        lip = descent_mouth_xy(flight, float(floor_y), float(resolution))
+        if lip is not None:
+            return np.asarray(lip, dtype=float)
+    return np.asarray(flight.foot_xy, dtype=float)
+
+
+def descent_mouth_xy(flight, floor_y: float, resolution: float, local_m: float = 1.2,
+                     min_slope: float = 0.35, max_slope: float = 1.2,
+                     max_reach_m: float = 2.5) -> Optional[np.ndarray]:
+    """Where a DESCENDING flight leaves this storey's floor, extrapolated up its
+    slope from the highest tread seen; None when the slope is not a stair's.
+
+    From the storey above, a descending flight is hidden behind its own top
+    edge: the camera, 0.88 m up with a 31-degree half field of view, sees a
+    tread only along a line steeper than the flight itself, so the treads near
+    the top appear only when the agent stands at the edge looking down. Even
+    the highest cell of the blob `find_flights` builds from farther away can
+    be a metre down the flight -- a point under this storey, which the mover
+    can only walk up to the banister of. In `tests/unit/test_flights.py` the
+    first four treads of twelve are hidden that way and the highest seen is
+    1.1 m from the lip.
+
+    The flight's own surface says where its top is: fit a plane to the treads
+    within `local_m` of the highest one (one leg of a switchback, not both),
+    and walk up its gradient until it reaches the floor's height.
+    """
+    if flight.kind != "down" or flight.cells_rc.shape[0] < 6:
+        return None
+    top = np.asarray(flight.foot_xy, dtype=float)     # a descent's highest tread
+    res = float(resolution)
+    rc = np.asarray(flight.cells_rc, dtype=float)
+    h = np.asarray(flight.heights, dtype=float)
+    hi = int(np.argmax(h))
+    near = np.linalg.norm((rc - rc[hi]) * res, axis=1) <= float(local_m)
+    if near.sum() < 6:
+        return None
+    # Plane h = a*dr + b*dc + c in metres of row/column offset from the top cell.
+    d = (rc[near] - rc[hi]) * res
+    A = np.c_[d, np.ones(len(d))]
+    coef, *_ = np.linalg.lstsq(A, h[near], rcond=None)
+    grad = coef[:2]
+    slope = float(np.linalg.norm(grad))
+    if not (float(min_slope) <= slope <= float(max_slope)):
+        return None
+    # Start from the middle of the highest tread, not its highest cell, which
+    # sits wherever depth noise put it -- often at the tread's side.
+    band = h >= float(h[hi]) - 0.1
+    # Rows/columns map to world (x, z) the way `grid_to_world` does: one cell
+    # is `resolution` along each, in the same order.
+    start = top + (rc[band].mean(axis=0) - rc[hi]) * res
+    rise = float(floor_y) - float(h[band].mean())
+    if rise <= 0.0:
+        return start
+    reach = min(rise / slope, float(max_reach_m))
+    return start + (grad / slope) * reach
 
 
 def find_flights(

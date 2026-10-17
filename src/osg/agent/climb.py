@@ -659,7 +659,12 @@ class ClimbPolicy:
         flight = getattr(self.floors, "pursuit_flight", None)
         far_y = None
         if flight is not None and getattr(flight, "n_cells", 0):
-            far = np.asarray(flight.top_xy if up else flight.foot_xy, dtype=float)
+            # The far end. `find_flights` keeps it in `top_xy` either way; the
+            # oracle read a descent's from `foot_xy` -- its near end -- while
+            # `floor.descent_goal` was "lowest_tread" (see `stairs.mouth_xy`).
+            floor_cfg = getattr(getattr(self.nav, "cfg", None), "floor", None)
+            legacy = str(getattr(floor_cfg, "descent_goal", "lowest_tread")) == "lowest_tread"
+            far = np.asarray(flight.top_xy if (up or not legacy) else flight.foot_xy, dtype=float)
             heights = np.asarray(flight.heights, dtype=float)
             if heights.size:
                 far_y = float(heights.max() if up else heights.min())
@@ -772,9 +777,10 @@ class ClimbPolicy:
         nearest flight going the same way whose foot is within a few metres --
         the next flight down from a half-landing. Returns whether one was found.
         """
-        from ..mapping.stairs import find_flights, mouth_xy
+        from ..mapping.stairs import find_flights
 
         floor_y = float(self.floors.height_of(self.floors.current_id))
+        mouth_xy = self.floors.mouth
         flights = find_flights(
             self.costmap, floor_y,
             new_level_m=float(self.cfg.floor.new_level_m),

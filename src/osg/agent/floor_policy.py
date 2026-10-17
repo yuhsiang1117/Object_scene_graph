@@ -506,7 +506,7 @@ class FloorPolicy:
         else:
             self.stats["flight_pick_uncorroborated"] = (
                 self.stats.get("flight_pick_uncorroborated", 0) + 1)
-        return min(pool, key=lambda f: float(np.linalg.norm(mouth_xy(f) - agent_xy)))
+        return min(pool, key=lambda f: float(np.linalg.norm(self.mouth(f) - agent_xy)))
 
     def pursuit_ok(self, frame, step: int, deadline: int) -> bool:
         """Should the agent keep driving to its portal instead of re-exploring?
@@ -607,6 +607,17 @@ class FloorPolicy:
         self.stack.set_height(key, float(height))
         self.stats["storeys_registered"] = self.stats.get("storeys_registered", 0) + 1
         return key
+
+    def mouth(self, flight, floor_y: Optional[float] = None) -> np.ndarray:
+        """`mapping.stairs.mouth_xy` under `floor.descent_goal`."""
+        mode = str(getattr(getattr(getattr(self, "cfg", None), "floor", None),
+                           "descent_goal", "lowest_tread"))
+        if mode != "extrapolated" or flight.kind != "down":
+            return mouth_xy(flight, descent=mode)
+        if floor_y is None:
+            floor_y = float(self.estimator.height_of(self.stack.current_id))
+        return mouth_xy(flight, descent=mode, floor_y=float(floor_y),
+                        resolution=float(self.costmap.resolution))
 
     def flight_span_m(self, floor_y: float) -> float:
         """How tall a flight from `floor_y` may be, for `find_flights`.
@@ -786,7 +797,7 @@ class FloorPolicy:
             agent_xy = frame.camera_position[list(PLANE)]
             usable = [
                 f for f in flights
-                if (want is None or f.kind == want) and not self._portal_failed_here(mouth_xy(f))
+                if (want is None or f.kind == want) and not self._portal_failed_here(self.mouth(f))
             ]
             rank = bool(getattr(self.cfg.floor, "flights_prefer_stair_mask", False))
             if usable and rank:
@@ -798,7 +809,7 @@ class FloorPolicy:
             if usable:
                 flight = (
                     self._best_flight(usable, agent_xy) if rank
-                    else min(usable, key=lambda f: float(np.linalg.norm(mouth_xy(f) - agent_xy)))
+                    else min(usable, key=lambda f: float(np.linalg.norm(self.mouth(f) - agent_xy)))
                 )
                 # Make the treads traversable on this floor's grid, so the planner
                 # and the frontier extractor stop reading the flight as a wall.
@@ -808,9 +819,9 @@ class FloorPolicy:
                     low_y=float(flight.heights.min()), high_y=float(flight.heights.max()),
                 )], max_area_frac=float(self.cfg.floor.stair_max_area_frac))
                 # The mouth on THIS storey -- the top of a descent, the foot of an
-                # ascent. See `stairs.mouth_xy`: using the foot for both walked a
-                # descending agent toward the bottom of the staircase.
-                goal_xy = mouth_xy(flight)
+                # ascent -- as `floor.descent_goal` reads a descent's top (see
+                # `stairs.mouth_xy`).
+                goal_xy = self.mouth(flight)
                 if want is not None:
                     target_y = float(self.stack.by_key(int(target_floor)).floor_y)
                 else:

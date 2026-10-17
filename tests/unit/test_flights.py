@@ -152,3 +152,47 @@ def test_a_landing_is_not_folded_into_the_floor_below():
     held = _descend(True).levels[0]
     assert held == pytest.approx(0.06, abs=0.05), "floor 0 moved to meet the landing"
     assert abs(drifted - 0.06) > abs(held - 0.06)
+
+
+def _descent_seen_from_afar(cm, hidden=4):
+    """Treads descending along +x from a lip at x = 1.0; the first `hidden`
+    were never seen (behind the lip from where the agent stood)."""
+    for i in range(hidden, 12):
+        x0 = 1.0 + i * 0.28
+        _paint(cm, x0, x0 + 0.28, 2.0, 3.0, FLOOR_Y - (i + 1) * 0.17)
+
+
+def test_a_descent_seen_from_afar_has_its_mouth_down_the_flight():
+    from osg.mapping.stairs import mouth_xy
+
+    cm = _costmap()
+    _descent_seen_from_afar(cm)
+    (f,) = find_flights(cm, FLOOR_Y, new_level_m=2.6, min_span_m=1.0, min_cells=50)
+    assert f.kind == "down"
+    # The highest tread SEEN is 1.1 m down the flight: the pursuit goal the
+    # step-3 arm drove to, under this storey.
+    assert mouth_xy(f)[0] > 2.0
+
+
+def test_the_descent_mouth_is_extrapolated_up_the_slope_to_the_floor():
+    from osg.mapping.stairs import descent_mouth_xy
+
+    cm = _costmap()
+    _descent_seen_from_afar(cm)
+    (f,) = find_flights(cm, FLOOR_Y, new_level_m=2.6, min_span_m=1.0, min_cells=50)
+    m = descent_mouth_xy(f, FLOOR_Y, cm.resolution)
+    assert m is not None
+    assert abs(m[0] - 1.0) < 0.3, f"the lip is at x = 1.0, got {m}"
+    assert abs(m[1] - 2.5) < 0.4
+
+
+def test_no_extrapolated_mouth_for_a_flat_blob_or_an_ascent():
+    from osg.mapping.stairs import Flight, descent_mouth_xy
+
+    rc = np.array([[r, c] for r in range(10) for c in range(10)])
+    flat = Flight(kind="down", cells_rc=rc, heights=np.full(len(rc), -1.0),
+                  foot_xy=np.zeros(2), top_xy=np.zeros(2), span_m=0.0)
+    assert descent_mouth_xy(flat, 0.0, 0.05) is None
+    up = Flight(kind="up", cells_rc=rc, heights=rc[:, 0] * 0.03,
+                foot_xy=np.zeros(2), top_xy=np.zeros(2), span_m=0.3)
+    assert descent_mouth_xy(up, 0.0, 0.05) is None
