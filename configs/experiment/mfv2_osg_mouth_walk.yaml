@@ -1,0 +1,18 @@
+# @package _global_
+#
+# `mfv2_osg_mouth` with the climb walking to its own goal -- the stair mouth the
+# pursuit drove to -- when no route onto the stairs is in view from the start
+# floor (`agent.climb_route_mouth_first`, agent/climb.py `_walk_to_mouth`),
+# before the far-end walk meant for landings. 00862 seed 42 static 50007 on
+# mfv2_osg_mouth: the switch went to the remembered mouth (-0.59, -0.86) at step
+# 13, but both climbs began 1.2 m short of it, saw no tread -- a descending
+# flight shows only from near its lip, looking steeply down -- and the far-end
+# walk took the agent 4 m along the upper floor, twice.
+#
+#   bash scripts/run_mfv2.sh osg_mouth_walk <seed>
+defaults:
+  - mfv2_osg_mouth
+  - _self_
+
+agent:
+  climb_route_mouth_first: true

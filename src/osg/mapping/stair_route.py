@@ -116,6 +116,7 @@ def plan_stair_route(
     standing_span_m: float = 0.45,
     debug: Optional[dict] = None,
     explore: bool = False,
+    toward_xy=None,
 ) -> Optional[StairRoute]:
     """The cheapest walk from the agent to the storey asked for.
 
@@ -128,7 +129,10 @@ def plan_stair_route(
 
     `explore` asks for something else: the farthest reachable point at the
     agent's own level (within 0.3 m of it, at most 4 m of walking) -- the far
-    end of a landing, from where the next flight can be seen.
+    end of a landing, from where the next flight can be seen. With
+    `toward_xy` it is instead the reachable point at that level nearest to
+    `toward_xy` (a known stair mouth), None once the agent is within 0.3 m of
+    walking of it.
     """
     from scipy import ndimage
     from scipy.sparse import coo_matrix
@@ -331,9 +335,16 @@ def plan_stair_route(
         level = reach & (np.abs(node_h - float(standing_y)) <= 0.3) & (dist <= 4.0)
         if not level.any():
             return None
-        goal = int(np.flatnonzero(level)[np.argmax(dist[level])])
-        if float(dist[goal]) < 0.8:
-            return None
+        if toward_xy is not None:
+            sel = np.flatnonzero(level)
+            off = np.linalg.norm(world[sel] - np.asarray(toward_xy, dtype=float)[None, :], axis=1)
+            goal = int(sel[np.lexsort((dist[sel], np.round(off / 0.1)))[0]])
+            if float(dist[goal]) < 0.3:
+                return None
+        else:
+            goal = int(np.flatnonzero(level)[np.argmax(dist[level])])
+            if float(dist[goal]) < 0.8:
+                return None
     elif target_y is not None:
         # The storey asked for, by its height -- which a prior map can have
         # wrong by half a metre (00800: 0.64 for a floor at 0.16), so the

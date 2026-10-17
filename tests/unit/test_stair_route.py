@@ -185,3 +185,26 @@ def test_without_the_stairs_handling_the_flight_ahead_is_paved_at_standing_heigh
     route = plan_stair_route(cm, floor_y=0.0, agent_xy=(x, 0.0), standing_y=standing,
                              direction=-1, target_y=-3.06)
     assert route is None or not route.reaches_target
+
+
+def test_a_walk_toward_a_known_mouth_ends_beside_it_not_at_the_far_end():
+    """`toward_xy`: the climb's own goal (a stair mouth) when no route onto the
+    stairs is in view; without it, the farthest point at this level."""
+    cm = _map()
+    _paint(cm, -4, 4, -4, 4, 0.0)
+    mouth = np.array([1.5, 0.5])
+    to_mouth = plan_stair_route(cm, floor_y=0.0, agent_xy=(-1.0, 0.0), standing_y=0.0,
+                                direction=-1, target_y=-3.0, explore=True, toward_xy=mouth)
+    far = plan_stair_route(cm, floor_y=0.0, agent_xy=(-1.0, 0.0), standing_y=0.0,
+                           direction=-1, target_y=-3.0, explore=True)
+    assert to_mouth is not None and far is not None
+    assert np.linalg.norm(to_mouth.end_xy - mouth) < 0.2
+    assert np.linalg.norm(far.end_xy - mouth) > 1.0
+    assert not to_mouth.reaches_target
+
+
+def test_no_walk_once_at_the_mouth():
+    cm = _map()
+    _paint(cm, -4, 4, -4, 4, 0.0)
+    assert plan_stair_route(cm, floor_y=0.0, agent_xy=(1.4, 0.5), standing_y=0.0, direction=-1,
+                            target_y=-3.0, explore=True, toward_xy=(1.5, 0.5)) is None

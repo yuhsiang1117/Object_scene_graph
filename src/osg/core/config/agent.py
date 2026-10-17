@@ -418,6 +418,12 @@ class AgentConfig:
     # 42, static 50002, mfv2_osg_descent) ended "stalled" at step 41 heading
     # for the lip 1 m away. 0 = as measured.
     climb_route_approach_steps: int = 0
+    # With no route onto the stairs in view from the start floor, walk to the
+    # climb's goal (the stair mouth pursued) and look round there, before the
+    # far-end walk meant for landings. 00862 (seed 42, static 50007,
+    # mfv2_osg_mouth): two climbs began 1.2 m short of the remembered mouth and
+    # the far-end walk took the agent 4 m along the upper floor, twice.
+    climb_route_mouth_first: bool = False
     # The least height a route must gain to be walked when it does not reach
     # flat floor. From the foot of a flight the camera sees no tread surface
     # above its own height (~0.88 m), only risers: on 00821 the mapped treads

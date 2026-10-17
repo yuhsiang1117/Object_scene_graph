@@ -84,6 +84,8 @@ class ClimbPolicy:
         self._route_bumps: list = []
         self._route_scanned = False
         self._route_explores = 0
+        self._route_mouth_walked = False
+        self._route_walking = False
         self._route_best_dy = 0.0
         self._route_seek_step = -100
         self._route_last_xy = None
@@ -202,6 +204,8 @@ class ClimbPolicy:
         self._route_short = False
         self._route_scanned = False
         self._route_explores = 0
+        self._route_mouth_walked = False
+        self._route_walking = False
         self._route_best_dy = 0.0
         self._route_last_xy = None
         self._route_failures = 0
@@ -371,7 +375,7 @@ class ClimbPolicy:
         return 1 if float(target) > here else -1
 
     def _plan_route(self, frame: FrameData, agent_xy: np.ndarray, direction: int,
-                    explore: bool = False):
+                    explore: bool = False, toward_xy=None):
         from ..mapping.stair_route import plan_stair_route
 
         floor_id = (self._climb_from_floor
@@ -388,6 +392,7 @@ class ClimbPolicy:
                 min_gain_m=float(getattr(self.cfg.agent, "climb_route_min_gain_m", 0.3)),
                 gap_fill_m=float(getattr(self.cfg.agent, "climb_route_gap_fill_m", 0.0) or 0.0),
                 explore=explore,
+                toward_xy=toward_xy,
             )
         key = "climb_route_plans" if route is not None else "climb_route_none"
         self.stats[key] = self.stats.get(key, 0) + 1
@@ -524,6 +529,15 @@ class ClimbPolicy:
         if replan:
             fresh = self._plan_route(frame, agent_xy, self._climb_direction or 1)
             self._route_plan_step = step
+            if fresh is not None:
+                self._route_walking = False
+            elif (self._route_walking and route is not None
+                  and float(np.linalg.norm(route.end_xy - agent_xy)) > 0.4):
+                fresh = route                            # still walking to the mouth
+            else:
+                self._route_walking = False
+                fresh = self._walk_to_mouth(frame, agent_xy)
+                self._route_walking = fresh is not None  # and look round when there
             if fresh is None:
                 if not self._route_scanned:
                     # Nothing walkable in view -- typically a landing, facing its
@@ -648,6 +662,35 @@ class ClimbPolicy:
         # allowed on 00821 (ended at -0.17 for a floor at 0.13).
         return (float(np.linalg.norm(route.end_xy - agent_xy)) < 0.4
                 and abs(standing - float(route.heights[-1])) < 0.1)
+
+    def _walk_to_mouth(self, frame: FrameData, agent_xy: np.ndarray):
+        """A walk on this floor to the climb's own goal -- the stair mouth the
+        pursuit drove to -- when no route onto the stairs is in view
+        (`agent.climb_route_mouth_first`), once per climb; None otherwise.
+
+        A climb starts within reach of its goal, or wherever a route probe
+        finds the stairs (`climb_route_start_m`), and a descending flight is
+        visible only from near its lip, looking steeply down. 00862 (seed 42,
+        static 50007, mfv2_osg_mouth): both climbs began 1.2 m short of the
+        remembered mouth, saw no tread, and the explore fallback walked the
+        agent 4 m away along the upper floor.
+        """
+        if not bool(getattr(self.cfg.agent, "climb_route_mouth_first", False)):
+            return None
+        if self._route_mouth_walked or self._climb_goal_xy is None:
+            return None
+        floor_y = float(self.floors.estimator.height_of(int(self._climb_from_floor)))
+        standing = float(frame.camera_position[1]) - float(self.cfg.agent.camera_height)
+        if abs(standing - floor_y) > 0.15:
+            return None                          # on the stairs: not a floor walk
+        if float(np.linalg.norm(np.asarray(self._climb_goal_xy) - agent_xy)) <= 0.6:
+            return None
+        self._route_mouth_walked = True
+        walk = self._plan_route(frame, agent_xy, self._climb_direction or 1,
+                                explore=True, toward_xy=self._climb_goal_xy)
+        if walk is not None:
+            self.stats["climb_route_mouth"] = self.stats.get("climb_route_mouth", 0) + 1
+        return walk
 
     def _route_stalled(self, agent_xy: np.ndarray) -> bool:
         """No HEIGHT gained in the climb's direction for
