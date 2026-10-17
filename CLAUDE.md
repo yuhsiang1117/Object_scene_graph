@@ -169,7 +169,9 @@ it. Two golden files pin this:
 - **Diagnostics before guesses:** `scripts/analyze_*.py` decompose a run's `episodes.jsonl` —
   `analyze_stages.py` (explore vs approach failure), `analyze_floors.py` (SR by floor class,
   floor-estimator audit), `analyze_localization.py` / `analyze_trackloc.py` (stop pose vs GT),
-  `analyze_approach.py` (why the terminal approach failed).
+  `analyze_approach.py` (why the terminal approach failed), `analyze_multifloor.py` (Benchmark v2:
+same-storey SR by class / start storey, storey decisions, stair climbs, goal commits TRUE / STALE /
+FP), `analyze_vlm.py` (every VLM verdict scored against the object's true and prior pose).
 - **Generated, not source:** `outputs/`, downloads under `data/`, `relative_work/` (the ASCENT
   checkout and its recorded reference runs) and `assets/` (the real-robot recordings) are all
   ignored. Keep secrets and machine-specific dataset paths in `docker/.env`.

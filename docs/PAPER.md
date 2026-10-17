@@ -443,20 +443,37 @@ in-anchor relocation, where an object is moved within the same anchor (e.g., shi
 on a table), and cross-anchor relocation, where an object is transferred to a different
 anchor (e.g., from a table to a shelf). We specifically focus on cross-anchor relocations, as
 the spatial displacement of in-anchor relocations is too minor to rigorously validate our
-dynamic handling pipeline. For multi-floor dynamic navigation, we construct novel
-environments using the same toolkit employed by DualMap [6]. The resulting benchmark
-comprises 25 cross-floor relocation episodes across five scenes, and each episode is
-evaluated as an independent ObjectNav episode for the compared methods. Fig. 5 visualizes one
+dynamic handling pipeline. For multi-floor dynamic navigation, we construct a new benchmark
+with the same toolkit employed by DualMap [6] on five two-storey HM3D scenes (00800, 00821,
+00862, 00873, 00878), each holding six to eight YCB objects from eight classes. Every scene
+has a static layout and a cross-anchor layout in which every object is moved to a different
+anchor, most of them onto the other storey. Poses are produced by the toolkit's generator
+rather than written by hand: an object rests on the top surface of an anchor whose kind and
+room its class affords, one object per anchor, 0.35 m apart, every pose reachable from the
+scene's single navigable island. One episode is defined per (layout, object, start), and three
+seeds that differ only in the start pose give 73 episodes each, 219 in total: 111 static, 33
+moved on the same storey, 36 moved one storey up and 39 one storey down. The start storey is
+drawn uniformly from the storeys that hold objects, so 104 episodes start on the object's
+storey and 115 elsewhere, and the agent must decide whether to change storey at all rather
+than being rewarded only for leaving. Before each episode the agent inherits a prior map built
+by its own exploration of the static layout (pass 1), in which the agent also views each object
+from the layout's viewpoints, so the prior holds the object where it was. That map also carries
+the detector's errors: of its 90 tracks bearing a benchmark object's label, 52 are not that
+object. Appendix D gives the generator rules, the per-scene distributions, the destinations
+against the affinity prior and the coverage audit of the prior map. Fig. 5 visualizes one
 episode of each relocation mode together with the generation protocol.
 
 **Metrics.** To evaluate the performance of object navigation tasks, we report Success Rate
 (SR). Following the evaluation criteria of DualMap [6], an episode is considered successful
 if the agent terminates within 1.0 meter of the target object. In dynamic scenes, success
-additionally requires locating the target within three attempts. The multi-floor benchmark
-additionally reports Success weighted by Path Length (SPL), which scales success by the ratio
-of the shortest-path length to the actual path length. Single-floor episodes use a 500-step
-budget, and multi-floor episodes use 1,000 steps to account for the longer paths that
-cross-floor search requires.
+additionally requires locating the target within three attempts. On the multi-floor benchmark
+a stop must also be on the object's storey (the stop's floor within 1.0 m of the object's
+height), every method gets the same three attempts, and we additionally report Success
+weighted by Path Length (SPL), which scales success by the ratio of the shortest-path length
+to the actual path length, first-attempt SR, and SR split by relocation class and by start
+storey, each with a Wilson 95% interval over the 73 episodes of a seed. Single-floor episodes
+use a 500-step budget, and multi-floor episodes use 1,000 steps to account for the longer
+paths that cross-floor search requires.
 
 **Compared Methods.** For our baseline comparisons, we include ConceptGraphs [5] and HOV-SG
 [4]. Since our experimental setup strictly aligns with DualMap [6], we directly report the
@@ -506,6 +523,10 @@ and segmentation.
 | Dynamic (Cross-anchor) | **Ours** | 66.7% | 27.8% | 64.7% | 53 | **52.8%** |
 
 † Indicates rerun results.
+
+> **REVISION (2026-10-17).** The table below is the submitted v1 result (25 episodes); its
+> problems are listed in Appendix B, "Table II, re-examined". It is replaced by the Benchmark v2
+> results (73 episodes x 3 seeds, Appendix D) once the final arm's seeds 43 and 44 finish.
 
 **TABLE II** — Success Rate Comparison Across Different Multi-floor Scene Cross-anchor Changes
 
@@ -805,3 +826,105 @@ down every round whatever it is looking for. The mean makes the score scale-free
 margin then requires another storey to be decisively better, which together let the posterior
 return "no opinion" — on this evidence the honest answer — and leave the storey choice to the
 mechanisms that do carry floor information.
+
+## Appendix D — the multi-floor benchmark (Benchmark v2)
+
+What the reviewers found undocumented: how the episodes were generated, how storeys and starts
+are distributed, where moved objects go, how a run is scored and what the prior map holds.
+`docs/BENCHMARK_V2.md` is the working version; every number below is re-derivable with
+`scripts/describe_benchmark.py +experiment=mfv2_dataset --seeds 42 43 44` (episodes) and
+`scripts/audit_map_coverage.py` (prior map, `outputs/mfv2/audit_v2.txt`).
+
+**Scenes and objects.** Five HM3D v0.2 scenes with objects on two storeys — 00800, 00821,
+00862, 00873, 00878 — and six to eight YCB objects per scene from eight classes: cracker box,
+tin can (tomato soup), blue plastic pitcher, bowl, banana, toy airplane, coffee can, yellow
+bottle (mustard).
+
+**Layouts and the generator.** Each scene has two layouts, both produced by the data
+collector's generator (`replace_placement.py`) and never written as coordinates: *static*, the
+world pass 1 maps, and *cross_anchor_01*, in which every object is moved to a different anchor.
+Every pose satisfies the generator's rules: the object rests on the top surface of an anchor
+whose kind and room its class affords (food items: kitchen, dining room, living room); one
+object per anchor; a 0.35 m keep-out between objects; every pose reachable from the scene's
+one navigable island (worst approach 0.51–1.01 m). To balance the direction of cross-storey
+moves, some static and cross-anchor poses were exchanged and both re-placed through the same
+generator; upper-storey anchor supply caps the descents two scenes can hold (00873 has one
+affordable anchor upstairs, 00878 two). The multi-floor `in_anchor_01` layouts are not used:
+they move objects across anchors and storeys, which is not what the name says.
+
+**Episodes.** One episode per (layout, object, seed); the seeds 42, 43 and 44 differ only in
+the start pose — 73 episodes per seed, 219 in all. An episode's class is read off its geometry,
+not off the layout name:
+
+| class | episodes (3 seeds) | start on the object's storey | start elsewhere | start-to-goal geodesic, m (p10 / p50 / p90) |
+|---|---:|---:|---:|---:|
+| static | 111 | 45 | 66 | 5.2 / 10.2 / 23.0 |
+| moved, same storey | 33 | 13 | 20 | 4.1 / 9.7 / 17.0 |
+| moved one storey up | 36 | 22 | 14 | 4.3 / 14.4 / 25.2 |
+| moved one storey down | 39 | 24 | 15 | 3.5 / 6.6 / 21.1 |
+| all | 219 | 104 | 115 | 4.4 / 9.7 / 21.1 |
+
+**Starts.** The start storey is drawn uniformly from the storeys holding at least one of the
+scene's objects, then a navigable point on it, so about half the episodes start on the object's
+storey and the agent must decide whether to change storey at all (the submitted Table II
+started every episode on the storey the object had left):
+
+| scene | start storeys: height (starts over 3 seeds) |
+|---|---|
+| 00800 | 0.2 m (16), 3.2 m (20) |
+| 00821 | −3.5 m (22), 0.2 m (23) |
+| 00862 | 0.1 m (22), 3.3 m (26) |
+| 00873 | −3.0 m (22), 0.0 m (20) |
+| 00878 | 0.1 m (22), 2.8 m (26) |
+
+**Where moved objects go.** The 36 relocations (the layouts are the same for every seed) end on
+a cabinet 17 times (kitchen, sink and bathroom cabinets included), a table 13 times (coffee,
+dining, display and side tables), a counter, worktop or kitchen island 5 times and a bedroom
+chest once. Against the affinity prior the agent searches with, 20 of the 36 destinations are in
+the prior's top three for that class, 9 are its first choice and 33 are ranked at all. This
+answers the reviewer's point on non-semantic destinations: the single-floor DualMap release
+places a tomato-soup can on a bed seven times, where no semantic prior can pay; here it can,
+and the affinity ablations (LLM-generated prior, flat prior) measure how much.
+
+**Scoring.** A STOP succeeds within 1.0 m of the object horizontally and on its storey (the
+stop's floor height within 1.0 m of the object's). Every arm gets three attempts, a failed one
+re-arming the agent with its map kept, within 1,000 steps. We report SR with a Wilson 95%
+interval, by class and by start storey, alongside first-attempt SR and the horizontal-only rule
+of the submitted version.
+
+**The prior map (pass 1).** ASCENT's policy walks every static episode of the scene at pass 2's
+resolution (1280×960, YOLOE-11L at 1280), and after each episode the world model is shown its
+target from three of the layout's own viewpoints, so the map the agent inherits has seen every
+object. Two artifacts accumulate over the scene's episodes: the obstacle maps pass 2 plans over,
+and the scene graph. Audit:
+
+| scene | storeys mapped (free fraction) | static targets with a same-label track within 1 m |
+|---|---|---:|
+| 00800 | 0.81, 0.89 | 6 / 6 |
+| 00821 | 0.92, 0.88 | 7 / 8 (cracker box missing) |
+| 00862 | 0.91, 0.89, 0.89 | 7 / 8 (cracker box missing) |
+| 00873 | 0.87, 0.90 | 6 / 7 (tomato-soup can missing) |
+| 00878 | 0.95, 0.90, **0.00** | 7 / 8 (toy airplane missing) |
+
+00878's top storey was never walked in pass 1, so it has no occupancy; its objects are in the
+graph from the target tour, and pass 2 explores that storey without a prior occupancy map. The
+graph also records where pass 1 changed storey (its stair connectivity) — the point at which
+the floor estimator committed the new storey, i.e. an arrival on the storey reached — and, in
+00800 and 00821, a stair landing stored as a storey of its own, which the arms with the storey
+belief remove before the episode.
+
+**False positives in the prior.** Of the 90 graph tracks carrying a benchmark object's label,
+52 are not the object. A static episode starting on the other storey often commits first to one
+of those on its start storey: on seed 42 (OSG baseline) 4 of 17 such episodes succeeded, against
+11 of 11 starting on the object's storey. The prior is therefore wrong in both directions the
+method is built for — objects that moved, and objects that were never there.
+
+**Detector vocabulary.** Every arm's detector is given the episode's target. The OSG arm's
+fixed vocabulary, which decides what else is mapped, names five of the eight classes (cracker
+box, tin can, blue plastic pitcher, bowl, banana) but not toy airplane, coffee can or yellow
+bottle; those are mapped only as a target. The ASCENT arm runs its own detector (D-FINE over a
+fixed vocabulary of 41 classes, Grounding-DINO for a target outside COCO), and the ASCENT-YOLOE
+arm swaps in OSG's detector and vocabulary so that perception is aligned. Neither detector is
+zero-shot on this benchmark: the OSG vocabulary and its lowered score thresholds for the
+pitcher, the tin can and the banana (0.2 against 0.3) were chosen on these objects
+(`docs/ZERO_SHOT_AUDIT.md`), and ASCENT-YOLOE is given the same advantage.
