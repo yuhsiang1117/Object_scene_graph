@@ -141,3 +141,44 @@ def test_an_unknown_mode_fails_fast():
     policy = _policy(LEVELS_00873, UPPER_00873, EDGES_00873, mode="mouth")
     with pytest.raises(ValueError):
         policy._remembered_stair(LOWER_00873)
+
+
+# ------------------------------- ahead of the flights read off the height layer
+
+def _switching_policy(monkeypatch, before_flights: bool):
+    """00800 static 50001, reduced: the agent on the lower storey, a usable
+    flight_up whose foot was taken 3 m from the true one, and pass 1's arrival
+    on this storey 0.8-1.0 m from it."""
+    import osg.agent.floor_policy as fp
+    from types import SimpleNamespace
+
+    flight = SimpleNamespace(kind="up", cells_rc=np.zeros((0, 2), int), heights=np.array([0.3, 1.5]),
+                             n_cells=2060, foot_xy=_p(-8.77, -2.77), top_xy=_p(-7.4, -4.7))
+    monkeypatch.setattr(fp, "find_flights", lambda *a, **k: [flight])
+    monkeypatch.setattr(fp, "find_portals", lambda *a, **k: [])
+    monkeypatch.setattr(fp, "apply_stair_mask", lambda *a, **k: None)
+    policy = _policy({TOP: 3.16, BOTTOM: 0.16}, BOTTOM, EDGES_00800, dropped={LANDING: 1.74})
+    policy.cfg.floor.climb_targets = "flights_first"
+    policy.cfg.floor.prefer_prior_stairs = True
+    policy.cfg.floor.prior_stairs_before_flights = before_flights
+    policy.stack.layer(TOP, step=0).floor_y = 3.16
+    policy.stack.layer(BOTTOM, step=0).floor_y = 0.16
+    policy.stack.current_id = BOTTOM
+    frame = SimpleNamespace(camera_position=np.array([-10.0, 1.04, -2.0]))
+    graph = SimpleNamespace(containers={}, objects={}, floors={}, rooms={})
+    return policy, frame, graph
+
+
+def test_as_measured_the_flight_goes_first(monkeypatch):
+    policy, frame, graph = _switching_policy(monkeypatch, before_flights=False)
+    goal = policy.try_switch(frame, 100, None, graph, "cracker box", None, target_floor=TOP)
+    assert goal is not None and goal.goal_xy == pytest.approx([-8.77, -2.77])
+
+
+def test_the_staircase_walked_before_goes_ahead_of_the_flight(monkeypatch):
+    policy, frame, graph = _switching_policy(monkeypatch, before_flights=True)
+    goal = policy.try_switch(frame, 100, None, graph, "cracker box", None, target_floor=TOP)
+    assert goal is not None
+    assert np.linalg.norm(goal.goal_xy - _p(-11.67, -3.37)) < 1.1      # the true foot
+    assert policy.portal_log[-1][2] == "prior_stair"
+    assert policy.stats["prior_stair_before_flights"] == 1

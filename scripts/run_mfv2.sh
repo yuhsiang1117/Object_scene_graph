@@ -19,6 +19,7 @@
 #   osg_descent       osg_creep, and a descending flight pursued to its top
 #   osg_mouth         osg_descent, and the switch aimed at where pass 1 arrived on this storey
 #   osg_mouth_walk    osg_mouth, and a climb with no route in view walks to the mouth first
+#   osg_traversed     osg_mouth_walk, and a staircase walked before tried ahead of flights
 #   osg_climb_oracle  ablation: the staircase walked by the navmesh follower
 #   osg_affinity_llm  the affinity prior from the LLM for every class, grounded
 #   osg_affinity_flat ablation: no affinity prior

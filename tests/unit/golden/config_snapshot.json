@@ -371,6 +371,7 @@
   "floor.prefer_prior_stairs": false,
   "floor.prior_stair_max_failures": 0,
   "floor.prior_stair_mouth": "edge",
+  "floor.prior_stairs_before_flights": false,
   "floor.prior_stairs_override_gate": false,
   "floor.source": "estimator",
   "floor.stair_cell_m": 0.1,

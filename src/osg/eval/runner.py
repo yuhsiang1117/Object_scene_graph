@@ -101,6 +101,7 @@ def _algorithm_fingerprint(cfg) -> dict:
         "prefer_prior_stairs": bool(getattr(cfg.floor, "prefer_prior_stairs", False)),
         "prior_stair_mouth": str(getattr(cfg.floor, "prior_stair_mouth", "edge")),
         "prior_stair_max_failures": int(getattr(cfg.floor, "prior_stair_max_failures", 0) or 0),
+        "prior_stairs_before_flights": bool(getattr(cfg.floor, "prior_stairs_before_flights", False)),
         "prior_stairs_override_gate": bool(
             getattr(cfg.floor, "prior_stairs_override_gate", False)),
         "portal_failure_memory": bool(getattr(cfg.floor, "portal_failure_memory", False)),
@@ -165,7 +166,7 @@ def run_eval(cfg) -> dict:
             # "search_surface_when_floor_unreachable"
             # "floor_mass_rule" "floor_mass_margin"
             # "cross_floor" "floor_stairs" "use_prior_stairs" "prefer_prior_stairs"
-            # "prior_stair_mouth" "prior_stair_max_failures"
+            # "prior_stair_mouth" "prior_stair_max_failures" "prior_stairs_before_flights"
             # "prior_stairs_override_gate" "portal_failure_memory" "climb_targets" "hold_pursuit" "dwell_on_arrival" "no_level_on_flight"
             # "climb_relink_flights" "flight_relink_span_m"
             # "climb_enabled" "climb_oracle" "stair_evidence_every_kf" "down_look_every"

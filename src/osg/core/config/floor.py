@@ -181,6 +181,12 @@ class FloorConfig:
     # (00873, seed 42: 40 steps on the flat floor beside its rail) is an
     # execution failure, not evidence against the place.
     prior_stair_max_failures: int = 0
+    # With `prefer_prior_stairs`, try the remembered staircase BEFORE the flights
+    # read off the height layer (`climb_targets: flights_first`), not only
+    # before portals. 00800 (seed 42, static 50001, mfv2_osg_mouth): the flight's
+    # foot was taken 3 m from the true one, beside the treads, and both climbs
+    # from it stalled at 0.0 m; pass 1 had arrived on this storey 0.8-1.0 m from it.
+    prior_stairs_before_flights: bool = False
     # Let a remembered staircase satisfy the switch gate when the geometric rule
     # will not. `may_switch`'s last clause is "nothing near is left on this
     # floor", which a large storey never satisfies, so `try_switch` returns

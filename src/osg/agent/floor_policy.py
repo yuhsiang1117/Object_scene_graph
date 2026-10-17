@@ -769,6 +769,49 @@ class FloorPolicy:
             return None
         return best[1], min(kept, key=lambda kh: abs(kh[1] - here_y))[0]
 
+    def _pursue_remembered(self, frame, step: int, remembered, floor_y: float,
+                           reachable_fn, directed: bool, portals) -> Optional[PortalGoal]:
+        """Start the pursuit of a remembered staircase (`_remembered_stair`), or
+        None when the reachability check refuses it."""
+        goal_xy, other_floor = remembered
+        # An arrival is a point on THIS storey (`_remembered_arrival`).
+        arrival = str(getattr(self.cfg.floor, "prior_stair_mouth", "edge")) == "arrival"
+        if reachable_fn is not None and not reachable_fn(
+            goal_xy, float(floor_y) if arrival else self.estimator.height_of(other_floor)
+        ):
+            self.stats["prior_stair_unreachable"] = (
+                self.stats.get("prior_stair_unreachable", 0) + 1
+            )
+            return None
+        self.pursuing = True
+        self._pursuit_goal_xy = np.asarray(goal_xy, dtype=float).copy()
+        self._portal_start_y = float(frame.camera_position[1])
+        self._portal_step = step
+        self.switch_policy.note_switch(step)
+        self.stats["floor_switch_attempts"] = (
+            self.stats.get("floor_switch_attempts", 0) + 1
+        )
+        self.stats["prior_stair_switch_attempts"] = (
+            self.stats.get("prior_stair_switch_attempts", 0) + 1
+        )
+        if directed:
+            self.stats["directed_floor_switch_attempts"] = (
+                self.stats.get("directed_floor_switch_attempts", 0) + 1
+            )
+        self.portal_log.append((
+            step, [round(float(x), 2) for x in goal_xy], "prior_stair",
+            len(portals),
+        ))
+        if portals:
+            self.stats["prior_stair_preferred_over_portal"] = (
+                self.stats.get("prior_stair_preferred_over_portal", 0) + 1
+            )
+        return PortalGoal(
+            goal_xy=np.asarray(goal_xy, dtype=float).copy(),
+            target_y=float(self.estimator.height_of(other_floor)),
+            deadline_steps=self.cfg.floor.portal_deadline_steps,
+        )
+
     def try_switch(
         self, frame, step: int, best_path_cost, scene_graph, target: str, reachable_fn,
         target_floor: Optional[int] = None, presence_of=None, stair_xyz=None,
@@ -853,6 +896,21 @@ class FloorPolicy:
             self._remembered_stair(target_floor)
             if bool(getattr(self.cfg.floor, "use_prior_stairs", False)) else None
         )
+        # A staircase the robot has already walked certifies the transition
+        # better than a flight read off the height layer
+        # (`floor.prior_stairs_before_flights`): on 00800 (seed 42, static
+        # 50001) the flight's foot was taken 3 m from the true one, beside the
+        # treads, and both climbs from it stalled at 0.0 m, while pass 1 had
+        # arrived on this storey 0.8-1.0 m from that foot.
+        if (remembered is not None
+                and bool(getattr(self.cfg.floor, "prior_stairs_before_flights", False))
+                and bool(getattr(self.cfg.floor, "prefer_prior_stairs", False))):
+            goal = self._pursue_remembered(frame, step, remembered, floor_y,
+                                           reachable_fn, directed, portals)
+            if goal is not None:
+                self.stats["prior_stair_before_flights"] = (
+                    self.stats.get("prior_stair_before_flights", 0) + 1)
+                return goal
         # A flight read off the height layer is the most direct target there is:
         # its lowest tread is the foot, and a goal ON the treads is what the
         # PointNav mover will climb, slowly. Tried first, ahead of the detector's
@@ -1034,44 +1092,8 @@ class FloorPolicy:
             # artifact, and its 24 attempts moved the agent a median 0.13 m.
             if remembered is None:
                 return None
-            goal_xy, other_floor = remembered
-            # An arrival is a point on THIS storey (`_remembered_arrival`).
-            arrival = str(getattr(self.cfg.floor, "prior_stair_mouth", "edge")) == "arrival"
-            if reachable_fn is not None and not reachable_fn(
-                goal_xy, float(floor_y) if arrival else self.estimator.height_of(other_floor)
-            ):
-                self.stats["prior_stair_unreachable"] = (
-                    self.stats.get("prior_stair_unreachable", 0) + 1
-                )
-                return None
-            self.pursuing = True
-            self._pursuit_goal_xy = np.asarray(goal_xy, dtype=float).copy()
-            self._portal_start_y = float(frame.camera_position[1])
-            self._portal_step = step
-            self.switch_policy.note_switch(step)
-            self.stats["floor_switch_attempts"] = (
-                self.stats.get("floor_switch_attempts", 0) + 1
-            )
-            self.stats["prior_stair_switch_attempts"] = (
-                self.stats.get("prior_stair_switch_attempts", 0) + 1
-            )
-            if directed:
-                self.stats["directed_floor_switch_attempts"] = (
-                    self.stats.get("directed_floor_switch_attempts", 0) + 1
-                )
-            self.portal_log.append((
-                step, [round(float(x), 2) for x in goal_xy], "prior_stair",
-                len(portals),
-            ))
-            if portals:
-                self.stats["prior_stair_preferred_over_portal"] = (
-                    self.stats.get("prior_stair_preferred_over_portal", 0) + 1
-                )
-            return PortalGoal(
-                goal_xy=np.asarray(goal_xy, dtype=float).copy(),
-                target_y=float(self.estimator.height_of(other_floor)),
-                deadline_steps=self.cfg.floor.portal_deadline_steps,
-            )
+            return self._pursue_remembered(frame, step, remembered, floor_y,
+                                           reachable_fn, directed, portals)
 
         agent_xy = frame.camera_position[list(PLANE)]
         # Prefer a storey we have NOT searched, then the nearest. Nearest-only
