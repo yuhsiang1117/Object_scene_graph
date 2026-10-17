@@ -1,0 +1,12 @@
+# @package _global_
+#
+# Ablation of the final arm (`mfv2_osg_descent`): no VLM. In this arm the VLM's only role is the absence check on arrival
+# (`verification.absence_only` keeps the candidate check off), so this removes it all.
+#
+#   bash scripts/run_mfv2.sh osg_descent_no_vlm <seed>
+defaults:
+  - mfv2_osg_descent
+  - _self_
+
+verification:
+  absence_use_vlm: false

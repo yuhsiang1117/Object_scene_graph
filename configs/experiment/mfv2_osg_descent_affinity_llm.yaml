@@ -1,0 +1,15 @@
+# @package _global_
+#
+# Ablation of the final arm (`mfv2_osg_descent`): the affinity prior from the LLM for every class (grounded), instead of the
+# authored table; cached per class, so one answer per class per run.
+#
+#   bash scripts/run_mfv2.sh osg_descent_affinity_llm <seed>
+defaults:
+  - mfv2_osg_descent
+  - _self_
+
+exploration:
+  affinity_llm: true
+  affinity_table: false
+  affinity_grounded: true
+  affinity_cache: outputs/affinity_cache_llm_only.json

@@ -1,0 +1,11 @@
+# @package _global_
+#
+# Ablation of the final arm (`mfv2_osg_descent`): the search posterior over mapped surfaces off: frontiers only (Table III).
+#
+#   bash scripts/run_mfv2.sh osg_descent_no_search <seed>
+defaults:
+  - mfv2_osg_descent
+  - _self_
+
+exploration:
+  search_posterior: false

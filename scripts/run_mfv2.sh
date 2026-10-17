@@ -36,7 +36,7 @@ cd "$(dirname "$0")/.."
 set -a; [ -f docker/.env ] && . <(grep -vE '^(UID|GID)=' docker/.env); set +a
 umask 002
 
-ARM=${1:?arm: osg | osg_gate | osg_gate2 | osg_gate2_vet | osg_storey | osg_climb | osg_creep | osg_descent | osg_storey_oracle | osg_climb_oracle | osg_affinity_llm | osg_affinity_flat | osg_no_presence | osg_no_search | osg_no_vlm | ascent | ascent_yoloe}
+ARM=${1:?arm: osg | osg_<preset suffix> (configs/experiment/mfv2_osg_*.yaml) | ascent | ascent_yoloe}
 SEED=${2:?seed, e.g. 42}
 shift 2
 OBS=${OBS:-outputs/maps_v2_ascent}
@@ -48,10 +48,12 @@ SCENES=("$@")
   00862-LT9Jq6dN3Ea 00873-bxsVRursffK 00878-XB4GS9ShBRE)
 
 case "$ARM" in
-  osg|osg_gate|osg_gate2|osg_gate2_vet|osg_storey|osg_climb|osg_creep|osg_descent|osg_storey_oracle|osg_climb_oracle|osg_affinity_llm|osg_affinity_flat|osg_no_presence|osg_no_search|osg_no_vlm)
+  osg|osg_*)
+    # Any OSG arm with a preset: configs/experiment/mfv2_<arm>.yaml.
     PRESET=mfv2_$ARM
+    [ -f "configs/experiment/$PRESET.yaml" ] || { echo "unknown arm $ARM (no $PRESET preset)" >&2; exit 2; }
     MAX_PARALLEL=${MAX_PARALLEL:-2}
-    if [ "$ARM" = osg_affinity_llm ] && [ ! -f outputs/affinity_cache_llm_only.json ] \
+    if [[ "$ARM" == *affinity_llm ]] && [ ! -f outputs/affinity_cache_llm_only.json ] \
         && [ -f outputs/affinity_cache.json ]; then
       # Same answers as the shipped arm for the classes both ask the model about.
       cp outputs/affinity_cache.json outputs/affinity_cache_llm_only.json
