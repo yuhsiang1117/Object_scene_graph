@@ -103,6 +103,9 @@ class FloorStack:
         self._layers: Dict[int, FloorLayer] = {}
         self.current_id = int(current)
         self.stair_edges: List[StairEdge] = []
+        # {key: height} of prior storeys `eval/prior_map.drop_prior_landings`
+        # removed; `stair_edges` still name them.
+        self.dropped_levels: Dict[int, float] = {}
         self.layer(self.current_id)  # floor 0 always exists
 
     # ------------------------------------------------------------------ access
@@ -224,4 +227,5 @@ class FloorStack:
         self._room_ids = RoomIdCounter()
         self.current_id = 0
         self.stair_edges = []
+        self.dropped_levels = {}
         self.layer(0)

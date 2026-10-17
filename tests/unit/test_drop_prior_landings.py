@@ -45,6 +45,8 @@ def test_the_00800_landing_goes_and_its_tracks_are_refiled():
     assert sorted(agent._floor_stack._layers) == [0, 2]
     assert sorted(agent.floors.estimator._levels) == [0, 2]
     assert on_landing.floor_key == 0
+    # The stair edges still name it (`FloorPolicy._remembered_arrival`).
+    assert agent._floor_stack.dropped_levels == {1: 1.74}
 
 
 def test_an_unwalked_storey_is_kept():

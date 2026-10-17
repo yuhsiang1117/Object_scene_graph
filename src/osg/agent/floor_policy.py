@@ -671,7 +671,16 @@ class FloorPolicy:
 
         Prefers the most-traversed edge, then the most recent, because a
         staircase pass 1 used repeatedly is the one that works.
+
+        That reading of the two points is not what `FloorStack.set_current`
+        records (both lie on the storey arrived at); `floor.prior_stair_mouth`
+        "arrival" reads what it does record -- see `_remembered_arrival`.
         """
+        mode = str(getattr(self.cfg.floor, "prior_stair_mouth", "edge"))
+        if mode == "arrival":
+            return self._remembered_arrival(target_floor)
+        if mode != "edge":
+            raise ValueError(f"floor.prior_stair_mouth must be 'edge' or 'arrival', got {mode!r}")
         current = int(self.stack.current_id)
         best = None
         for edge in getattr(self.stack, "stair_edges", []) or []:
@@ -689,6 +698,76 @@ class FloorPolicy:
             if best is None or rank > best[0]:
                 best = (rank, np.asarray(xy, dtype=float), other)
         return None if best is None else (best[1], best[2])
+
+    def _remembered_arrival(self, target_floor: Optional[int]):
+        """This storey's stair mouth toward `target_floor`, from where the prior
+        map ARRIVED on this storey, as (goal_xy, other_floor) or None.
+
+        `set_current` runs when the estimator commits the new storey, so an
+        edge's `entry_xy` is where that traversal arrived and `exit_xy` the
+        storey's first arrival -- both on `to_floor`. An edge arriving here from
+        a storey on the target's side came up (or down) the staircase that goes
+        there. Its `from_floor` may be a landing `drop_prior_landings` took out
+        of the stack; its height is still known (`stack.dropped_levels`).
+
+        Ranked: from the target storey itself, then the most traversed, then the
+        most recent. A mouth `prior_stair_max_failures` pursuits failed beside
+        is skipped. `other_floor` is the target, or with none asked for the
+        nearest kept storey on the edge's side.
+        """
+        current = int(self.stack.current_id)
+        here_y = float(self.estimator.height_of(current))
+        dropped = dict(getattr(self.stack, "dropped_levels", {}) or {})
+
+        levels = self.known_levels()
+
+        def height(key: int) -> Optional[float]:
+            if int(key) in levels:
+                return float(levels[int(key)])
+            return dropped.get(int(key))
+
+        want = None
+        if target_floor is not None:
+            target_y = height(int(target_floor))
+            if target_y is None:
+                return None
+            want = 1.0 if target_y > here_y else -1.0
+        tol = float(self.cfg.floor.level_tol_m)
+        max_fail = int(getattr(self.cfg.floor, "prior_stair_max_failures", 0) or 0)
+        radius = float(getattr(self.cfg.floor, "portal_failure_radius_m", 1.5))
+        best = None
+        for edge in getattr(self.stack, "stair_edges", []) or []:
+            if int(edge.to_floor) != current or int(edge.from_floor) == current:
+                continue
+            other_y = height(int(edge.from_floor))
+            if other_y is None or abs(other_y - here_y) <= tol:
+                continue
+            side = 1.0 if other_y > here_y else -1.0
+            if want is not None and side != want:
+                continue
+            for xy in (edge.entry_xy, edge.exit_xy):
+                if xy is None:
+                    continue
+                xy = np.asarray(xy, dtype=float)
+                if max_fail > 0 and sum(
+                    float(np.linalg.norm(xy - bad)) <= radius for bad in self._failed_portals
+                ) >= max_fail:
+                    self.stats["prior_stair_skipped_after_failures"] = (
+                        self.stats.get("prior_stair_skipped_after_failures", 0) + 1)
+                    continue
+                exact = target_floor is not None and int(edge.from_floor) == int(target_floor)
+                rank = (exact, int(edge.n_traversals), int(edge.step))
+                if best is None or rank > best[0]:
+                    best = (rank, xy, side)
+        if best is None:
+            return None
+        if target_floor is not None:
+            return best[1], int(target_floor)
+        kept = [(k, h) for k, h in self.known_levels().items()
+                if k != current and (h - here_y) * best[2] > tol]
+        if not kept:
+            return None
+        return best[1], min(kept, key=lambda kh: abs(kh[1] - here_y))[0]
 
     def try_switch(
         self, frame, step: int, best_path_cost, scene_graph, target: str, reachable_fn,
@@ -956,8 +1035,10 @@ class FloorPolicy:
             if remembered is None:
                 return None
             goal_xy, other_floor = remembered
+            # An arrival is a point on THIS storey (`_remembered_arrival`).
+            arrival = str(getattr(self.cfg.floor, "prior_stair_mouth", "edge")) == "arrival"
             if reachable_fn is not None and not reachable_fn(
-                goal_xy, self.estimator.height_of(other_floor)
+                goal_xy, float(floor_y) if arrival else self.estimator.height_of(other_floor)
             ):
                 self.stats["prior_stair_unreachable"] = (
                     self.stats.get("prior_stair_unreachable", 0) + 1

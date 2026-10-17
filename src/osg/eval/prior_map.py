@@ -440,6 +440,10 @@ def drop_prior_landings(cfg, agent) -> list:
     dropped = []
     for k in landings:
         dropped.append(round(float(layers[k][0]), 2))
+        # The stair edges still name the landing; their direction is its height
+        # (`FloorPolicy._remembered_arrival`).
+        if isinstance(getattr(stack, "dropped_levels", None), dict):
+            stack.dropped_levels[int(k)] = float(layers[k][0])
         stack._layers.pop(k, None)
         if estimator is not None:
             estimator._levels.pop(k, None)

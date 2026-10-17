@@ -17,6 +17,7 @@
 #   osg_storey_oracle osg_storey with the navmesh walking the stairs (ceiling)
 #   osg_creep         osg_climb, and the approach's last metre walked by a steered creep
 #   osg_descent       osg_creep, and a descending flight pursued to its top
+#   osg_mouth         osg_descent, and the switch aimed at where pass 1 arrived on this storey
 #   osg_climb_oracle  ablation: the staircase walked by the navmesh follower
 #   osg_affinity_llm  the affinity prior from the LLM for every class, grounded
 #   osg_affinity_flat ablation: no affinity prior

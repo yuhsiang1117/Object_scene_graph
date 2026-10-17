@@ -412,6 +412,12 @@ class AgentConfig:
     climb_route_deadband_deg: float = 20.0
     climb_route_replan_steps: int = 10
     climb_route_stall_steps: int = 40
+    # Extra steps the stall rule allows before the climb first gains 0.1 m: a
+    # route climb starts up to `climb_route_start_m` out on the flat floor, and
+    # that walk plus one 12-turn look-round is more than 40 steps. 00873 (seed
+    # 42, static 50002, mfv2_osg_descent) ended "stalled" at step 41 heading
+    # for the lip 1 m away. 0 = as measured.
+    climb_route_approach_steps: int = 0
     # The least height a route must gain to be walked when it does not reach
     # flat floor. From the foot of a flight the camera sees no tread surface
     # above its own height (~0.88 m), only risers: on 00821 the mapped treads

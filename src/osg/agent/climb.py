@@ -658,8 +658,12 @@ class ClimbPolicy:
         if self._climb_max_dy > self._route_best_dy + 0.1:
             self._route_best_dy = float(self._climb_max_dy)
             self._route_progress_step = int(self.step_count)
-        return int(self.step_count) - self._route_progress_step > int(
-            getattr(self.cfg.agent, "climb_route_stall_steps", 40))
+        limit = int(getattr(self.cfg.agent, "climb_route_stall_steps", 40))
+        if self._route_best_dy <= 0.0:
+            # Still on the floor it started from: the walk to the flight
+            # (`climb_route_approach_steps`).
+            limit += int(getattr(self.cfg.agent, "climb_route_approach_steps", 0) or 0)
+        return int(self.step_count) - self._route_progress_step > limit
 
     def _oracle_action(self, frame: FrameData, agent_xy: np.ndarray) -> Optional[str]:
         """`agent.climb_oracle`: Habitat's follower walks the staircase.

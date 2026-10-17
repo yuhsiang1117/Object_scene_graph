@@ -161,6 +161,26 @@ class FloorConfig:
     # 0.17 m in 500 steps. `connectivity` records where pass 1 actually changed
     # floor, which is a staircase by construction.
     prefer_prior_stairs: bool = False
+    # Which point of a remembered traversal is this storey's stair mouth.
+    # "edge" (as measured): `_remembered_stair`'s reading -- `entry_xy` of an
+    # edge leaving this storey, `exit_xy` of one arriving. But `set_current`
+    # runs when the estimator COMMITS the new storey, so both points of every
+    # saved edge lie on the storey ARRIVED at (outputs/maps_v2_osg: entry ==
+    # exit on 13 of 23 edges, the rest a later arrival beside the first).
+    # "edge" sent a descent from 00873's upper storey to (-3.27, -4.96), a
+    # point on the lower one, ranked ahead of the arrival on this storey 0.3 m
+    # from the true lip. "arrival": only edges that ARRIVED on this storey,
+    # from a storey on the target's side of it (a dropped landing counts by
+    # its height). On seed 42 (mfv2_osg_climb) 13 of the 18 cross-storey
+    # episodes that never reached the object's storey had one, 0.3-0.8 m from
+    # the true mouth; the agent chased sightline portals instead.
+    prior_stair_mouth: str = "edge"
+    # Skip a remembered mouth once this many pursuits failed within
+    # `portal_failure_radius_m` of it (0: never, as measured -- the branch had
+    # no failure check). Not 1: a climb that stalls at the right staircase
+    # (00873, seed 42: 40 steps on the flat floor beside its rail) is an
+    # execution failure, not evidence against the place.
+    prior_stair_max_failures: int = 0
     # Let a remembered staircase satisfy the switch gate when the geometric rule
     # will not. `may_switch`'s last clause is "nothing near is left on this
     # floor", which a large storey never satisfies, so `try_switch` returns
