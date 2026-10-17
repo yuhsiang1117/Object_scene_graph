@@ -149,3 +149,39 @@ def test_record_top_keeps_the_highest_point_below_the_camera():
     rc = cm.world_to_grid(np.array([1.0, 1.0]))
     assert cm.height_top.shape == cm.grid.shape
     assert abs(float(cm.height_top[rc[0], rc[1]]) - 0.5) < 1e-6
+
+
+def _descent_from_the_treads(cm):
+    """Standing 2.2 m down a flight that falls along +x from a lip at x=0,
+    as the climb maps it: the treads in `height_top` only (the lowest layer is
+    not recorded on a flight), the cells FREE where rays from the storey above
+    passed over, the tread just ahead unseen, and the slab of the storey above
+    overhanging the last treads in the lowest layer."""
+    fall = lambda x, z: -np.floor(np.clip(x, 0, None) / 0.28 + 1) * 0.17      # noqa: E731
+    _paint(cm, -3, 0, -1, 1, 0.0)                                             # storey above
+    _paint(cm, 0, 5.0, -0.5, 0.5, fall, top=True)
+    cm.grid[cm.world_to_grid(np.array([0.0, -0.5]))[0]:cm.world_to_grid(np.array([5.0, 0.5]))[0],
+            cm.world_to_grid(np.array([0.0, -0.5]))[1]:cm.world_to_grid(np.array([5.0, 0.5]))[1]] = FREE
+    _paint(cm, 5.0, 8.0, -1, 1, -3.06, top=True)                              # storey below
+    _paint(cm, 3.8, 5.0, -0.5, 0.5, 0.0)                                      # the slab overhead
+    r0, c0 = cm.world_to_grid(np.array([3.75, -0.5]))
+    r1, c1 = cm.world_to_grid(np.array([3.95, 0.5]))
+    cm.height_top[r0:r1, c0:c1] = np.nan                                      # unseen just ahead
+    return 3.6, float(fall(3.6, 0.0))
+
+
+def test_a_descent_from_the_treads_reaches_the_storey_below():
+    cm = _map()
+    x, standing = _descent_from_the_treads(cm)
+    route = plan_stair_route(cm, floor_y=0.0, agent_xy=(x, 0.0), standing_y=standing,
+                             direction=-1, target_y=-3.06, gap_fill_m=0.8)
+    assert route is not None and route.reaches_target
+    assert route.xy[-1][0] > 5.0 and abs(route.heights[-1] + 3.06) < 0.05
+
+
+def test_without_the_stairs_handling_the_flight_ahead_is_paved_at_standing_height():
+    cm = _map()
+    x, standing = _descent_from_the_treads(cm)
+    route = plan_stair_route(cm, floor_y=0.0, agent_xy=(x, 0.0), standing_y=standing,
+                             direction=-1, target_y=-3.06)
+    assert route is None or not route.reaches_target

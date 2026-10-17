@@ -44,6 +44,7 @@
   "agent.climb_relink_flights": false,
   "agent.climb_route": false,
   "agent.climb_route_deadband_deg": 20.0,
+  "agent.climb_route_gap_fill_m": 0.0,
   "agent.climb_route_lookahead_m": 0.5,
   "agent.climb_route_min_gain_m": 0.3,
   "agent.climb_route_probe_steps": 10,

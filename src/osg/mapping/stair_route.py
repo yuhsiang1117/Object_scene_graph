@@ -110,6 +110,7 @@ def plan_stair_route(
     edge_cost: float = 5.0,
     bumps_xy=None,
     blind_fill_m: float = 1.5,
+    gap_fill_m: float = 0.0,
     storey_tol_m: float = 0.6,
     storey_m: float = 1.8,
     standing_span_m: float = 0.45,
@@ -162,12 +163,67 @@ def plan_stair_route(
     # grid calls FREE inside that blind ring are floor the agent is standing
     # on or walked across: give them its standing height. Only that close --
     # further out a FREE cell can be a ray passing over a stairwell.
-    if blind_fill_m > 0.0:
+    on_stairs = abs(float(standing_y) - float(floor_y)) > 0.15
+    if gap_fill_m > 0.0 and on_stairs and int(direction) < 0:
+        # Going down from the stairs, nothing more than a metre above the
+        # agent's feet is a surface it will walk on -- but the storey above
+        # mapped what overhangs the flight from up there, and a block holding
+        # both that and the treads below it "has something standing in it".
+        # Measured at the foot of 00873's switchback (standing -2.45): the
+        # soffit over the last treads (-0.6 .. 0.9 m) walled off the whole
+        # width of the flight 0.5 m ahead and the route was lost two treads
+        # from the floor below.
+        over = float(standing_y) + 1.0
+        low = np.where(low > over, np.nan, low)
+        high = np.where(high > over, np.nan, high)
+    if gap_fill_m > 0.0:
+        # While climbing, only `height_top` is recorded (`ClimbPolicy.
+        # _record_climb_surfaces`; the occupancy update is suppressed on a
+        # flight), so the treads seen from the stairs have no LOWEST reading.
+        # Where the top layer is all there is, it is the surface.
+        low = np.where(~np.isfinite(low) & np.isfinite(high), high, low)
+    if blind_fill_m > 0.0 and not (gap_fill_m > 0.0 and on_stairs):
+        # ...and only from the floor. FREE is this storey's floor-relative
+        # grid: rays from the floor above pass over a stairwell and mark its
+        # treads FREE, so on the stairs this rule paved the flight ahead at
+        # the agent's own height. Measured on 00862's second leg (standing
+        # 1.20): every tread ahead read 1.20, the real ones at 0.95 / 0.76 /
+        # 0.57 were dropped as the same surface or left unreachable, and the
+        # climb stalled 2.2 m down. With `gap_fill_m` on, the stairs get the
+        # bridging below instead.
         rr, cc = np.mgrid[r0:r1, c0:c1]
         dx = costmap.origin[0] + (rr + 0.5) * res - float(agent_xy[0])
         dz = costmap.origin[1] + (cc + 0.5) * res - float(agent_xy[1])
         blind = (~np.isfinite(low)) & (grid == FREE) & (dx * dx + dz * dz <= float(blind_fill_m) ** 2)
         low = np.where(blind, float(standing_y), low)
+    # On the treads themselves that rule has nothing to work with: they are
+    # not FREE in this storey's floor-relative grid, and the tread just ahead
+    # stays unseen -- the camera cannot look under itself. Measured descending
+    # 00862's switchback (scratchpad trace, the second leg at 1.12 m): the
+    # treads at 0.62 and 0.42 m were mapped 0.3-0.5 m ahead, the band between
+    # them and the agent was not, and the planner found no route 3 times out
+    # of 3 until the climb stalled. Bridge such a band from both sides: an
+    # unseen, unoccupied cell within `gap_fill_m` takes the mean of the seen
+    # cells around it, a few cells deep, which makes the missing tread a ramp
+    # between its neighbours.
+    if gap_fill_m > 0.0:
+        rr, cc = np.mgrid[r0:r1, c0:c1]
+        dx = costmap.origin[0] + (rr + 0.5) * res - float(agent_xy[0])
+        dz = costmap.origin[1] + (cc + 0.5) * res - float(agent_xy[1])
+        near = (dx * dx + dz * dz <= float(gap_fill_m) ** 2) & (grid != OCCUPIED)
+        filled = low.copy()
+        for _ in range(max(1, int(np.ceil(0.25 / res)))):
+            seen = np.isfinite(filled)
+            todo = near & ~seen
+            if not todo.any():
+                break
+            total = ndimage.uniform_filter(np.where(seen, filled, 0.0), size=3, mode="constant")
+            count = ndimage.uniform_filter(seen.astype(float), size=3, mode="constant")
+            new = todo & (count * 9.0 >= 3.0 - 1e-6)
+            if not new.any():
+                break
+            filled[new] = total[new] / count[new]
+        low = filled
     # A wall standing on THIS floor: occupied, and its lowest seen point at the
     # floor. Treads above or below the floor are occupied in a floor-relative
     # grid too, by their own surface, and must stay in.

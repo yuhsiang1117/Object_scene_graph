@@ -18,3 +18,13 @@ defaults:
 
 floor:
   descent_goal: extrapolated
+
+# On the stairs, plan over what the treads look like from the treads
+# (`agent.climb_route_gap_fill_m`, mapping/stair_route.py): the top layer
+# where the lowest has no reading, no standing-height paving of FREE cells,
+# a bridge over the unseen tread ahead, nothing overhead on a descent, the
+# lowest layer recorded while climbing, and arrival judged by the storey's
+# own height. Traced from 1 m behind the true lip (scratchpad trace_suite):
+# 00862, 00873, 00821 descents 1/3 -> 3/3; the four ascents unchanged.
+agent:
+  climb_route_gap_fill_m: 0.8

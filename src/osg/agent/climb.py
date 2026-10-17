@@ -284,7 +284,7 @@ class ClimbPolicy:
             here = float(self.floors.estimator.height_of(self._climb_from_floor))
             needed = max(needed, abs(float(self.nav._goal_floor_y_cache) - here) - tol)
         routed = self._route_on and self._route is not None
-        if routed and self._route_arrived(frame, agent_xy):
+        if self._route_on and self._route_arrived(frame, agent_xy):
             self._end_climb(True, "route_end")
             return "look_up" if self._climb_pitched else TURN_ACTION
         if (
@@ -386,6 +386,7 @@ class ClimbPolicy:
                 storey_m=float(self.cfg.floor.new_level_m),
                 bumps_xy=self._route_bumps,
                 min_gain_m=float(getattr(self.cfg.agent, "climb_route_min_gain_m", 0.3)),
+                gap_fill_m=float(getattr(self.cfg.agent, "climb_route_gap_fill_m", 0.0) or 0.0),
                 explore=explore,
             )
         key = "climb_route_plans" if route is not None else "climb_route_none"
@@ -478,8 +479,15 @@ class ClimbPolicy:
             return
         floor_y = float(self.floors.estimator.height_of(int(self._climb_from_floor)))
         cm.ensure_contains(frame.camera_position[list(PLANE)], margin_m=float(m.max_range_m) + 1.0)
-        cm.record_top(pts[np.abs(pts[:, 1] - floor_y) < 3.5],
-                      cap_y=float(frame.camera_position[1]))
+        near = pts[np.abs(pts[:, 1] - floor_y) < 3.5]
+        cm.record_top(near, cap_y=float(frame.camera_position[1]))
+        if float(getattr(self.cfg.agent, "climb_route_gap_fill_m", 0.0) or 0.0) > 0.0:
+            # The lowest layer too, below the camera: `height_top` is a running
+            # MAXIMUM, so where the storey above already mapped its own slab
+            # over the foot of a flight (00821, from the top) the floor below
+            # seen now from the treads never displaced it, and the descent was
+            # lost 0.4 m above the storey it could see.
+            cm._record_heights(near[near[:, 1] < float(frame.camera_position[1])])
 
     def _route_action(self, frame: FrameData, agent_xy: np.ndarray) -> Optional[str]:
         """Follow the route: turn toward a point `climb_route_lookahead_m` along
@@ -622,9 +630,19 @@ class ClimbPolicy:
     def _route_arrived(self, frame: FrameData, agent_xy: np.ndarray) -> bool:
         """At the end of a route that reaches the storey, standing at its height."""
         route = self._route
+        standing = float(frame.camera_position[1]) - float(self.cfg.agent.camera_height)
+        target = self.nav._goal_floor_y_cache
+        if (float(getattr(self.cfg.agent, "climb_route_gap_fill_m", 0.0) or 0.0) > 0.0
+                and target is not None and abs(standing - float(target)) < 0.25):
+            # On the storey asked for, whatever the route says. A storey is not
+            # level to the centimetre: 00821's lower one is -3.47 m in the prior
+            # and -3.31 at the foot of its stairs, where the floor mapped so far
+            # is a strip beside the last tread -- never FLAT over the route's
+            # 0.5 m window, so no route "reached" it, and the descent that got
+            # there was lost re-planning on the spot.
+            return True
         if route is None or not route.reaches_target:
             return False
-        standing = float(frame.camera_position[1]) - float(self.cfg.agent.camera_height)
         # The route ends on FLAT floor, so standing within a tread of its height
         # is standing on the storey -- not two steps short of it, which 0.2 m
         # allowed on 00821 (ended at -0.17 for a floor at 0.13).

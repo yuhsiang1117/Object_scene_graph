@@ -423,6 +423,10 @@ class AgentConfig:
     climb_route_start_gain_m: float = 0.5
     # How often a storey request with nothing to drive to tries a route.
     climb_route_probe_steps: int = 10
+    # Bridge an unseen band of treads within this distance of the agent
+    # (`stair_route.plan_stair_route`): the tread just ahead is under the
+    # camera. 0 = off. 00862's second leg stalled on it.
+    climb_route_gap_fill_m: float = 0.0
     # Stamp the detector's `stairs` masks into the stair-evidence grids on every
     # keyframe. Until now that happened only on the single frame of a periodic
     # look-down, and `down_look_every` defaults to 0, so on every ycb preset the
