@@ -400,35 +400,53 @@ relative to surface inspection under the same utility.
 
 ### E. Multi-Floor Navigation Policy
 
-The multi-floor navigation policy converts the per-surface beliefs maintained by the
-preceding modules into a decision about which floor to search. Stable floor identifiers
-associate support surfaces with floor-specific candidate sets $\mathcal{S}_\varphi$, and the
-score of each nonempty set is defined as follows:
+The multi-floor policy answers two questions: on which storey the target is, and how to get
+there.
+
+**Which storey.** A score per storey averaged over its support surfaces cannot answer the
+first question. The affinity priors say which furniture holds an object, not which storey, and
+on our prior maps the per-storey means agree to within half a percent (Appendix C). The policy
+therefore maintains a belief over the $K$ storeys the agent knows, built from the two kinds of
+evidence that do carry storey information, the target's tracks and the search coverage:
 
 $$
-M_\varphi = \frac{1}{|\mathcal{S}_\varphi|}
-\sum_{x \in \mathcal{S}_\varphi} \tilde{b}(x)\,\rho(x)\,d(x),
+P_\varphi \propto \Big(w\,a_\varphi + \frac{1-w}{K}\Big)\big(1 - d\,c_\varphi\big),
+\qquad
+a_\varphi = 1 - \prod_{t \in \mathcal{T}_\varphi} \big(1 - p_t\big),
 \tag{8}
 $$
 
-where $\mathcal{S}_\varphi$ denotes the candidate surfaces on floor $\varphi$, and
-$\tilde{b}(x)$, $\rho(x)$, and $d(x)$ are the normalized surface score, the inspection
-discount, and the detection probability from Section III-D. The preferred floor is selected
-as $\varphi^\star = \arg\max_{\varphi : |\mathcal{S}_\varphi| > 0} M_\varphi$, and the mean
-prevents floors with more support surfaces from being favored on that basis alone.
+where $\mathcal{T}_\varphi$ are the target-labelled tracks on storey $\varphi$, prior-map
+anchors and live detections alike, with presence beliefs $p_t$ from Section III-C, each
+discounted by the track's identity rejections; $c_\varphi$ is the fraction of the storey's
+mapped floor the agent has passed within 2 m of during the episode; $d = 0.85$ is the
+probability that passing near the object means seeing it; and $w = 0.8$. A remembered location
+the agent has inspected and found empty loses its presence belief and stops anchoring its
+storey, and a storey searched without success decays through $c_\varphi$. A track's storey is
+read off its height rather than off the layer it was mapped on, and levels closer than one
+storey height are merged, because a pass-1 map stores a stair landing as a storey. The agent
+requests storey $\varphi'$ once $P_{\varphi'} \ge \kappa\,P_{\varphi_{\mathrm{cur}}}$ with
+$\kappa = 1.8$, and while it knows a second storey it never leaves on geometry alone.
 
-A floor switch requires the leading floor to exceed the current one by a score margin.
-Switching is deferred while a credible, untested target track remains on the current floor
-under the presence criterion of Section III-D. Each unsuccessful inspection weakens these
-local candidates, and the switch is granted once another floor leads by the required margin.
-Timing constraints additionally suppress repeated or late transitions. Route selection for an
-accepted switch rests on a single principle: a floor transition is only as reliable as the
-evidence that certifies it. The policy therefore prefers height-derived stair flights, whose
-entry points and tread geometry are recovered directly from the height representation, over
-detected staircase tracks, which contribute semantic evidence, and over geometric portals,
-which reveal a visible floor rather than a traversable path. The scene graph records a stair
-edge (Eq. 2) only for transitions that the robot has completed. Local inspection evidence
-thus redirects the search across floors while unverified connections remain excluded.
+**Where to cross.** Route selection for a requested switch rests on a single principle: a
+floor transition is only as reliable as the evidence that certifies it. First comes a staircase
+the robot has already traversed. The scene graph records a stair edge (Eq. 2) only for
+transitions the robot completed, at the point where the new storey was confirmed, so the mouth
+on the current storey is where a past traversal arrived on it from the target's side. Next come
+height-derived stair flights, whose treads are recovered from the height representation; a
+descending flight is pursued to its lip, extrapolated up the flight's own slope, because from a
+distance the upper treads are hidden behind the edge. Detected staircase tracks contribute
+semantic evidence, and geometric portals, which reveal a visible floor rather than a traversable
+path, come last. A pursuit that fails is remembered at its place.
+
+**Climbing.** The stairs are walked along a route planned over a two-level height map, which
+keeps for every cell the lowest surface and the highest one below the camera. The route is a
+shortest path over 0.1 m blocks whose steps rise at most one riser (0.25 m), ending on flat
+floor at the requested storey's height, and it is re-planned as the view of the treads changes.
+On a descent the camera sees a tread only along lines steeper than the flight, so an unseen band
+just ahead is bridged from its seen neighbours and surfaces overhead are ignored. The climb ends
+when the agent stands within 0.25 m of the requested storey's height, and is abandoned when it
+stops gaining height.
 
 ---
 
@@ -734,10 +752,13 @@ against each other.*
 | **Eq. 5** $b(x)$ | `exploration/search_belief.py:96` `container_prior()`; $\kappa$ and $\gamma$ are `AFFINITY_POWER` / `CONTAINER_AFFINITY` in `graph/priors.py` |
 | **Eq. 6** unified utility $U(g)$ | `exploration/search_belief.py:157` `select_candidate()`, driven from `exploration/strategy.py` |
 | **Eq. 7** $\rho(x) \leftarrow \rho(x)(1 - d(x))$ | `exploration/search_belief.py:72` `InspectionLog.searched()` |
-| **Eq. 8** $M_\varphi$, mean over the floor's surfaces | `exploration/strategy.py:597–670` (`_select_surface`); `exploration.floor_mass_rule` (base `"sum"`, **set to `"mean"` by the arm**) |
-| §III-E switch margin, cadence, window | `exploration.floor_mass_margin` (base 0.0, **set to 1.15 by the arm**); `floor.switch_min_interval` = 50; `floor.no_switch_before` = 50 and `floor.no_switch_after_frac` = 0.7 (× `agent.max_steps` 1000 = 700), applied in `mapping/portals.py:155` `may_switch()` |
-| §III-E flights > detected tracks > portals | `agent/floor_policy.py:474` `_rank_flights()`; `floor.climb_targets` |
-| §III-E deferral while a credible track remains | `agent/floor_policy.py:632` `try_switch()`; `agent.protect_floor_switch` |
+| **Eq. 8** storey belief $P_\varphi$ ($w$, $d$, $c_\varphi$, $a_\varphi$) | `exploration/storey_belief.py` `StoreyBelief`; `exploration.storey_belief`, `storey_anchor_weight` = 0.8, `storey_detect_prob` = 0.85, `storey_cover_radius_m` = 2.0, `storey_rejection_discount` = 0.3 |
+| §III-E request at $\kappa = 1.8$; no geometric switch while a second storey is known | `exploration.storey_switch_ratio` = 1.8; `exploration/strategy.py` (`undirected_switch_skipped`) |
+| §III-E landings merged, tracks filed by height | `StoreyBelief.storeys` / `storey_of_height`; `eval/prior_map.py` `drop_prior_landings` (`ycb.drop_prior_landings`) |
+| §III-E traversed staircase first: the arrival on this storey | `agent/floor_policy.py` `_remembered_arrival`; `floor.prior_stair_mouth` = `arrival`, `prefer_prior_stairs`, `prior_stair_max_failures` = 2 |
+| §III-E flights > detected tracks > portals; descent to its lip | `agent/floor_policy.py` `try_switch()`, `floor.climb_targets`; `mapping/stairs.py` `mouth_xy` / `descent_mouth_xy` (`floor.descent_goal` = `extrapolated`) |
+| §III-E route climb over the two-level height map | `mapping/stair_route.py` `plan_stair_route`; `agent/climb.py`; `agent.climb_route`, `climb_route_gap_fill_m` = 0.8, `climb_route_approach_steps` = 60 |
+| §III-E (submitted) $M_\varphi$ surface mean, margin, cadence, window | `exploration/strategy.py` `_select_surface`, `exploration.floor_mass_rule` = `"mean"`, `floor_mass_margin` = 1.15; `floor.switch_min_interval` = 50, `no_switch_before` = 50, `no_switch_after_frac` = 0.7 in `mapping/portals.py` `may_switch()` |
 
 ## Appendix B — number → run provenance
 
@@ -801,7 +822,7 @@ Benchmark v2 (`configs/experiment/mfv2_dataset.yaml`) is the replacement: static
 cross-anchor layouts with every relocation (same-storey ones included), starts on a uniformly
 drawn storey, success on the object's storey, seeds 42/43/44.
 
-## Appendix C — naming, and one note on Eq. 8
+## Appendix C — naming, and one note on the submitted Eq. 8
 
 **MD-SG is OSG.** The paper's system name does not appear in the code, which says `osg`
 throughout — the package, the config namespace, and every preset. Renaming would rotate all
@@ -817,7 +838,7 @@ the mapping.
 | Multi-Floor Navigation Policy | `agent/floor_policy.py` + `mapping/portals.py` |
 | ASCENT, the base pipeline | `src/navigation/`, a line-by-line transcription (see its README for the F1–F14 fidelity notes) |
 
-**Why Eq. 8 takes the mean.** The code comment beside it records the measurement that chose
+**Why the submitted Eq. 8 took the mean, and why the revision replaced it.** The code comment beside it records the measurement that chose
 it. On 00808's prior map, over five targets, floor 0 held 78 surfaces summing to 52.5 and
 floor 1 held 33 summing to 22.3 — means of 0.673 and 0.676, agreeing to within half a
 percent. The container priors carry essentially no information about *which storey*. A sum
@@ -826,6 +847,14 @@ down every round whatever it is looking for. The mean makes the score scale-free
 margin then requires another storey to be decisively better, which together let the posterior
 return "no opinion" — on this evidence the honest answer — and leave the storey choice to the
 mechanisms that do carry floor information.
+
+That abstention is why the revision replaces the surface mean with the storey belief of Eq. 8.
+With the mean as the only storey signal, the decision fell to the mechanisms around it: a switch
+after two failed attempts, which on Benchmark v2 seed 42 were false-positive STOPs in 7 of the 11
+episodes that left the object's own storey; and a geometric "nothing near is left here" gate that
+took the nearest flight in either direction, so 9 of the 28 episodes that had to go down pursued
+only flights going up. The belief reads what does carry storey information: where the target's
+tracks are, how far each is still believed, and how much of each storey has been searched.
 
 ## Appendix D — the multi-floor benchmark (Benchmark v2)
 
