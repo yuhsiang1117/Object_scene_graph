@@ -254,6 +254,11 @@ def build_episode_record(
         # mass and the coverage behind it, and the storey asked for.
         **({"storey_belief_log": agent.storey_belief_log}
            if getattr(agent, "storey_belief_log", None) else {}),
+        # Every VLM call this episode -- role, step, track, centre, verdict --
+        # so what the VLM decided can be scored against ground truth.
+        **({"vlm_call_log": list(verifier.call_log[verifier_before[2]:])}
+           if verifier is not None and len(verifier_before) > 2
+           and getattr(verifier, "call_log", None) else {}),
         # The close-look ledger and the closest range each surface was ever
         # glanced from (agent/close_look.py): what the search looked at, from
         # where, and whether the detector answered.

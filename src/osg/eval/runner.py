@@ -286,7 +286,8 @@ def run_eval(cfg) -> dict:
         # are cumulative; the record reports deltas against these.
         scorer_before = (scorer.n_calls, scorer.n_errors, scorer.last_error)
         verifier_before = (
-            (verifier.n_calls, verifier.n_errors) if verifier is not None else (0, 0)
+            (verifier.n_calls, verifier.n_errors, len(getattr(verifier, "call_log", [])))
+            if verifier is not None else (0, 0, 0)
         )
         # frontier.id/room.id restart from 0/1 each episode (a fresh extractor
         # and segmenter per NavAgent), but the scorer's caches are keyed by

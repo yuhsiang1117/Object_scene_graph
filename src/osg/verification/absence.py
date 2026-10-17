@@ -45,6 +45,8 @@ from __future__ import annotations
 from dataclasses import dataclass
 from typing import Optional
 
+from .verifier import note_vlm
+
 
 @dataclass
 class AbsenceVerdict:
@@ -66,6 +68,7 @@ class AbsenceSensor:
         self.verifier = verifier
         self.profiler = profiler
         self.stats = stats
+        self.step = -1          # set by the agent before each `observe`, for the VLM's log
 
     def observe(
         self, track, target: str, frame, presence_filter,
@@ -109,6 +112,7 @@ class AbsenceSensor:
         if self.verifier is not None and vc.absence_use_vlm:
             proj = track.ellipsoid.project(frame.intrinsics.K(), frame.T_cw)
             if proj is not None:
+                note_vlm(self.verifier, f"absence_{reason}", int(self.step), track)
                 with self.profiler.timeit("absence_vlm"):
                     still = self.verifier.verify_still_there(
                         frame.rgb, proj.bbox(), target

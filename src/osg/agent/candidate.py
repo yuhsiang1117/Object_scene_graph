@@ -39,6 +39,7 @@ import numpy as np
 from ..core.types import FrameData
 from ..mapping.costmap import HEIGHT_AXIS, PLANE
 from ..planning.controller import TURN_LEFT, TURN_RIGHT, _wrap, agent_heading
+from ..verification.verifier import note_vlm
 from .state import TURN_ACTION, State
 
 
@@ -190,6 +191,7 @@ class CandidatePolicy:
             # navmesh mode). Reject -> blacklist and keep exploring; this is the
             # only FP gate in the navmesh path.
             if self.nav.verifier is not None and not self.nav.cfg.verification.absence_only:
+                note_vlm(self.nav.verifier, "candidate", self.nav.step_count, track)
                 with self.nav.profiler.timeit("verification"):
                     ok = self.nav.verifier.verify(track, self.nav.target)
                 if not ok:
@@ -447,6 +449,8 @@ class CandidatePolicy:
                     # target right of centre (offset>0) -> turn right to centre it
                     return TURN_RIGHT if offset > 0 else TURN_LEFT
                 # Centred (or out of centring budget): verify the live framed view.
+                if not self.nav._terminal_verify:
+                    note_vlm(self.nav.verifier, "candidate_live", self.nav.step_count, track)
                 with self.nav.profiler.timeit("verification"):
                     accepted = (
                         True if self.nav._terminal_verify
@@ -494,6 +498,8 @@ class CandidatePolicy:
             self.nav._current_path = None
             self.nav._goto_deadline = self.nav.step_count + 60
             return self.nav._follow_path(frame) or TURN_ACTION
+        if self.nav.verifier is not None and not self.nav._terminal_verify:
+            note_vlm(self.nav.verifier, "candidate", self.nav.step_count, track)
         with self.nav.profiler.timeit("verification"):
             # Pre-approach verification. Skipped (accept) when the verifier is
             # off (old-fidelity mode) OR in terminal-view mode, where the

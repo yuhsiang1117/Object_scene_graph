@@ -37,6 +37,22 @@ from ..llm.prompts import (
 )
 
 
+def note_vlm(verifier, role: str, step: int, track=None, **extra) -> None:
+    """Tell `verifier` what its next call is about, for `call_log`. A no-op for
+    a verifier without one (test stubs, the stop gate's own instance)."""
+    note = getattr(verifier, "note", None)
+    if note is None:
+        return
+    ctx = {"role": str(role), "step": int(step)}
+    if track is not None:
+        ctx["track_id"] = int(getattr(track, "id", -1))
+        ell = getattr(track, "ellipsoid", None)
+        if ell is not None and getattr(ell, "center", None) is not None:
+            ctx["xyz"] = [round(float(v), 3) for v in ell.center]
+    ctx.update(extra)
+    note(**ctx)
+
+
 class VLMVerifier:
     def __init__(
         self,
@@ -59,6 +75,23 @@ class VLMVerifier:
         # debug_dir, indexed by debug_tag (episode id). Set by the runner.
         self.debug_dir: Optional[str] = None
         self.debug_tag: str = "ep"
+        # One entry per call -- its kind, target and verdict, plus whatever the
+        # caller said it was about (`note`) -- so what the VLM decided can be
+        # scored against ground truth after the run (episodes.jsonl
+        # `vlm_call_log`). Cumulative; the record slices it per episode.
+        self.call_log: List[dict] = []
+        self._context: dict = {}
+
+    def note(self, **context) -> None:
+        """What the NEXT call is about (step, track id, world centre), for
+        `call_log`. Consumed by that call."""
+        self._context = dict(context)
+
+    def _log(self, kind: str, target: str, verdict) -> None:
+        entry = {"kind": kind, "target": normalize_label(target), "verdict": verdict}
+        entry.update(self._context)
+        self._context = {}
+        self.call_log.append(entry)
 
     def _save_debug(self, img: np.ndarray, target: str, prompt: str,
                     response: dict, accepted: bool) -> None:
@@ -116,6 +149,7 @@ class VLMVerifier:
             self.n_errors += 1
             self.last_error = repr(e)[:200]
             self._save_debug(img, target, user, {"_error": self.last_error}, True)
+            self._log("identity", target, None)
             return True
         conf = float(out.get("confidence", 0.0) or 0.0)
         if self.choice_mode:
@@ -123,6 +157,7 @@ class VLMVerifier:
         else:
             accepted = bool(out.get("is_target", False)) and conf >= self.accept_confidence
         self._save_debug(img, target, user, out, accepted)
+        self._log("identity", target, bool(accepted))
         return accepted
 
     def _choice_list(self, target: str) -> List[str]:
@@ -179,10 +214,12 @@ class VLMVerifier:
         except Exception as exc:  # network/model failure is not evidence
             self.n_errors += 1
             self.last_error = str(exc)
+            self._log("absence", ",".join(asked), None)
             return None
         if not isinstance(reply, dict):
             self.n_errors += 1
             self.last_error = f"unexpected absence reply: {reply!r}"
+            self._log("absence", ",".join(asked), None)
             return None
         present = reply.get("present") or []
         if isinstance(present, str):
@@ -191,6 +228,7 @@ class VLMVerifier:
         result = {c: normalize_label(c) in seen for c in asked}
         self._save_debug(img, ",".join(asked), ABSENCE_USER, reply,
                          accepted=any(result.values()))
+        self._log("absence", ",".join(asked), [c for c, v in result.items() if v])
         return result
 
     @staticmethod
@@ -245,13 +283,17 @@ class VLMVerifier:
         except Exception as exc:
             self.n_errors += 1
             self.last_error = repr(exc)[:200]
+            self._log("still_there", target, None)
             return None
         choice = normalize_label(str(out.get("choice", "")))
         self._save_debug(img, target, "still_there", out, accepted=choice == normalize_label(target))
         if normalize_label(target) in choice:
+            self._log("still_there", target, True)
             return True
         if "bare" in choice:
+            self._log("still_there", target, False)
             return False
+        self._log("still_there", target, None)
         return None  # blocked, or an answer we cannot read
 
     def verify_crop(self, img: Optional[np.ndarray], target: str) -> bool:

@@ -38,6 +38,7 @@ import numpy as np
 
 from ..core.types import FrameData
 from ..mapping.costmap import PLANE, cell_status, nearest_free_xy
+from ..verification.verifier import note_vlm
 from .state import STOP_ACTION, TURN_ACTION, State
 
 
@@ -183,6 +184,9 @@ class ApproachPolicy:
                     self.nav.stats.get("terminal_verify", 0) + 1
                 )
                     # Full live frame with the target boxed (scene context).
+                    cand = (self.nav.object_layer.get(self.nav._candidate_id)
+                            if self.nav._candidate_id is not None else None)
+                    note_vlm(self.nav.verifier, "terminal", self.nav.step_count, cand)
                     if not self.nav.verifier.verify_bbox(frame.rgb, det.bbox_xyxy, self.nav.target):
                         self.nav.stats["terminal_reject"] = (
                             self.nav.stats.get("terminal_reject", 0) + 1

@@ -50,6 +50,7 @@ from ..pipeline.beliefs import build_affinity_prior, build_presence_filter
 from ..perception.keyframe import KeyframeSelector, KeyframeStore
 from ..planning.controller import WaypointController, agent_heading
 from ..planning.creep import SteeredCreep
+from ..verification.verifier import note_vlm
 from ..planning.escape import ActionHistoryEscape
 from ..planning.planner import PlanResult, StraightLinePlanner
 from ..planning.voronoi_planner import HybridVoronoiPlanner
@@ -1258,6 +1259,7 @@ class NavAgent:
             track = candidates[0]
             self._candidate_id = track.id
             if self.verifier is not None and not self.cfg.verification.absence_only:
+                note_vlm(self.verifier, "candidate", self.step_count, track)
                 with self.profiler.timeit("verification"):
                     accepted = self.verifier.verify(track, self.target)
                 if not accepted:
@@ -1619,6 +1621,7 @@ class NavAgent:
                     return TURN_ACTION
             self._stale_stop_pending = bool(from_look)
             return None
+        self.absence.step = int(self.step_count)
         verdict = self.absence.observe(
             track, self.target, frame, self.object_layer.presence_filter,
             self.approach.scan_expected, reason,
