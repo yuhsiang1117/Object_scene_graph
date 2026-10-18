@@ -20,6 +20,9 @@
 #   osg_mouth         osg_descent, and the switch aimed at where pass 1 arrived on this storey
 #   osg_mouth_walk    osg_mouth, and a climb with no route in view walks to the mouth first
 #   osg_traversed     osg_mouth_walk, and a staircase walked before tried ahead of flights
+#   osg_mouth_walk_<x>  the final arm with ONE change: no_presence / no_search / no_vlm /
+#            no_belief / no_gate / no_route / no_arrival / affinity_llm / affinity_flat
+#            remove or swap a component; vet and oracle (privileged, a ceiling) add one
 #   osg_climb_oracle  ablation: the staircase walked by the navmesh follower
 #   osg_affinity_llm  the affinity prior from the LLM for every class, grounded
 #   osg_affinity_flat ablation: no affinity prior

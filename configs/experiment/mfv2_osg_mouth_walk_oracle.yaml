@@ -1,0 +1,15 @@
+# @package _global_
+#
+# Variant of the final arm (`mfv2_osg_mouth_walk`): ADDS the staircase walked by Habitat's follower (`agent.climb_oracle`,
+# privileged -- see mfv2_osg_climb_oracle): the ceiling for the climb controller on
+# this arm's storey decision and stair goal. Never a headline. mfv2_osg_storey_oracle
+# (54c4020) is no ceiling for this arm: it predates the arrival-point goal and scored
+# 52.1% on seed 42 against mfv2_osg_mouth's 58.9%.
+#
+#   bash scripts/run_mfv2.sh osg_mouth_walk_oracle <seed>
+defaults:
+  - mfv2_osg_mouth_walk
+  - _self_
+
+agent:
+  climb_oracle: true

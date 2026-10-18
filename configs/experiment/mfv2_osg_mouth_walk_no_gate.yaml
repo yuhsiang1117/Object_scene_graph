@@ -1,0 +1,11 @@
+# @package _global_
+#
+# Ablation of the final arm (`mfv2_osg_mouth_walk`): the STOP gate off: a committed candidate is stopped at without the close-view check.
+#
+#   bash scripts/run_mfv2.sh osg_mouth_walk_no_gate <seed>
+defaults:
+  - mfv2_osg_mouth_walk
+  - _self_
+
+verification:
+  stop_gate: 'off'
