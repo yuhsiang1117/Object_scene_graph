@@ -429,21 +429,23 @@ requests storey $\varphi'$ once $P_{\varphi'} \ge \kappa\,P_{\varphi_{\mathrm{cu
 $\kappa = 1.8$, and while it knows a second storey it never leaves on geometry alone.
 
 **Where to cross.** Route selection for a requested switch rests on a single principle: a
-floor transition is only as reliable as the evidence that certifies it. First comes a staircase
-the robot has already traversed. The scene graph records a stair edge (Eq. 2) only for
-transitions the robot completed, at the point where the new storey was confirmed, so the mouth
-on the current storey is where a past traversal arrived on it from the target's side. Next come
-height-derived stair flights, whose treads are recovered from the height representation; a
-descending flight is pursued to its lip, extrapolated up the flight's own slope, because from a
-distance the upper treads are hidden behind the edge. Detected staircase tracks contribute
-semantic evidence, and geometric portals, which reveal a visible floor rather than a traversable
-path, come last. A pursuit that fails is remembered at its place.
+floor transition is only as reliable as the evidence that certifies it. First come stair flights
+whose treads are recovered from the height representation, ranked by how much of each the
+detector labels as stairs; a descending flight is pursued to its lip, extrapolated up the
+flight's own slope, because from a distance the upper treads are hidden behind the edge. Next
+comes a staircase the robot has already traversed. The scene graph records a stair edge (Eq. 2)
+only for transitions the robot completed, at the point where the new storey was confirmed, so
+the mouth on the current storey is where a past traversal arrived on it from the target's side.
+Geometric portals, which reveal a visible floor rather than a traversable path, come last. A
+pursuit that fails is remembered at its place, and a remembered mouth is given up after two
+failures beside it.
 
 **Climbing.** The stairs are walked along a route planned over a two-level height map, which
 keeps for every cell the lowest surface and the highest one below the camera. The route is a
 shortest path over 0.1 m blocks whose steps rise at most one riser (0.25 m), ending on flat
 floor at the requested storey's height, and it is re-planned as the view of the treads changes.
-On a descent the camera sees a tread only along lines steeper than the flight, so an unseen band
+When no route is in view from the start floor, the agent first walks to the mouth and looks
+round there: a descending flight is visible only from near its lip. On a descent the camera sees a tread only along lines steeper than the flight, so an unseen band
 just ahead is bridged from its seen neighbours and surfaces overhead are ignored. The climb ends
 when the agent stands within 0.25 m of the requested storey's height, and is abandoned when it
 stops gaining height.
@@ -755,9 +757,10 @@ against each other.*
 | **Eq. 8** storey belief $P_\varphi$ ($w$, $d$, $c_\varphi$, $a_\varphi$) | `exploration/storey_belief.py` `StoreyBelief`; `exploration.storey_belief`, `storey_anchor_weight` = 0.8, `storey_detect_prob` = 0.85, `storey_cover_radius_m` = 2.0, `storey_rejection_discount` = 0.3 |
 | §III-E request at $\kappa = 1.8$; no geometric switch while a second storey is known | `exploration.storey_switch_ratio` = 1.8; `exploration/strategy.py` (`undirected_switch_skipped`) |
 | §III-E landings merged, tracks filed by height | `StoreyBelief.storeys` / `storey_of_height`; `eval/prior_map.py` `drop_prior_landings` (`ycb.drop_prior_landings`) |
-| §III-E traversed staircase first: the arrival on this storey | `agent/floor_policy.py` `_remembered_arrival`; `floor.prior_stair_mouth` = `arrival`, `prefer_prior_stairs`, `prior_stair_max_failures` = 2 |
-| §III-E flights > detected tracks > portals; descent to its lip | `agent/floor_policy.py` `try_switch()`, `floor.climb_targets`; `mapping/stairs.py` `mouth_xy` / `descent_mouth_xy` (`floor.descent_goal` = `extrapolated`) |
+| §III-E flights > traversed staircase > portals; flights ranked by the detector's stair mask; descent to its lip | `agent/floor_policy.py` `try_switch()`, `_rank_flights`; `floor.climb_targets` = `flights_first`, `flights_prefer_stair_mask`; `mapping/stairs.py` `mouth_xy` / `descent_mouth_xy` (`floor.descent_goal` = `extrapolated`) |
+| §III-E traversed staircase: the arrival on this storey | `agent/floor_policy.py` `_remembered_arrival`; `floor.prior_stair_mouth` = `arrival`, `prefer_prior_stairs` (ahead of portals), `prior_stair_max_failures` = 2. `prior_stairs_before_flights` (ahead of flights) is off: on the 3 seed-42 ascents it changed, no new success and 00821 static 50001 lost |
 | §III-E route climb over the two-level height map | `mapping/stair_route.py` `plan_stair_route`; `agent/climb.py`; `agent.climb_route`, `climb_route_gap_fill_m` = 0.8, `climb_route_approach_steps` = 60 |
+| §III-E walk to the mouth when no route is in view | `agent/climb.py` `_walk_to_mouth`; `plan_stair_route(explore=True, toward_xy=...)`; `agent.climb_route_mouth_first` |
 | §III-E (submitted) $M_\varphi$ surface mean, margin, cadence, window | `exploration/strategy.py` `_select_surface`, `exploration.floor_mass_rule` = `"mean"`, `floor_mass_margin` = 1.15; `floor.switch_min_interval` = 50, `no_switch_before` = 50, `no_switch_after_frac` = 0.7 in `mapping/portals.py` `may_switch()` |
 
 ## Appendix B — number → run provenance
