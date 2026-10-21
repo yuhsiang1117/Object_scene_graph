@@ -12,6 +12,9 @@
 # from it, on something step-like, within one to 56 steps of the pursuit; the
 # re-plans then wandered the room. 1.5 m: pass 1's arrival lies 0.3-1.0 m from
 # the mouth it stands for, and a flight's own cells include its treads.
+# Re-plans inside the climb get 3.0 m (`climb_route_replan_near_m`): at 1.5 the
+# landing smoke lost 00862 cross 50006, whose flight blob sits beside the treads
+# mouth_walk climbed (9 re-plans rejected); the detours ran 3.6-7 m off.
 #
 #   bash scripts/run_mfv2.sh osg_pursued <seed>
 defaults:
@@ -20,3 +23,4 @@ defaults:
 
 agent:
   climb_route_start_near_m: 1.5
+  climb_route_replan_near_m: 3.0

@@ -442,6 +442,14 @@ class AgentConfig:
     # and its failure was then filed against the flight it never reached.
     # Portal pursuits are left free: a portal is a sightline, not a staircase.
     climb_route_start_near_m: float = 0.0
+    # The same gate for a re-plan INSIDE a climb, still on the start floor: a
+    # route onto some other step-like thing is walked only within this of the
+    # pursued stairs. 0 = no gate. Wider than the start's: once at the mouth, a
+    # re-plan finds the real treads, and a flight's blob can sit beside them --
+    # 00862 (seed 42, cross 50006, mfv2_osg_landing smoke) at 1.5 m rejected 9
+    # re-plans and lost a flight mfv2_osg_mouth_walk climbed 2.72 m; the
+    # detours it is for ran 3.6-7 m off (00821 static 50003).
+    climb_route_replan_near_m: float = 0.0
     # While on the stairs the climb records the route's height layers itself
     # (`ClimbPolicy._record_climb_surfaces`), every depth point below the
     # camera: a wall's column folds into `height_top` at whatever height the

@@ -50,6 +50,7 @@
   "agent.climb_route_min_gain_m": 0.3,
   "agent.climb_route_mouth_first": false,
   "agent.climb_route_probe_steps": 10,
+  "agent.climb_route_replan_near_m": 0.0,
   "agent.climb_route_replan_steps": 10,
   "agent.climb_route_seed_nearest": false,
   "agent.climb_route_stall_pause_scan": false,

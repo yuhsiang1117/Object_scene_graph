@@ -473,16 +473,17 @@ class ClimbPolicy:
         self.stats["climb_route_start"] = self.stats.get("climb_route_start", 0) + 1
         return True
 
-    def _route_on_pursued_stairs(self, route, floor_y: float) -> bool:
+    def _route_on_pursued_stairs(self, route, floor_y: float, key: str = "climb_route_start_near_m") -> bool:
         """Does `route` leave the floor on the staircase being pursued?
 
-        Within `climb_route_start_near_m` of the pursued flight's cells, or of
-        the pursuit's goal when it has none (a remembered stair, a stair track,
-        a route pursuit). Always, when the gate is off or the pursuit is a
-        portal: a portal is where another storey can be SEEN, so the stairs to
-        it may be anywhere on the way.
+        Within `key` metres (`climb_route_start_near_m` to start a climb,
+        `climb_route_replan_near_m` for a re-plan inside one) of the pursued
+        flight's cells, or of the pursuit's goal when it has none (a
+        remembered stair, a stair track, a route pursuit). Always, when the gate
+        is off or the pursuit is a portal: a portal is where another storey can
+        be SEEN, so the stairs to it may be anywhere on the way.
         """
-        near_m = float(getattr(self.cfg.agent, "climb_route_start_near_m", 0.0) or 0.0)
+        near_m = float(getattr(self.cfg.agent, key, 0.0) or 0.0)
         kind = getattr(self.floors, "pursuit_kind", None)
         if near_m <= 0.0 or kind in (None, "portal"):
             return True
@@ -573,7 +574,8 @@ class ClimbPolicy:
                 # 50003: re-plans wandered the room for 100 steps, 7 m off).
                 floor_y = float(self.floors.estimator.height_of(int(self._climb_from_floor)))
                 standing = float(frame.camera_position[1]) - float(self.cfg.agent.camera_height)
-                if abs(standing - floor_y) <= 0.15 and not self._route_on_pursued_stairs(fresh, floor_y):
+                if abs(standing - floor_y) <= 0.15 and not self._route_on_pursued_stairs(
+                        fresh, floor_y, key="climb_route_replan_near_m"):
                     self.stats["climb_route_elsewhere"] = self.stats.get("climb_route_elsewhere", 0) + 1
                     fresh = None
             if fresh is not None:

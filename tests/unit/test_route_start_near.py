@@ -92,3 +92,17 @@ def test_in_the_climb_the_goal_is_the_climbs_own():
     c._climb_goal_xy = np.array([-1.2, 1.5])
     assert ClimbPolicy._route_on_pursued_stairs(c, THE_FLIGHT, FLOOR)
     assert not ClimbPolicy._route_on_pursued_stairs(c, FURNITURE, FLOOR)
+
+
+def test_a_replan_inside_the_climb_has_its_own_radius():
+    """`climb_route_replan_near_m`: a flight's blob can sit beside its treads
+    (00862 cross 50006), so a re-plan from the mouth may leave the floor
+    further from the cells than a climb may start."""
+    c = _climber(1.5)
+    c.cfg.agent.climb_route_replan_near_m = 3.0
+    beside = _route([[1.0, 1.4], [0.6, 1.4], [0.2, 1.4]], [FLOOR, FLOOR, FLOOR + 0.3])     # leaves 2 m off
+    gap = float(np.min(np.linalg.norm(LEG - np.array([0.2, 1.4]), axis=1)))
+    assert 1.5 < gap < 3.0
+    assert not ClimbPolicy._route_on_pursued_stairs(c, beside, FLOOR)
+    assert ClimbPolicy._route_on_pursued_stairs(c, beside, FLOOR, key="climb_route_replan_near_m")
+    assert not ClimbPolicy._route_on_pursued_stairs(c, FURNITURE, FLOOR, key="climb_route_replan_near_m")
