@@ -448,7 +448,10 @@ class AgentConfig:
     # re-plan finds the real treads, and a flight's blob can sit beside them --
     # 00862 (seed 42, cross 50006, mfv2_osg_landing smoke) at 1.5 m rejected 9
     # re-plans and lost a flight mfv2_osg_mouth_walk climbed 2.72 m; the
-    # detours it is for ran 3.6-7 m off (00821 static 50003).
+    # detours it is for ran 3.6-7 m off (00821 static 50003). At 3.0 it still
+    # rejected the same 9: that pursued "flight" lies ~6 m from 00862's real
+    # staircase, which mouth_walk's re-plan had found from there -- so no
+    # preset gates re-plans.
     climb_route_replan_near_m: float = 0.0
     # While on the stairs the climb records the route's height layers itself
     # (`ClimbPolicy._record_climb_surfaces`), every depth point below the
