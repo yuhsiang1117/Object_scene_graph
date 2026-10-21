@@ -236,3 +236,24 @@ def test_from_the_first_legs_top_the_route_starts_where_the_agent_stands():
     assert here is not None and here.reaches_target
     assert here.xy[0][1] < 1.0                                       # on the first leg
     assert here.xy[:, 0].max() > 2.6                                 # round by the landing
+
+
+def test_a_ledge_is_reached_through_a_block_median_unless_the_span_rule_cuts_it():
+    """00800 (climb fixture, beside the flight): every route stepped onto a
+    0.47-0.53 m ledge along the stairs. A block straddling the edge of a 0.33 m
+    ledge has two floor cells and two ledge cells, its median a half-step, and
+    two half-steps pass the 0.25 m riser test. A 0.3 m `standing_span_m` cuts
+    such blocks -- but in the fixture it also stalled 00821's switchback
+    ascent, and the lower median broke 00821 without freeing 00800, so the
+    planner keeps the median and 0.45 (open)."""
+    found = {"median": [], "span 0.3": []}
+    for dz in (0.0, 0.05):
+        cm = _map()
+        _paint(cm, -4, 2, -2, 0.52, 0.0)
+        _paint(cm, -4, 2, 0.52, 1.5, 0.33)
+        kw = dict(floor_y=0.0, agent_xy=(-1.0, 0.0 + dz), standing_y=0.0, direction=+1,
+                  target_y=None, min_gain_m=0.3)
+        found["median"].append(plan_stair_route(cm, **kw))
+        found["span 0.3"].append(plan_stair_route(cm, standing_span_m=0.3, **kw))
+    assert any(r is not None and r.gain_m > 0.3 for r in found["median"])
+    assert all(r is None for r in found["span 0.3"])
