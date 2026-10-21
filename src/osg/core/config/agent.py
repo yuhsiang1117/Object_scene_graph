@@ -433,6 +433,15 @@ class AgentConfig:
     # A climb STARTS on a route only if it reaches the storey or gains this
     # much: 00878's 0.3 m route up something step-like began three climbs.
     climb_route_start_gain_m: float = 0.5
+    # A route probe starts a climb only where the route leaves the floor
+    # within this distance of the staircase being pursued -- its cells for a
+    # flight, else the pursuit's goal. 0 = anywhere, as measured. 00821 (seed
+    # 42, cross 50006, mfv2_osg_mouth_walk): walking to the flight at (-1.77,
+    # 1.43), the probe found a 0.5 m "route" up something step-like at (3,
+    # -0.5), 4 m away; the climb pressed into it 31 times and stalled at 0.0 m,
+    # and its failure was then filed against the flight it never reached.
+    # Portal pursuits are left free: a portal is a sightline, not a staircase.
+    climb_route_start_near_m: float = 0.0
     # How often a storey request with nothing to drive to tries a route.
     climb_route_probe_steps: int = 10
     # Bridge an unseen band of treads within this distance of the agent

@@ -20,6 +20,7 @@
 #   osg_mouth         osg_descent, and the switch aimed at where pass 1 arrived on this storey
 #   osg_mouth_walk    osg_mouth, and a climb with no route in view walks to the mouth first
 #   osg_traversed     osg_mouth_walk, and a staircase walked before tried ahead of flights
+#   osg_pursued       osg_mouth_walk, and a climb only on the staircase being pursued
 #   osg_mouth_walk_<x>  the final arm with ONE change: no_presence / no_search / no_vlm /
 #            no_belief / no_gate / no_route / no_arrival / affinity_llm / affinity_flat
 #            remove or swap a component; vet and oracle (privileged, a ceiling) add one

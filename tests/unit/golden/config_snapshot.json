@@ -54,6 +54,7 @@
   "agent.climb_route_stall_steps": 40,
   "agent.climb_route_start_gain_m": 0.5,
   "agent.climb_route_start_m": 2.5,
+  "agent.climb_route_start_near_m": 0.0,
   "agent.climb_to_target_storey_tol_m": 0.0,
   "agent.climb_turn_deadband_deg": 0.0,
   "agent.climb_turn_release_deg": 0.0,

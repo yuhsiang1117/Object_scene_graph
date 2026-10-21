@@ -172,6 +172,9 @@ class Flight:
     #: across the banister at the turn. This gives the run an ORDER instead.
     #: None when the ordering was not requested or could not be built.
     path_m: Optional[np.ndarray] = None
+    #: World (x, z) of every cell, taken when the flight was found: `cells_rc`
+    #: stops meaning anything once the costmap grows and its origin moves.
+    cells_xy: Optional[np.ndarray] = None
 
     @property
     def n_cells(self) -> int:
@@ -350,6 +353,7 @@ def find_flights(
                 span_m=span,
                 path_m=(_path_from(rc, foot, float(costmap.resolution))
                         if order_path else None),
+                cells_xy=costmap.grid_to_world(rc.astype(float)),
             ))
     return out
 

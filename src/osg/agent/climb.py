@@ -463,10 +463,43 @@ class ClimbPolicy:
         start_m = float(getattr(self.cfg.agent, "climb_route_start_m", 2.5))
         if route.leaves_floor_after_m(floor_y) > start_m:
             return False
+        if not self._route_on_pursued_stairs(route, floor_y):
+            self.stats["climb_route_start_elsewhere"] = (
+                self.stats.get("climb_route_start_elsewhere", 0) + 1)
+            return False
         self._route = route
         self._route_plan_step = int(self.step_count)
         self.stats["climb_route_start"] = self.stats.get("climb_route_start", 0) + 1
         return True
+
+    def _route_on_pursued_stairs(self, route, floor_y: float) -> bool:
+        """Does `route` leave the floor on the staircase being pursued?
+
+        Within `climb_route_start_near_m` of the pursued flight's cells, or of
+        the pursuit's goal when it has none (a remembered stair, a stair track,
+        a route pursuit). Always, when the gate is off or the pursuit is a
+        portal: a portal is where another storey can be SEEN, so the stairs to
+        it may be anywhere on the way.
+        """
+        near_m = float(getattr(self.cfg.agent, "climb_route_start_near_m", 0.0) or 0.0)
+        kind = getattr(self.floors, "pursuit_kind", None)
+        if near_m <= 0.0 or kind in (None, "portal"):
+            return True
+        off = np.flatnonzero(np.abs(route.heights - float(floor_y)) > 0.15)
+        leaves = np.asarray(route.xy[off[0]] if len(off) else route.end_xy, dtype=float)
+        flight = getattr(self.floors, "pursuit_flight", None)
+        cells = getattr(flight, "cells_xy", None) if str(kind).startswith("flight_") else None
+        if cells is not None and len(cells):
+            gap = float(np.min(np.linalg.norm(np.asarray(cells, dtype=float) - leaves[None, :], axis=1)))
+        else:
+            climbing = getattr(self.nav, "state", None) is State.CLIMB
+            goal = (getattr(self, "_climb_goal_xy", None) if climbing else None)
+            if goal is None:
+                goal = self.nav._goal_xy
+            if goal is None:
+                return True
+            gap = float(np.linalg.norm(np.asarray(goal, dtype=float) - leaves))
+        return gap <= near_m
 
     def _record_climb_surfaces(self, frame: FrameData) -> None:
         """Keep the route's height layer current while the occupancy update is
@@ -529,6 +562,15 @@ class ClimbPolicy:
         if replan:
             fresh = self._plan_route(frame, agent_xy, self._climb_direction or 1)
             self._route_plan_step = step
+            if fresh is not None and self._climb_from_floor is not None:
+                # Still on the floor it started from, a route onto some OTHER
+                # step-like thing is no way onto these stairs (00821 static
+                # 50003: re-plans wandered the room for 100 steps, 7 m off).
+                floor_y = float(self.floors.estimator.height_of(int(self._climb_from_floor)))
+                standing = float(frame.camera_position[1]) - float(self.cfg.agent.camera_height)
+                if abs(standing - floor_y) <= 0.15 and not self._route_on_pursued_stairs(fresh, floor_y):
+                    self.stats["climb_route_elsewhere"] = self.stats.get("climb_route_elsewhere", 0) + 1
+                    fresh = None
             if fresh is not None:
                 self._route_walking = False
             elif (self._route_walking and route is not None

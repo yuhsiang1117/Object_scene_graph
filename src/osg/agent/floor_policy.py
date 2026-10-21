@@ -558,6 +558,16 @@ class FloorPolicy:
         return PortalGoal(goal_xy=goal_xy.copy(), target_y=float(target_y),
                           deadline_steps=self.cfg.floor.portal_deadline_steps)
 
+    @property
+    def pursuit_kind(self) -> Optional[str]:
+        """What the running pursuit drives to, as `portal_log` names it --
+        `flight_up` / `flight_down`, `prior_stair`, `stair_track`, `route_up` /
+        `route_down` -- or `portal`; None when nothing is pursued."""
+        if not self.pursuing or not self.portal_log:
+            return None
+        kind = self.portal_log[-1][2]
+        return kind if isinstance(kind, str) else "portal"
+
     def end_pursuit(self, reason: str) -> None:
         self.pursuing = False
         self.stats[f"portal_end_{reason}"] = self.stats.get(f"portal_end_{reason}", 0) + 1

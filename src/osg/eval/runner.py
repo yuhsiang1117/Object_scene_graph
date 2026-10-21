@@ -246,6 +246,7 @@ def run_eval(cfg) -> dict:
             # "drop_prior_landings"
             # "approach_creep_steer_deg" "approach_creep_stall_steps"
             # "climb_route_gap_fill_m" "climb_route_approach_steps" "climb_route_mouth_first"
+            # "climb_route_start_near_m"
             # "descent_goal" (floor.*, not in the algorithm fingerprint: see the config dump)
             **_algorithm_fingerprint(cfg),
         },
