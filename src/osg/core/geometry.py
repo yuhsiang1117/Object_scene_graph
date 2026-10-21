@@ -29,6 +29,48 @@ def backproject(
     return pts_c @ T_wc[:3, :3].T + T_wc[:3, 3]
 
 
+def backproject_horizontal(
+    depth: np.ndarray,
+    intrinsics,
+    T_wc: np.ndarray,
+    stride: int = 1,
+    max_depth: float = 10.0,
+    min_up: float = 0.7,
+    up_axis: int = 1,
+) -> np.ndarray:
+    """World points (N, 3) of the depth pixels that lie on a roughly HORIZONTAL
+    surface: the surface normal, from central differences of the back-projected
+    pixel grid, within `arccos(min_up)` of the world's up axis -- 45 degrees by
+    default, because a scanned HM3D flight can be a 30-37 degree ramp.
+
+    A floor, a tread or a table top passes; a wall, a riser face or a railing
+    does not. The normal is taken twice, from the forward and from the backward
+    neighbours, and both must point up: a pixel at a corner -- a tread meeting
+    the next riser, a floor meeting a wall -- has one horizontal side and one
+    vertical, and a central difference across it can look level. Border pixels
+    and pixels with an invalid neighbour are dropped.
+    """
+    h, w = depth.shape
+    vs, us = np.mgrid[0:h:stride, 0:w:stride]
+    d = depth[::stride, ::stride].astype(np.float64)
+    valid = (d > 1e-3) & (d < max_depth)
+    if d.shape[0] < 3 or d.shape[1] < 3:
+        return np.zeros((0, 3))
+    x = (us - intrinsics.cx) / intrinsics.fx * d
+    y = (vs - intrinsics.cy) / intrinsics.fy * d
+    pts = np.stack([x, y, d], axis=-1) @ T_wc[:3, :3].T + T_wc[:3, 3]
+    centre = pts[1:-1, 1:-1]
+    ok = valid[1:-1, 1:-1] & valid[1:-1, 2:] & valid[1:-1, :-2] & valid[2:, 1:-1] & valid[:-2, 1:-1]
+    for across, down in ((pts[1:-1, 2:] - centre, pts[2:, 1:-1] - centre),
+                         (centre - pts[1:-1, :-2], centre - pts[:-2, 1:-1])):
+        normal = np.cross(across, down)
+        length = np.linalg.norm(normal, axis=-1)
+        with np.errstate(invalid="ignore", divide="ignore"):
+            up = np.abs(normal[..., up_axis]) / length
+        ok &= (length > 0) & (up >= float(min_up))
+    return centre[ok]
+
+
 def backproject_pixel(u: float, v: float, d: float, intrinsics, T_wc: np.ndarray) -> np.ndarray:
     p = np.array(
         [(u - intrinsics.cx) / intrinsics.fx * d, (v - intrinsics.cy) / intrinsics.fy * d, d]

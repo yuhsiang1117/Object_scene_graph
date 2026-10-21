@@ -208,3 +208,31 @@ def test_no_walk_once_at_the_mouth():
     _paint(cm, -4, 4, -4, 4, 0.0)
     assert plan_stair_route(cm, floor_y=0.0, agent_xy=(1.4, 0.5), standing_y=0.0, direction=-1,
                             target_y=-3.0, explore=True, toward_xy=(1.5, 0.5)) is None
+
+
+def _switchback():
+    cm = _map()
+    _paint(cm, -4, 0, -2, 1.0, 0.0)
+    _paint(cm, 0, 2.6, 0, 1.0, lambda x, z: np.minimum(np.floor(x / 0.28) * 0.17, 1.53), floor=0.0)
+    _paint(cm, 2.6, 4.0, 0, 2.2, 1.53, floor=0.0)
+    _paint(cm, 0.08, 2.6, 1.2, 2.2, lambda x, z: 1.53 + np.minimum(
+        np.floor((2.6 - x) / 0.28) * 0.17, 1.53), floor=0.0)
+    _paint(cm, 0, 2.6, 1.0, 1.2, 0.0)
+    _paint(cm, -4, 0.08, 1.2, 4.0, 3.06)
+    return cm
+
+
+def test_from_the_first_legs_top_the_route_starts_where_the_agent_stands():
+    """00821's switchback (`agent.climb_route_seed_nearest`): standing on the
+    first leg's top tread, the second leg's first tread is within 0.6 m and a
+    riser of the agent's height -- across the gap between the legs. Seeded
+    there, the route sent the agent into the wall; seeded where it stands, it
+    goes round by the landing."""
+    cm = _switchback()
+    kw = dict(floor_y=0.0, agent_xy=(2.35, 0.8), standing_y=1.36, direction=+1, target_y=3.06)
+    anywhere = plan_stair_route(cm, **kw)
+    assert anywhere is not None and anywhere.xy[0][1] > 1.2           # starts across the gap
+    here = plan_stair_route(cm, seed_nearest=True, **kw)
+    assert here is not None and here.reaches_target
+    assert here.xy[0][1] < 1.0                                       # on the first leg
+    assert here.xy[:, 0].max() > 2.6                                 # round by the landing

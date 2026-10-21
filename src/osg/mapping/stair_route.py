@@ -104,6 +104,7 @@ def plan_stair_route(
     wall_band_m: float = 0.15,
     min_gain_m: float = 1.0,
     seed_m: float = 0.6,
+    seed_nearest: bool = False,
     flat_tol_m: float = 0.04,
     flat_window_m: float = 0.5,
     clearance_m: float = 0.2,
@@ -316,6 +317,12 @@ def plan_stair_route(
     sources = np.flatnonzero((d_agent <= float(seed_m)) & (np.abs(node_h - float(standing_y)) <= 0.2))
     if not len(sources):
         return None
+    if seed_nearest:
+        # Only where the agent stands. Every surface within `seed_m` at about
+        # its height is not that: on 00821's switchback the second leg's first
+        # tread is 0.3 m from the first leg's top, across the wall between the
+        # two legs, and a route seeded there sent the agent into the wall.
+        sources = sources[[int(np.argmin(d_agent[sources]))]]
     dist, pred, _ = dijkstra(graph, directed=False, indices=sources,
                              min_only=True, return_predecessors=True)
     if debug is not None:

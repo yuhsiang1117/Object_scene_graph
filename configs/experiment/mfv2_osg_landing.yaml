@@ -1,0 +1,28 @@
+# @package _global_
+#
+# `mfv2_osg_pursued`, and the three changes that take a route climb over a
+# switchback's landing:
+#
+#   agent.climb_surfaces_horizontal  on the stairs, record only horizontal
+#                                    surfaces (a wall's column read as a ramp
+#                                    rising with the camera: 00821's landing
+#                                    route ran north into the wall, 0.88 m up
+#                                    in 0.5 m)
+#   agent.climb_route_seed_nearest   start the route where the agent stands,
+#                                    not on the second leg across the gap
+#   agent.climb_route_stall_pause_scan  the look-round on a landing is not a stall
+#
+# Climb fixture (scratchpad run_suites.sh, start at each fixture's foot / 1 m
+# behind each lip): switchback ascents 00821 1.60 -> 3.44 m, 00873 1.80 -> 2.96 m,
+# both arriving; the three descents and 00800's ascent arrive as before. 00821
+# needs all three; 00873 any two.
+#
+#   bash scripts/run_mfv2.sh osg_landing <seed>
+defaults:
+  - mfv2_osg_pursued
+  - _self_
+
+agent:
+  climb_surfaces_horizontal: true
+  climb_route_seed_nearest: true
+  climb_route_stall_pause_scan: true

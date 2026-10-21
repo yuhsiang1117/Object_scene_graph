@@ -442,6 +442,23 @@ class AgentConfig:
     # and its failure was then filed against the flight it never reached.
     # Portal pursuits are left free: a portal is a sightline, not a staircase.
     climb_route_start_near_m: float = 0.0
+    # While on the stairs the climb records the route's height layers itself
+    # (`ClimbPolicy._record_climb_surfaces`), every depth point below the
+    # camera: a wall's column folds into `height_top` at whatever height the
+    # camera had, so a wall beside a flight reads as a ramp rising with the
+    # climb, and into the lowest layer at its foot, floor-high. On, only points
+    # on a roughly horizontal surface (normal within 45 degrees of up, from the
+    # depth image) are recorded there. False = every point, as measured.
+    climb_surfaces_horizontal: bool = False
+    # The route starts from the surface nearest the agent only, not from every
+    # one within 0.6 m at about its height: on 00821's switchback the second
+    # leg's first tread lies 0.3 m from the first leg's top, across the wall
+    # between the legs. False = all of them, as measured.
+    climb_route_seed_nearest: bool = False
+    # The stall clock (`climb_route_stall_steps`) stops for the look-round a
+    # route climb makes when nothing walkable is in view -- typically on a
+    # landing, where the next flight is behind. False = it runs, as measured.
+    climb_route_stall_pause_scan: bool = False
     # How often a storey request with nothing to drive to tries a route.
     climb_route_probe_steps: int = 10
     # Bridge an unseen band of treads within this distance of the agent

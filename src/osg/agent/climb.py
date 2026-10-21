@@ -391,6 +391,7 @@ class ClimbPolicy:
                 bumps_xy=self._route_bumps,
                 min_gain_m=float(getattr(self.cfg.agent, "climb_route_min_gain_m", 0.3)),
                 gap_fill_m=float(getattr(self.cfg.agent, "climb_route_gap_fill_m", 0.0) or 0.0),
+                seed_nearest=bool(getattr(self.cfg.agent, "climb_route_seed_nearest", False)),
                 explore=explore,
                 toward_xy=toward_xy,
             )
@@ -508,11 +509,15 @@ class ClimbPolicy:
         cm = self.costmap
         if getattr(cm, "height_top", None) is None or not bool(getattr(self.floors, "on_stairs", False)):
             return
-        from ..core.geometry import backproject
+        from ..core.geometry import backproject, backproject_horizontal
 
         m = self.cfg.mapping
-        pts = backproject(frame.depth, frame.intrinsics, frame.T_wc,
-                          stride=int(m.depth_stride), max_depth=float(m.max_range_m))
+        if bool(getattr(self.cfg.agent, "climb_surfaces_horizontal", False)):
+            pts = backproject_horizontal(frame.depth, frame.intrinsics, frame.T_wc,
+                                         stride=int(m.depth_stride), max_depth=float(m.max_range_m))
+        else:
+            pts = backproject(frame.depth, frame.intrinsics, frame.T_wc,
+                              stride=int(m.depth_stride), max_depth=float(m.max_range_m))
         if pts.shape[0] == 0:
             return
         floor_y = float(self.floors.estimator.height_of(int(self._climb_from_floor)))
@@ -593,6 +598,11 @@ class ClimbPolicy:
                     self._route_scanned = True
                     n = max(1, int(round(360.0 / float(self.cfg.agent.turn_deg))))
                     self._route_plan_step = -100
+                    if bool(getattr(self.cfg.agent, "climb_route_stall_pause_scan", False)):
+                        # The look-round is not a stall: 00821's landing (climb
+                        # fixture) spent 14 of the 40 steps on it and was cut
+                        # off three blocked steps from the second leg.
+                        self._route_progress_step = max(int(self._route_progress_step), step + n + 2)
                     self.stats["climb_route_scan"] = self.stats.get("climb_route_scan", 0) + 1
                     if self._climb_pitched:
                         self._route_queue = ["turn_left"] * (n - 1)
