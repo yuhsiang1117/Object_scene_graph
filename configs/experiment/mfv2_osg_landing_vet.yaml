@@ -1,0 +1,18 @@
+# @package _global_
+#
+# `mfv2_osg_landing`, and the prior map vetted before each episode
+# (`verification.stop_gate_vet_prior`, see mfv2_osg_gate2_vet): the STOP gate's
+# recogniser judges every pass-1 track carrying the target's label on its saved
+# crop, as one presence reading.
+#
+# Measured as an ablation of mfv2_osg_mouth_walk (`mfv2_osg_mouth_walk_vet`):
+# seed 42 40/73 -> 46/73, seed 43 39/73 -> 42/73; FP commits on prior tracks
+# 21 -> 13 and 27 -> 10. The candidate for the next final arm.
+#
+#   bash scripts/run_mfv2.sh osg_landing_vet <seed>
+defaults:
+  - mfv2_osg_landing
+  - _self_
+
+verification:
+  stop_gate_vet_prior: true

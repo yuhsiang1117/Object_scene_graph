@@ -22,6 +22,7 @@
 #   osg_traversed     osg_mouth_walk, and a staircase walked before tried ahead of flights
 #   osg_pursued       osg_mouth_walk, and a climb only on the staircase being pursued
 #   osg_landing       osg_pursued, and a route climb over a switchback's landing
+#   osg_landing_vet   osg_landing, and the prior's target-labelled tracks vetted first
 #   osg_mouth_walk_<x>  the final arm with ONE change: no_presence / no_search / no_vlm /
 #            no_belief / no_gate / no_route / no_arrival / affinity_llm / affinity_flat
 #            remove or swap a component; vet and oracle (privileged, a ceiling) add one
