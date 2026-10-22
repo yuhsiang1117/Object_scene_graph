@@ -67,6 +67,10 @@ class StopGate:
         unseen = str(getattr(vc, "stop_gate_unseen", "allow"))
         if unseen not in ("allow", "reject"):
             raise ValueError(f"verification.stop_gate_unseen must be allow|reject, got {unseen!r}")
+        self.exemplar = str(getattr(vc, "stop_gate_exemplar", "off") or "off")
+        if self.exemplar not in ("off", "log", "on"):
+            raise ValueError(
+                f"verification.stop_gate_exemplar must be off|log|on, got {self.exemplar!r}")
         self._vlm = None
         self.reset()
 
@@ -74,6 +78,10 @@ class StopGate:
         self.rejections_by_track: dict = {}
         self.n_rejected = 0
         self.log: list = []
+        # The pass-1 crops of the target, encoded once per episode on first use.
+        self._exemplars: Optional[list] = None
+        # What the last clip verdict rested on, for the logs.
+        self.last_reading: dict = {}
         self.new_approach()
 
     def new_approach(self) -> None:
@@ -109,6 +117,10 @@ class StopGate:
         first step is the stall the control loop must not take.
         """
         vc = self.nav.cfg.verification
+        if self.mode == "clip" and self.exemplar != "off":
+            # Snapshot the exemplars now, before a live sighting merged into a
+            # prior track replaces its pass-1 crop.
+            self._exemplar_set()
         if self.mode != "clip" or not bool(getattr(vc, "stop_gate_vet_prior", False)):
             return None
         layer = getattr(self.nav, "object_layer", None)
@@ -126,7 +138,7 @@ class StopGate:
                 out["no_crop"] += 1
                 continue
             with self.nav.profiler.timeit("stop_gate_vet"):
-                verdict = self._clip_verdict(crop)
+                verdict = self._clip_verdict(crop, exemplars=False)
             if verdict is None:
                 out["no_opinion"] += 1
                 continue
@@ -168,7 +180,7 @@ class StopGate:
             return True
         track.live_vetted = True
         with self.nav.profiler.timeit("stop_gate_vet"):
-            verdict = self._clip_verdict(crop)
+            verdict = self._clip_verdict(crop, exclude_id=int(track.id))
         stats = self.nav.stats
         if verdict is None:
             stats["live_vet_no_opinion"] = stats.get("live_vet_no_opinion", 0) + 1
@@ -180,7 +192,7 @@ class StopGate:
         stats.setdefault("live_vet_log", []).append(
             {"step": int(self.nav.step_count), "track_id": int(track.id), "verdict": bool(verdict),
              "range_m": rng, "bbox_px": round(float(getattr(track, "best_bbox_px", 0.0)), 1),
-             "center": [round(float(v), 3) for v in centre]})
+             "center": [round(float(v), 3) for v in centre], **self.last_reading})
         stats["live_vet_accepted" if verdict else "live_vet_rejected"] = (
             stats.get("live_vet_accepted" if verdict else "live_vet_rejected", 0) + 1)
         presence = getattr(self.nav.object_layer, "presence_filter", None)
@@ -230,12 +242,13 @@ class StopGate:
             self._reject(track)
             return TURN_ACTION
         stats["stop_gate_calls"] = stats.get("stop_gate_calls", 0) + 1
+        self.last_reading = {}
         with nav.profiler.timeit("stop_gate"):
-            verdict = self._judge(rgb, det)
+            verdict = self._judge(rgb, det, exclude_id=int(track_id))
         entry = {
             "step": int(nav.step_count), "track_id": int(track_id),
             "label": str(det.label), "score": round(float(det.score), 3),
-            "view": view, "verdict": verdict,
+            "view": view, "verdict": verdict, **self.last_reading,
         }
         self.log.append(entry)
         stats["stop_gate_log"] = self.log
@@ -251,10 +264,10 @@ class StopGate:
 
     # ------------------------------------------------------------ recognisers
 
-    def _judge(self, rgb, det) -> Optional[bool]:
+    def _judge(self, rgb, det, exclude_id: Optional[int] = None) -> Optional[bool]:
         if self.mode == "vlm":
             return self._judge_vlm(rgb, det)
-        return self._judge_clip(rgb, det)
+        return self._judge_clip(rgb, det, exclude_id)
 
     def _vlm_verifier(self):
         if self._vlm is None:
@@ -283,21 +296,69 @@ class StopGate:
         # The verifier fails OPEN on an API error; an error is not an answer.
         return None if verifier.n_errors > errors else bool(accepted)
 
-    def _judge_clip(self, rgb, det) -> Optional[bool]:
-        return self._clip_verdict(crop_with_margin(rgb, det.bbox_xyxy))
+    def _judge_clip(self, rgb, det, exclude_id: Optional[int] = None) -> Optional[bool]:
+        return self._clip_verdict(crop_with_margin(rgb, det.bbox_xyxy), exclude_id=exclude_id)
 
-    def _clip_verdict(self, crop) -> Optional[bool]:
-        encoder = getattr(getattr(self.nav, "region_proposer", None), "encoder", None)
+    def _encoder(self):
+        return getattr(getattr(self.nav, "region_proposer", None), "encoder", None)
+
+    def _text_margin(self, encoder, feat) -> float:
+        prompt = "a photo of a {}"
+        query = encoder.encode_text([prompt.format(normalize_label(self.nav.target))])[0]
+        background = encoder.encode_text([prompt.format(c) for c in self._background()])
+        return float(feat @ query) - float(np.max(background @ feat))
+
+    def _clip_verdict(self, crop, exemplars: bool = True,
+                      exclude_id: Optional[int] = None) -> Optional[bool]:
+        """The clip recogniser's verdict on a crop: the text margin, or with
+        `stop_gate_exemplar: on` and an exemplar to hand, the cosine to the
+        nearest pass-1 crop of the target. `last_reading` keeps both numbers."""
+        self.last_reading = {}
+        encoder = self._encoder()
         if encoder is None:
             return None  # no encoder loaded on this arm: no opinion
         feat = encoder.encode_image(crop)
         if feat is None:
             return None
-        prompt = "a photo of a {}"
-        query = encoder.encode_text([prompt.format(normalize_label(self.nav.target))])[0]
-        background = encoder.encode_text([prompt.format(c) for c in self._background()])
-        margin = float(feat @ query) - float(np.max(background @ feat))
-        return margin > float(self.nav.cfg.verification.stop_gate_clip_margin)
+        margin = self._text_margin(encoder, feat)
+        verdict = margin > float(self.nav.cfg.verification.stop_gate_clip_margin)
+        self.last_reading = {"margin": round(margin, 3)}
+        if not exemplars or self.exemplar == "off":
+            return verdict
+        refs = [f for tid, f in self._exemplar_set() if tid != exclude_id]
+        self.last_reading["n_exemplars"] = len(refs)
+        if not refs:
+            return verdict
+        cos = float(np.max(np.stack(refs) @ feat))
+        self.last_reading["exemplar_cos"] = round(cos, 3)
+        if self.exemplar == "on":
+            verdict = cos >= float(self.nav.cfg.verification.stop_gate_exemplar_tau)
+        return verdict
+
+    def _exemplar_set(self) -> list:
+        """(track id, feature) of every pass-1 target-labelled track whose
+        saved crop the text margin accepts, built once per episode as the
+        prior map is loaded (`vet_prior`); a false positive baked into pass 1
+        is what the margin is there to keep out of the set."""
+        if self._exemplars is not None:
+            return self._exemplars
+        self._exemplars = []
+        encoder, layer = self._encoder(), getattr(self.nav, "object_layer", None)
+        if encoder is None or layer is None:
+            return self._exemplars
+        target = normalize_label(self.nav.target)
+        bar = float(self.nav.cfg.verification.stop_gate_clip_margin)
+        for track in layer.tracks(include_blacklisted=True):
+            if not getattr(track, "from_prior", False) or normalize_label(track.label) != target:
+                continue
+            crop = getattr(track, "best_crop", None)
+            if crop is None or getattr(crop, "size", 0) == 0:
+                continue
+            feat = encoder.encode_image(crop)
+            if feat is not None and self._text_margin(encoder, feat) > bar:
+                self._exemplars.append((int(track.id), feat))
+        self.nav.stats["stop_gate_exemplars"] = len(self._exemplars)
+        return self._exemplars
 
     def _background(self) -> list:
         return background_for(self.nav.target, confuser_vocabulary(self.nav.cfg))

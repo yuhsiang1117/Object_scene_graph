@@ -325,3 +325,17 @@ class VerificationConfig:
     # "no" is one presence reading, never a strike-off, and every verdict is
     # logged with its range (`live_vet_log`). False = no live vetting.
     stop_gate_vet_live: bool = False
+    # The pass-1 crop of the target INSTANCE as the clip recogniser's reference
+    # (`StopGate._clip_reading`): the benchmark moves the object pass 1 saw, so
+    # the prior map holds pictures of the very thing being looked for. The
+    # exemplars are the prior target-labelled tracks whose crop the text margin
+    # accepts, never the track being judged. "off" = the text margin alone;
+    # "log" = also record the exemplar cosine beside every verdict, deciding
+    # nothing; "on" = with at least one exemplar, the verdict is cosine >=
+    # `stop_gate_exemplar_tau`, else the text margin. Offline, on the 90
+    # target-labelled pass-1 crops (true crops against the same class in the
+    # other four houses, false ones against their own house's exemplars): AUC
+    # 0.975 against the text margin's 0.947; at 95% of true kept, cosine 0.79
+    # rejects 98% of the false, and 6 of the 7 the margin passes.
+    stop_gate_exemplar: str = "off"
+    stop_gate_exemplar_tau: float = 0.79

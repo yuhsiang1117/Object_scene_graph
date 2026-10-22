@@ -238,6 +238,7 @@ def run_eval(cfg) -> dict:
             # "verify_stop_gate_max_per_episode" "verify_stop_gate_confusers"
             # "verify_stop_gate_view" "verify_stop_gate_close_m" "verify_stop_gate_unseen"
             # "verify_stop_gate_vet_prior" "verify_stop_gate_vet_live"
+            # "verify_stop_gate_exemplar" "verify_stop_gate_exemplar_tau"
             # "storey_belief" "storey_anchor_weight" "storey_detect_prob" "storey_switch_ratio"
             # "storey_cover_radius_m" "storey_block_m" "storey_rejection_discount"
             # "climb_route" "climb_route_start_m" "climb_route_lookahead_m"

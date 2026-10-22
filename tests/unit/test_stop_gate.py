@@ -64,7 +64,7 @@ def _nav(mode="vlm", det=True, per_track=2, per_episode=4):
 
 def _gate(nav, verdict):
     gate = StopGate(nav)
-    gate._judge = lambda frame, det: verdict
+    gate._judge = lambda frame, det, **kw: verdict
     return gate
 
 
@@ -197,7 +197,7 @@ def test_with_nothing_in_frame_the_best_close_sighting_is_judged():
     nav, track = _nav_v2()
     gate = StopGate(nav)
     seen = []
-    gate._judge = lambda rgb, det: seen.append((rgb.shape, det.score)) or False
+    gate._judge = lambda rgb, det, **kw: seen.append((rgb.shape, det.score)) or False
     gate.note_sighting(_frame(), _sighting(0.5), 1.2)
     gate.note_sighting(_frame(), _sighting(0.7), 1.4)
     gate.note_sighting(_frame(), _sighting(0.4), 0.9)
@@ -236,7 +236,7 @@ def test_a_live_detection_is_still_judged_first():
     nav, _ = _nav_v2(det=True)
     gate = StopGate(nav)
     scores = []
-    gate._judge = lambda rgb, det: scores.append(det.score) or True
+    gate._judge = lambda rgb, det, **kw: scores.append(det.score) or True
     gate.note_sighting(_frame(), _sighting(0.6), 1.0)
     assert gate.check(SimpleNamespace()) is None
     assert scores == [0.8] and gate.log[-1]["view"] == "frame"
@@ -292,7 +292,7 @@ def test_vetting_reads_each_target_labelled_prior_track_through_presence():
     gate = StopGate(nav)
     verdicts = {1: True, 2: False}
     seen = []
-    gate._clip_verdict = lambda crop: verdicts[seen.append(1) or len(seen)]
+    gate._clip_verdict = lambda crop, **kw: verdicts[seen.append(1) or len(seen)]
     out = gate.vet_prior()
     assert readings == [(1, True, 0.9, 0.2), (2, False, 0.9, 0.2)]
     assert (out["judged"], out["accepted"], out["rejected"], out["no_crop"]) == (2, 1, 1, 1)
@@ -332,7 +332,7 @@ def test_a_live_track_is_judged_once_and_a_no_puts_it_under_the_bar():
     nav, track = _live_nav()
     gate = StopGate(nav)
     calls = []
-    gate._clip_verdict = lambda crop: calls.append(1) or False
+    gate._clip_verdict = lambda crop, **kw: calls.append(1) or False
     track.presence.log_odds = -0.1                # p ~0.475, just over the 0.45 bar
     assert gate.vet_live(track) is False
     assert gate.vet_live(track) is True           # judged once: no second reading
@@ -343,11 +343,11 @@ def test_a_live_track_is_judged_once_and_a_no_puts_it_under_the_bar():
 def test_a_yes_or_no_opinion_keeps_the_candidate():
     nav, track = _live_nav()
     gate = StopGate(nav)
-    gate._clip_verdict = lambda crop: True
+    gate._clip_verdict = lambda crop, **kw: True
     assert gate.vet_live(track) is True
     nav, track = _live_nav()
     gate = StopGate(nav)
-    gate._clip_verdict = lambda crop: None
+    gate._clip_verdict = lambda crop, **kw: None
     assert gate.vet_live(track) is True and "live_vet_log" not in nav.stats
 
 
@@ -359,5 +359,85 @@ def test_live_vetting_leaves_prior_proposal_and_unflagged_tracks_alone():
         for k, v in attrs.items():
             setattr(track, k, v)
         gate = StopGate(nav)
-        gate._clip_verdict = lambda crop: pytest.fail("judged")
+        gate._clip_verdict = lambda crop, **kw: pytest.fail("judged")
         assert gate.vet_live(track) is True
+
+
+class _Encoder:
+    """Features by hand: a crop carries its own unit feature in pixel (0, 0),
+    channels 1-3 (axis 0: the target text's direction, axis 1: a confuser's,
+    axis 2: appearance orthogonal to both)."""
+
+    def encode_image(self, crop):
+        return np.asarray(crop[0, 0, 1:4], dtype=float) if crop.shape[2] > 3 else None
+
+    def encode_text(self, texts):
+        return np.array([[1.0, 0.0, 0.0] if "cracker box" in t else [0.0, 1.0, 0.0]
+                         for t in texts])
+
+
+def _crop(feat):
+    c = np.zeros((4, 4, 4), np.float32)
+    c[0, 0, 1:4] = np.asarray(feat, dtype=float) / np.linalg.norm(feat)
+    return c
+
+
+def _exemplar_nav(mode, tau=0.79):
+    nav, _ = _nav(mode="clip")
+    nav.cfg.verification.stop_gate_exemplar = mode
+    nav.cfg.verification.stop_gate_exemplar_tau = tau
+    nav.region_proposer = SimpleNamespace(encoder=_Encoder())
+    return nav
+
+
+def _box(tid, feat, label="cracker box", from_prior=True):
+    return SimpleNamespace(id=tid, label=label, from_prior=from_prior, best_crop=_crop(feat))
+
+
+def test_the_exemplars_are_the_prior_crops_the_text_margin_accepts():
+    """`verification.stop_gate_exemplar`: pass 1's pictures of the target, minus
+    the ones the text margin calls something else, snapshotted at load."""
+    nav = _exemplar_nav("log")
+    tracks = [_box(1, [1, 0, 1]), _box(2, [0, 1, 0]), _box(3, [1, 0, 0], label="lamp"),
+              _box(4, [1, 0, 0], from_prior=False)]
+    _prior_layer(nav, tracks)
+    gate = StopGate(nav)
+    assert gate.vet_prior() is None          # vetting off: the snapshot is still taken
+    assert [tid for tid, _ in gate._exemplar_set()] == [1]
+    assert nav.stats["stop_gate_exemplars"] == 1
+    tracks[0].best_crop = _crop([0, 1, 0])   # a later live crop does not move the set
+    assert [tid for tid, _ in gate._exemplar_set()] == [1]
+
+
+def test_log_mode_records_the_cosine_and_decides_by_the_text_margin():
+    nav = _exemplar_nav("log")
+    _prior_layer(nav, [_box(1, [1, 0, 1])])
+    gate = StopGate(nav)
+    # The text says yes, the appearance says it is not the instance: log keeps yes.
+    assert gate._clip_verdict(_crop([1, 0, -0.5])) is True
+    r = gate.last_reading
+    assert r["n_exemplars"] == 1 and r["exemplar_cos"] < 0.79 and r["margin"] > 0
+
+
+def test_on_mode_decides_by_the_exemplar_and_never_by_the_tracks_own_crop():
+    nav = _exemplar_nav("on")
+    _prior_layer(nav, [_box(1, [1, 0, 1])])
+    gate = StopGate(nav)
+    assert gate._clip_verdict(_crop([1, 0, -0.5])) is False      # the text margin passed it
+    assert gate._clip_verdict(_crop([0.3, 0.4, 1.0])) is True    # the text margin failed it
+    # Judging prior track 1 itself: no other exemplar, so the text margin decides.
+    assert gate._clip_verdict(_crop([0.3, 0.4, 1.0]), exclude_id=1) is False
+    assert "exemplar_cos" not in gate.last_reading
+
+
+def test_without_exemplars_on_mode_is_the_text_margin():
+    nav = _exemplar_nav("on")
+    _prior_layer(nav, [])
+    gate = StopGate(nav)
+    assert gate._clip_verdict(_crop([1, 0, -0.5])) is True
+    assert gate.last_reading == {"margin": pytest.approx(0.894, abs=1e-3), "n_exemplars": 0}
+
+
+def test_a_bad_exemplar_mode_fails_loudly():
+    with pytest.raises(ValueError):
+        StopGate(_exemplar_nav("always"))

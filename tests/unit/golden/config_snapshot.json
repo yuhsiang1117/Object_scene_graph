@@ -586,6 +586,8 @@
   "verification.stop_gate_clip_margin": 0.0,
   "verification.stop_gate_close_m": 1.5,
   "verification.stop_gate_confusers": "generic",
+  "verification.stop_gate_exemplar": "off",
+  "verification.stop_gate_exemplar_tau": 0.79,
   "verification.stop_gate_max_per_episode": 4,
   "verification.stop_gate_max_per_track": 2,
   "verification.stop_gate_model": "",
