@@ -312,3 +312,52 @@ def test_bad_view_or_unseen_values_fail_loudly():
         nav, _ = _nav_v2(**kw)
         with pytest.raises(ValueError):
             StopGate(nav)
+
+
+def _live_nav(on=True, mode="clip"):
+    nav, track = _nav(mode=mode)
+    nav.cfg.verification.stop_gate_vet_live = on
+    track.label = "cracker box"
+    track.best_crop = np.zeros((40, 40, 3), np.uint8)
+    track.best_cam_xy = np.array([1.0, 0.0])
+    track.best_bbox_px = 1600.0
+    nav.object_layer.center_of = lambda t: np.array([0.0, 0.5, 0.0])
+    return nav, track
+
+
+def test_a_live_track_is_judged_once_and_a_no_puts_it_under_the_bar():
+    """`verification.stop_gate_vet_live`: the toy airplane on a handrail is a
+    commit candidate; one reading through the presence filter, logged with the
+    range its crop was taken from."""
+    nav, track = _live_nav()
+    gate = StopGate(nav)
+    calls = []
+    gate._clip_verdict = lambda crop: calls.append(1) or False
+    track.presence.log_odds = -0.1                # p ~0.475, just over the 0.45 bar
+    assert gate.vet_live(track) is False
+    assert gate.vet_live(track) is True           # judged once: no second reading
+    assert len(calls) == 1 and nav.stats["live_vet_rejected"] == 1
+    assert nav.stats["live_vet_log"][0]["range_m"] == pytest.approx(1.0)
+
+
+def test_a_yes_or_no_opinion_keeps_the_candidate():
+    nav, track = _live_nav()
+    gate = StopGate(nav)
+    gate._clip_verdict = lambda crop: True
+    assert gate.vet_live(track) is True
+    nav, track = _live_nav()
+    gate = StopGate(nav)
+    gate._clip_verdict = lambda crop: None
+    assert gate.vet_live(track) is True and "live_vet_log" not in nav.stats
+
+
+def test_live_vetting_leaves_prior_proposal_and_unflagged_tracks_alone():
+    for on, mode, attrs in ((False, "clip", {}), (True, "vlm", {}),
+                            (True, "clip", {"from_prior": True, "seen_live": False}),
+                            (True, "clip", {"proposal_only": True})):
+        nav, track = _live_nav(on=on, mode=mode)
+        for k, v in attrs.items():
+            setattr(track, k, v)
+        gate = StopGate(nav)
+        gate._clip_verdict = lambda crop: pytest.fail("judged")
+        assert gate.vet_live(track) is True

@@ -133,6 +133,11 @@ class CandidatePolicy:
             candidates = self._height_plausible(candidates)
         if candidates and bool(self.nav.cfg.verification.retire_stale_twins_after_absence):
             candidates = self._without_stale_twins(candidates)
+        gate = getattr(self.nav, "stop_gate", None)
+        if candidates and gate is not None:
+            # Each live track judged once, on first candidacy
+            # (`verification.stop_gate_vet_live`); a no-op otherwise.
+            candidates = [t for t in candidates if gate.vet_live(t)]
         if not candidates:
             picked = self._appearance_pick()
             if picked is None:

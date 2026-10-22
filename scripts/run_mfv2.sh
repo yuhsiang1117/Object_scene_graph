@@ -25,6 +25,7 @@
 #   osg_landing_vet   osg_landing, and the prior's target-labelled tracks vetted first
 #   osg_landing_vet_strict  osg_landing_vet, and the commit gate at the module defaults (obs 3, evidence 1.0)
 #   osg_landing_vet_return  osg_landing_vet, and a lower ratio back to a storey stood on this episode
+#   osg_landing_vet_live    osg_landing_vet, and each live target track judged once before its first commit
 #   osg_mouth_walk_<x>  the final arm with ONE change: no_presence / no_search / no_vlm /
 #            no_belief / no_gate / no_route / no_arrival / affinity_llm / affinity_flat
 #            remove or swap a component; vet and oracle (privileged, a ceiling) add one

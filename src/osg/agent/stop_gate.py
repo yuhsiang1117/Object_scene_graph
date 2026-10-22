@@ -141,6 +141,54 @@ class StopGate:
             stats[f"prior_vet_{k}"] = stats.get(f"prior_vet_{k}", 0) + out[k]
         return out
 
+    def vet_live(self, track) -> bool:
+        """Judge a LIVE target-labelled track once, the first time it is a
+        commit candidate (`verification.stop_gate_vet_live`): its saved best
+        crop, read through the presence filter at the gate's (r, q), exactly as
+        `vet_prior` reads a pass-1 track. False when the reading leaves it
+        under the commit bar this round; nothing is deleted, and the
+        detector's later sightings raise it again.
+
+        Why: on osg_landing (3 seeds) the 38 episodes that failed on the
+        object's storey committed 129 times to false positives -- a toy
+        airplane on doors, handrails and stair railings, a coffee can on walls
+        and paintings -- and each commit is an approach walk before the STOP
+        gate looks. Every verdict is logged with the range its crop was taken
+        from: the recogniser was measured at <= 1.5 m, these crops are not.
+        """
+        vc = self.nav.cfg.verification
+        if self.mode != "clip" or not bool(getattr(vc, "stop_gate_vet_live", False)):
+            return True
+        if getattr(track, "from_prior", False) and not getattr(track, "seen_live", False):
+            return True                           # a prior track: vet_prior's business
+        if getattr(track, "proposal_only", False) or getattr(track, "live_vetted", False):
+            return True
+        crop = getattr(track, "best_crop", None)
+        if crop is None or getattr(crop, "size", 0) == 0:
+            return True
+        track.live_vetted = True
+        with self.nav.profiler.timeit("stop_gate_vet"):
+            verdict = self._clip_verdict(crop)
+        stats = self.nav.stats
+        if verdict is None:
+            stats["live_vet_no_opinion"] = stats.get("live_vet_no_opinion", 0) + 1
+            return True
+        cam = getattr(track, "best_cam_xy", None)
+        centre = np.asarray(self.nav.object_layer.center_of(track), dtype=float)
+        rng = (None if cam is None
+               else round(float(np.hypot(centre[0] - float(cam[0]), centre[2] - float(cam[1]))), 2))
+        stats.setdefault("live_vet_log", []).append(
+            {"step": int(self.nav.step_count), "track_id": int(track.id), "verdict": bool(verdict),
+             "range_m": rng, "bbox_px": round(float(getattr(track, "best_bbox_px", 0.0)), 1),
+             "center": [round(float(v), 3) for v in centre]})
+        stats["live_vet_accepted" if verdict else "live_vet_rejected"] = (
+            stats.get("live_vet_accepted" if verdict else "live_vet_rejected", 0) + 1)
+        presence = getattr(self.nav.object_layer, "presence_filter", None)
+        if presence is None:
+            return bool(verdict)
+        presence.apply_reading(track, bool(verdict), float(vc.stop_gate_recall), float(vc.stop_gate_q))
+        return float(track.presence.p) >= float(self.nav.cfg.scene_graph.presence.min_presence)
+
     # ------------------------------------------------------------- the check
 
     def check(self, frame) -> Optional[str]:

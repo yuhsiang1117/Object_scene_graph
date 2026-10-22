@@ -592,6 +592,7 @@
   "verification.stop_gate_q": 0.2,
   "verification.stop_gate_recall": 0.9,
   "verification.stop_gate_unseen": "allow",
+  "verification.stop_gate_vet_live": false,
   "verification.stop_gate_vet_prior": false,
   "verification.stop_gate_view": "frame",
   "verification.target_bypasses_bbox_gate": false,

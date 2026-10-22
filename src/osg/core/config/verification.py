@@ -315,3 +315,13 @@ class VerificationConfig:
     # other storey went 4 of 17, most failing on a first commit to a wrong
     # same-label track on the start storey.
     stop_gate_vet_prior: bool = False
+    # The same reading for a LIVE target-labelled track, once, the first time it
+    # is a commit candidate (`StopGate.vet_live`): before the approach walk,
+    # not at the STOP. Measured on osg_landing (3 seeds): the on-storey
+    # failures committed 129 times to false positives, 18 to the object; the
+    # labelled false commits are a toy airplane on doors, handrails and stair
+    # railings, a coffee can on walls and paintings, a cracker box on baskets.
+    # The crops are not the <= 1.5 m ones the recogniser was measured on, so a
+    # "no" is one presence reading, never a strike-off, and every verdict is
+    # logged with its range (`live_vet_log`). False = no live vetting.
+    stop_gate_vet_live: bool = False
