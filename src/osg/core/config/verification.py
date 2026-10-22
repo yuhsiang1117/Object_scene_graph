@@ -337,5 +337,13 @@ class VerificationConfig:
     # other four houses, false ones against their own house's exemplars): AUC
     # 0.975 against the text margin's 0.947; at 95% of true kept, cosine 0.79
     # rejects 98% of the false, and 6 of the 7 the margin passes.
+    # OFF for a measured reason: on LIVE crops it does not separate. Nine seed-42
+    # episodes in log mode (outputs/mfv2/_smoke_exemplar): live false positives
+    # sit at a median cosine of 0.784, the true sightings at 0.715 and 0.562,
+    # while the text margin accepts 4 of 30 false and 4 of 5 true. The exemplar
+    # set holds pass 1's false positives too (on 4 of the 37 (scene, label)
+    # pairs it is ONLY false positives, e.g. a toy airplane on 00878's
+    # handrail), and pass 2 re-detects the very same thing: cosine 0.94. An
+    # exemplar remembers the mistake, not the object.
     stop_gate_exemplar: str = "off"
     stop_gate_exemplar_tau: float = 0.79
