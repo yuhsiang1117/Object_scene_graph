@@ -196,3 +196,44 @@ def test_off_the_strategy_is_unchanged():
     assert s.storey_belief is None
     s.select(_world_two_storeys(s, []), lambda cost, target_floor=None: calls.append(target_floor))
     assert calls == [None]               # the legacy undirected switch
+
+
+def _left_and_searched(**kw):
+    """Stood briefly on storey 0, then searched storey 1 until going back is
+    favoured between 1.45 and 1.8 to one, no anchor anywhere."""
+    b = _belief(storey_switch_ratio=1.8, **kw)
+    layers = {0: (0.16, _floor(6.0)), 1: (3.16, _floor(6.0))}
+    b.note(0, (0.0, 0.0))
+    for x in np.arange(-3.0, 3.01, 0.5):
+        b.note(1, (x, -2.0))
+        b.note(1, (x, 0.0))
+        post = b.posterior(layers, [], current_key=1)
+        if post["P"][0] >= 1.45 * post["P"][1]:
+            break
+    assert 1.45 <= post["P"][0] / post["P"][1] < 1.8
+    return b, layers
+
+
+def test_back_to_a_storey_stood_on_this_episode_the_known_climb_ratio_applies():
+    """`exploration.storey_return_ratio`: a staircase walked this episode leads
+    back, so its climb is known and the bar is 1 + T_climb / T_rest ~ 1.4."""
+    b, layers = _left_and_searched(storey_return_ratio=1.4)
+    assert b.decide(50, layers, [], current_key=1) == 0
+
+
+def test_off_the_shipped_ratio_holds_the_agent_where_it_is():
+    b, layers = _left_and_searched()
+    assert b.decide(50, layers, [], current_key=1) is None
+
+
+def test_a_storey_never_stood_on_keeps_the_full_ratio():
+    b = _belief(storey_switch_ratio=1.8, storey_return_ratio=1.4)
+    layers = {0: (0.16, _floor(6.0)), 1: (3.16, _floor(6.0))}
+    for x in np.arange(-3.0, 3.01, 0.5):
+        b.note(1, (x, -2.0))
+        b.note(1, (x, 0.0))
+        post = b.posterior(layers, [], current_key=1)
+        if post["P"][0] >= 1.45 * post["P"][1]:
+            break
+    if post["P"][0] < 1.8 * post["P"][1]:
+        assert b.decide(50, layers, [], current_key=1) is None

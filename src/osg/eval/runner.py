@@ -248,6 +248,7 @@ def run_eval(cfg) -> dict:
             # "climb_route_gap_fill_m" "climb_route_approach_steps" "climb_route_mouth_first"
             # "climb_route_start_near_m" "climb_surfaces_horizontal" "climb_route_seed_nearest"
             # "climb_route_stall_pause_scan" "climb_route_replan_near_m"
+            # "storey_return_ratio"
             # "descent_goal" (floor.*, not in the algorithm fingerprint: see the config dump)
             **_algorithm_fingerprint(cfg),
         },

@@ -182,6 +182,15 @@ class ExplorationConfig:
     # anywhere, the coverage term asked to leave with 38% of the storey
     # searched; at 1.8 it waits for ~55%.
     storey_switch_ratio: float = 1.8
+    # The same rule back to a storey stood on this episode -- one a staircase
+    # walked this episode leads to. Its climb is known: climbs that gained 2 m
+    # took 36-155 steps (median ~80) in the traced seed-42 smokes, ~130 with
+    # the walk back to the stairs, against 300-400 to finish a storey, so
+    # 1 + 130/350 ~ 1.4. 0 = storey_switch_ratio everywhere, as measured.
+    # Replay of osg_landing's 27 episodes that left the object's storey and
+    # failed (3 seeds): at 1.8 a return was asked with >= 300 steps left in 5,
+    # at 1.4 in 8.
+    storey_return_ratio: float = 0.0
     storey_cover_radius_m: float = 2.0
     # Each identity rejection (STOP gate, unreachable verdict) multiplies a
     # track's weight in the storey belief by this; a failed attempt or the

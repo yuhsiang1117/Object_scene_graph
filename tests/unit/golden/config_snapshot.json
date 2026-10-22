@@ -306,6 +306,7 @@
   "exploration.storey_cover_radius_m": 2.0,
   "exploration.storey_detect_prob": 0.85,
   "exploration.storey_rejection_discount": 0.3,
+  "exploration.storey_return_ratio": 0.0,
   "exploration.storey_switch_ratio": 1.8,
   "exploration.subgraph_radius_m": 3.0,
   "exploration.top_n_frontiers": 5,

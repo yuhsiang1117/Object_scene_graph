@@ -1,0 +1,20 @@
+# @package _global_
+#
+# `mfv2_osg_landing_vet`, and going back to a storey stood on this episode at a
+# belief ratio of 1.4 instead of 1.8 (`exploration.storey_return_ratio`): the
+# staircase back is one just walked, so its cost is a known climb (~130 steps
+# with the walk to it) rather than an unknown one (~250).
+#
+# For the 27 osg_landing episodes (3 seeds) that started on the object's
+# storey, left it and failed. Replayed from their belief logs, a return was
+# asked with >= 300 steps left in 5 at 1.8 and in 8 at 1.4: a small lever, and
+# a principled one. The class that must not lose: same_floor (an object moved
+# within its storey, where going back is wrong).
+#
+#   bash scripts/run_mfv2.sh osg_landing_vet_return <seed>
+defaults:
+  - mfv2_osg_landing_vet
+  - _self_
+
+exploration:
+  storey_return_ratio: 1.4

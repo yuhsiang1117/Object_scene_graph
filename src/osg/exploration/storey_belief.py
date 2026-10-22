@@ -183,6 +183,12 @@ class StoreyBelief:
         if others and here in P:
             best = max(others, key=lambda k: (P[k], -k))
             ratio = float(getattr(self.cfg, "storey_switch_ratio", 1.3))
+            back = float(getattr(self.cfg, "storey_return_ratio", 0.0) or 0.0)
+            if back > 0.0 and post["cover"].get(best, 0.0) > 0.0:
+                # A storey stood on this episode is one a staircase walked this
+                # episode leads back to: the climb's cost is that climb, not
+                # the expected ~250 steps of an unknown one.
+                ratio = min(ratio, back)
             held = self._requested == best and P[best] > P[here]
             if P[best] >= ratio * P[here] or held:
                 choice = best

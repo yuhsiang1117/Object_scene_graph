@@ -1,0 +1,22 @@
+# @package _global_
+#
+# `mfv2_osg_landing_vet`, and the goal-commit gate back at the verification
+# module's own measured defaults: `min_obs` 3 and `min_evidence` 1.0 (see
+# core/config/verification.py) instead of the 1 and 0.2 `ycb_dynamic_best`
+# chose for single-floor search, where a commit is cheap.
+#
+# Why: on osg_landing (3 seeds) the 38 episodes that failed on the object's own
+# storey committed 129 times to false positives and 18 times to the object. At
+# episode end, live false commits had a median of 4.5 observations and evidence
+# 1.33 against 17 and 8.8 for live true ones. Proposal-only tracks are judged
+# on their own bar and are not touched by either number; prior tracks clear
+# them on pass-1 evidence (vetting is what judges those).
+#
+#   bash scripts/run_mfv2.sh osg_landing_vet_strict <seed>
+defaults:
+  - mfv2_osg_landing_vet
+  - _self_
+
+verification:
+  min_obs: 3
+  min_evidence: 1.0
