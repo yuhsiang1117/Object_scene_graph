@@ -597,6 +597,7 @@
   "verification.stop_gate_vet_live": false,
   "verification.stop_gate_vet_live_identity": false,
   "verification.stop_gate_vet_live_revet": false,
+  "verification.stop_gate_vet_live_sticky": false,
   "verification.stop_gate_vet_prior": false,
   "verification.stop_gate_view": "frame",
   "verification.target_bypasses_bbox_gate": false,

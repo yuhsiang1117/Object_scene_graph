@@ -164,8 +164,10 @@ class StopGate:
         `vet_prior` reads a pass-1 track. False when the reading leaves it
         under the commit bar this round; nothing is deleted, and the
         detector's later sightings raise it again -- unless
-        `stop_gate_vet_live_identity` makes the "no" identity evidence too.
-        With `stop_gate_vet_live_revet` a better view is judged again.
+        `stop_gate_vet_live_identity` makes the "no" identity evidence too,
+        or `stop_gate_vet_live_sticky` holds the track out until a better
+        view is judged "yes". With `stop_gate_vet_live_revet` a better view is
+        judged again.
 
         Why: on osg_landing (3 seeds) the 38 episodes that failed on the
         object's storey committed 129 times to false positives -- a toy
@@ -189,6 +191,14 @@ class StopGate:
             if (not bool(getattr(vc, "stop_gate_vet_live_revet", False))
                     or n_vets >= MAX_LIVE_VETS
                     or float(track.best_score) <= float(getattr(track, "live_vet_score", 0.0))):
+                if (bool(getattr(vc, "stop_gate_vet_live_sticky", False))
+                        and getattr(track, "live_vet_last", None) is False):
+                    # The last verdict was "no" and nothing better has been
+                    # seen since: it stands, whatever the detector's repeats
+                    # of the same view have done to presence.
+                    self.nav.stats["live_vet_held_steps"] = (
+                        self.nav.stats.get("live_vet_held_steps", 0) + 1)
+                    return False
                 return True
         crop = getattr(track, "best_crop", None)
         if crop is None or getattr(crop, "size", 0) == 0:
@@ -212,6 +222,7 @@ class StopGate:
              **self.last_reading})
         stats["live_vet_accepted" if verdict else "live_vet_rejected"] = (
             stats.get("live_vet_accepted" if verdict else "live_vet_rejected", 0) + 1)
+        track.live_vet_last = bool(verdict)
         if n_vets:
             stats["live_vet_revets"] = stats.get("live_vet_revets", 0) + 1
         if not verdict and bool(getattr(vc, "stop_gate_vet_live_identity", False)):
@@ -224,6 +235,8 @@ class StopGate:
         if presence is None:
             return bool(verdict)
         presence.apply_reading(track, bool(verdict), float(vc.stop_gate_recall), float(vc.stop_gate_q))
+        if not verdict and bool(getattr(vc, "stop_gate_vet_live_sticky", False)):
+            return False
         return float(track.presence.p) >= float(self.nav.cfg.scene_graph.presence.min_presence)
 
     # ------------------------------------------------------------- the check

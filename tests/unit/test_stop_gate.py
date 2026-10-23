@@ -491,3 +491,32 @@ def test_without_revetting_a_better_view_is_not_judged():
     track.best_score = 0.9
     gate.vet_live(track)
     assert calls == [1]
+
+
+def test_a_sticky_no_holds_until_a_better_view_says_yes():
+    """`stop_gate_vet_live_sticky`: the detector's repeats of the same view
+    raise presence, but only a better crop judged "yes" brings it back."""
+    nav, track = _live_nav()
+    nav.cfg.verification.stop_gate_vet_live_sticky = True
+    nav.cfg.verification.stop_gate_vet_live_revet = True
+    track.best_score = 0.4
+    track.presence.log_odds = 3.0                 # well over the bar after one reading
+    gate = StopGate(nav)
+    answers = [False, True]
+    gate._clip_verdict = lambda crop, **kw: answers.pop(0)
+    assert gate.vet_live(track) is False          # held although presence is high
+    track.presence.log_odds = 5.0                 # the detector re-detects it
+    assert gate.vet_live(track) is False          # same view: the no stands
+    assert nav.stats["live_vet_held_steps"] == 1
+    track.best_score = 0.6                        # a better view, judged yes
+    assert gate.vet_live(track) is True
+    assert gate.vet_live(track) is True           # and the yes stands
+    assert answers == []
+
+
+def test_without_sticky_presence_decides_after_a_no():
+    nav, track = _live_nav()
+    track.presence.log_odds = 3.0
+    gate = StopGate(nav)
+    gate._clip_verdict = lambda crop, **kw: False
+    assert gate.vet_live(track) is True           # still over the bar after one reading

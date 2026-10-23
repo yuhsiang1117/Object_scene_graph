@@ -335,6 +335,12 @@ class VerificationConfig:
     # so a better view can overturn the first verdict either way.
     stop_gate_vet_live_identity: bool = False
     stop_gate_vet_live_revet: bool = False
+    # `_sticky`: a "no" holds the track out of candidacy until a better view
+    # (`_revet`) is judged "yes" -- without `_revet`, for the episode. Measured
+    # on nine seed-42 smoke episodes, `_identity` + `_revet` left 8 of the 9
+    # re-admitted "no" commits: the first identity rejection does not retire a
+    # track (max_identity_rejections is 2), so each still cost one more walk.
+    stop_gate_vet_live_sticky: bool = False
     # The pass-1 crop of the target INSTANCE as the clip recogniser's reference
     # (`StopGate._clip_reading`): the benchmark moves the object pass 1 saw, so
     # the prior map holds pictures of the very thing being looked for. The

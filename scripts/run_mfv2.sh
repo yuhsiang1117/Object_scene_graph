@@ -28,6 +28,7 @@
 #   osg_landing_vet_live    osg_landing_vet, and each live target track judged once before its first commit
 #   osg_landing_vet_close   osg_landing_vet, and the approach stopping at a depth of 0.8 m, not 1.0
 #   osg_landing_vet_live_id osg_landing_vet_live, and a live "no" counted as identity evidence; a better view judged again
+#   osg_landing_vet_live_sticky  osg_landing_vet_live, and a live "no" held until a better view is judged "yes"
 #   osg_mouth_walk_<x>  the final arm with ONE change: no_presence / no_search / no_vlm /
 #            no_belief / no_gate / no_route / no_arrival / affinity_llm / affinity_flat
 #            remove or swap a component; vet and oracle (privileged, a ceiling) add one
