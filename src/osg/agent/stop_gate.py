@@ -188,8 +188,11 @@ class StopGate:
             # Judged before. Again only with `stop_gate_vet_live_revet`, on a
             # better view than last time -- the best crop changes only with a
             # higher-scoring detection -- and at most MAX_LIVE_VETS times.
+            # With `stop_gate_vet_live_yes_final`, only a "no" is judged again.
             if (not bool(getattr(vc, "stop_gate_vet_live_revet", False))
                     or n_vets >= MAX_LIVE_VETS
+                    or (bool(getattr(vc, "stop_gate_vet_live_yes_final", False))
+                        and getattr(track, "live_vet_last", None) is True)
                     or float(track.best_score) <= float(getattr(track, "live_vet_score", 0.0))):
                 if (bool(getattr(vc, "stop_gate_vet_live_sticky", False))
                         and getattr(track, "live_vet_last", None) is False):

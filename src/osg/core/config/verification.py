@@ -341,6 +341,15 @@ class VerificationConfig:
     # re-admitted "no" commits: the first identity rejection does not retire a
     # track (max_identity_rejections is 2), so each still cost one more walk.
     stop_gate_vet_live_sticky: bool = False
+    # `_yes_final`: `_revet` judges again only a track whose last verdict was
+    # "no" -- re-judging is there to give a held track a better view, not to
+    # take a "yes" back. osg_landing_vet_live_sticky, seed 42 + partial 43/44 and
+    # the _id arm: revets flipped "yes" to "no" on 7 true tracks and 4 false
+    # ones, and 2 of seed 42's 3 discordant episodes were lost that way (00821
+    # pitcher: "yes" at margin 0.019, flipped at -0.021, held 546 steps). A
+    # margin threshold on the stickiness does not separate: at -0.03 it holds
+    # 15/35 true "no" against 262/400 false.
+    stop_gate_vet_live_yes_final: bool = False
     # The pass-1 crop of the target INSTANCE as the clip recogniser's reference
     # (`StopGate._clip_reading`): the benchmark moves the object pass 1 saw, so
     # the prior map holds pictures of the very thing being looked for. The

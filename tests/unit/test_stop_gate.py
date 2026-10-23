@@ -520,3 +520,37 @@ def test_without_sticky_presence_decides_after_a_no():
     gate = StopGate(nav)
     gate._clip_verdict = lambda crop, **kw: False
     assert gate.vet_live(track) is True           # still over the bar after one reading
+
+
+def test_with_yes_final_a_better_view_never_takes_a_yes_back():
+    """`stop_gate_vet_live_yes_final`: a revet is a held track's second chance;
+    a "yes" stands (00821 pitcher: "yes" at margin 0.019, flipped at -0.021)."""
+    nav, track = _live_nav()
+    nav.cfg.verification.stop_gate_vet_live_sticky = True
+    nav.cfg.verification.stop_gate_vet_live_revet = True
+    nav.cfg.verification.stop_gate_vet_live_yes_final = True
+    track.best_score = 0.4
+    track.presence.log_odds = 3.0
+    gate = StopGate(nav)
+    answers = [True, False]
+    gate._clip_verdict = lambda crop, **kw: answers.pop(0)
+    assert gate.vet_live(track) is True
+    track.best_score = 0.6                        # a better view: not judged again
+    assert gate.vet_live(track) is True
+    assert answers == [False] and nav.stats.get("live_vet_revets", 0) == 0
+
+
+def test_with_yes_final_a_no_is_still_judged_again():
+    nav, track = _live_nav()
+    nav.cfg.verification.stop_gate_vet_live_sticky = True
+    nav.cfg.verification.stop_gate_vet_live_revet = True
+    nav.cfg.verification.stop_gate_vet_live_yes_final = True
+    track.best_score = 0.4
+    track.presence.log_odds = 3.0
+    gate = StopGate(nav)
+    answers = [False, True]
+    gate._clip_verdict = lambda crop, **kw: answers.pop(0)
+    assert gate.vet_live(track) is False
+    track.best_score = 0.6
+    assert gate.vet_live(track) is True
+    assert answers == [] and nav.stats["live_vet_revets"] == 1

@@ -1,0 +1,17 @@
+# @package _global_
+#
+# `mfv2_osg_landing_vet_live_sticky`, and a "yes" that a better view never takes
+# back: `stop_gate_vet_live_yes_final` re-judges only a track held by a "no".
+#
+# osg_landing_vet_live_sticky s42 against osg_landing_vet_live: 45 vs 46, false
+# commits to re-admitted "no" tracks 31 -> 1, but 2 of the 3 discordant
+# episodes were lost to a revet flipping a true track's "yes" to "no" (7 true,
+# 4 false such flips over the sticky and _id runs).
+#
+#   bash scripts/run_mfv2.sh osg_landing_vet_live_yesfinal <seed>
+defaults:
+  - mfv2_osg_landing_vet_live_sticky
+  - _self_
+
+verification:
+  stop_gate_vet_live_yes_final: true
