@@ -441,3 +441,53 @@ def test_without_exemplars_on_mode_is_the_text_margin():
 def test_a_bad_exemplar_mode_fails_loudly():
     with pytest.raises(ValueError):
         StopGate(_exemplar_nav("always"))
+
+
+def test_a_live_no_is_identity_evidence_when_asked():
+    """`stop_gate_vet_live_identity`: the detector re-detects a false positive
+    every time it looks, so a presence reading alone does not keep it out."""
+    for on, want in ((False, 0), (True, 1)):
+        nav, track = _live_nav()
+        nav.cfg.verification.stop_gate_vet_live_identity = on
+        gate = StopGate(nav)
+        gate._clip_verdict = lambda crop, **kw: False
+        gate.vet_live(track)
+        assert track.identity_rejections == want
+    nav, track = _live_nav()
+    nav.cfg.verification.stop_gate_vet_live_identity = True
+    gate = StopGate(nav)
+    gate._clip_verdict = lambda crop, **kw: True
+    gate.vet_live(track)
+    assert track.identity_rejections == 0
+
+
+def test_revetting_judges_only_a_better_view_and_a_bounded_number_of_times():
+    from osg.agent.stop_gate import MAX_LIVE_VETS
+
+    nav, track = _live_nav()
+    nav.cfg.verification.stop_gate_vet_live_revet = True
+    track.best_score = 0.4
+    gate = StopGate(nav)
+    calls = []
+    gate._clip_verdict = lambda crop, **kw: calls.append(track.best_score) or False
+    gate.vet_live(track)
+    gate.vet_live(track)                      # same crop: not judged again
+    assert calls == [0.4]
+    for i in range(MAX_LIVE_VETS + 2):        # every round a better detection
+        track.best_score = 0.5 + 0.05 * i
+        gate.vet_live(track)
+    assert len(calls) == MAX_LIVE_VETS
+    assert nav.stats["live_vet_revets"] == MAX_LIVE_VETS - 1
+    assert [v["n"] for v in nav.stats["live_vet_log"]] == list(range(1, MAX_LIVE_VETS + 1))
+
+
+def test_without_revetting_a_better_view_is_not_judged():
+    nav, track = _live_nav()
+    track.best_score = 0.4
+    gate = StopGate(nav)
+    calls = []
+    gate._clip_verdict = lambda crop, **kw: calls.append(1) or True
+    gate.vet_live(track)
+    track.best_score = 0.9
+    gate.vet_live(track)
+    assert calls == [1]

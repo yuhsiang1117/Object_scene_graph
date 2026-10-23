@@ -52,6 +52,10 @@ from ..core.labels import normalize_label
 from .state import TURN_ACTION
 
 MODES = ("off", "vlm", "clip")
+# A live track is judged at most this many times (`stop_gate_vet_live_revet`):
+# MobileCLIP is cheap, but a track re-detected all episode at a creeping score
+# would otherwise be re-judged on near-identical crops.
+MAX_LIVE_VETS = 3
 
 
 class StopGate:
@@ -159,7 +163,9 @@ class StopGate:
         crop, read through the presence filter at the gate's (r, q), exactly as
         `vet_prior` reads a pass-1 track. False when the reading leaves it
         under the commit bar this round; nothing is deleted, and the
-        detector's later sightings raise it again.
+        detector's later sightings raise it again -- unless
+        `stop_gate_vet_live_identity` makes the "no" identity evidence too.
+        With `stop_gate_vet_live_revet` a better view is judged again.
 
         Why: on osg_landing (3 seeds) the 38 episodes that failed on the
         object's storey committed 129 times to false positives -- a toy
@@ -173,12 +179,22 @@ class StopGate:
             return True
         if getattr(track, "from_prior", False) and not getattr(track, "seen_live", False):
             return True                           # a prior track: vet_prior's business
-        if getattr(track, "proposal_only", False) or getattr(track, "live_vetted", False):
+        if getattr(track, "proposal_only", False):
             return True
+        n_vets = int(getattr(track, "live_vets", 0))
+        if n_vets:
+            # Judged before. Again only with `stop_gate_vet_live_revet`, on a
+            # better view than last time -- the best crop changes only with a
+            # higher-scoring detection -- and at most MAX_LIVE_VETS times.
+            if (not bool(getattr(vc, "stop_gate_vet_live_revet", False))
+                    or n_vets >= MAX_LIVE_VETS
+                    or float(track.best_score) <= float(getattr(track, "live_vet_score", 0.0))):
+                return True
         crop = getattr(track, "best_crop", None)
         if crop is None or getattr(crop, "size", 0) == 0:
             return True
-        track.live_vetted = True
+        track.live_vets = n_vets + 1
+        track.live_vet_score = float(getattr(track, "best_score", 0.0))
         with self.nav.profiler.timeit("stop_gate_vet"):
             verdict = self._clip_verdict(crop, exclude_id=int(track.id))
         stats = self.nav.stats
@@ -192,9 +208,18 @@ class StopGate:
         stats.setdefault("live_vet_log", []).append(
             {"step": int(self.nav.step_count), "track_id": int(track.id), "verdict": bool(verdict),
              "range_m": rng, "bbox_px": round(float(getattr(track, "best_bbox_px", 0.0)), 1),
-             "center": [round(float(v), 3) for v in centre], **self.last_reading})
+             "center": [round(float(v), 3) for v in centre], "n": n_vets + 1,
+             **self.last_reading})
         stats["live_vet_accepted" if verdict else "live_vet_rejected"] = (
             stats.get("live_vet_accepted" if verdict else "live_vet_rejected", 0) + 1)
+        if n_vets:
+            stats["live_vet_revets"] = stats.get("live_vet_revets", 0) + 1
+        if not verdict and bool(getattr(vc, "stop_gate_vet_live_identity", False)):
+            # Identity evidence, as a STOP-gate "no" is: presence alone is
+            # pumped straight back by the detector, which re-detects a false
+            # positive every time it looks (osg_landing_vet_live, seeds 42-43:
+            # 85 of the 141 false commits left were tracks vetted "no").
+            track.identity_rejections += 1
         presence = getattr(self.nav.object_layer, "presence_filter", None)
         if presence is None:
             return bool(verdict)

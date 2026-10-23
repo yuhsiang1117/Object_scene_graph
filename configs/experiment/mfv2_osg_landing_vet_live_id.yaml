@@ -1,0 +1,23 @@
+# @package _global_
+#
+# `mfv2_osg_landing_vet_live`, and a live "no" made to stick: it also counts one
+# identity rejection (`stop_gate_vet_live_identity`), and a track whose best
+# crop is replaced by a higher-scoring detection's is judged again, at most
+# three times (`stop_gate_vet_live_revet`).
+#
+# osg_landing_vet_live against osg_landing_vet, seeds 42 and 43: successes 44 ->
+# 46 and 44 -> 45, false commits 136 -> 63 and 117 -> 78. Of the 141 false
+# commits left, 85 went to tracks the vetting had said "no" to -- one presence
+# reading, and the detector's next sightings of the same wrong object lifted it
+# back over the bar; 24 to tracks it said "yes" to, 22 to prior tracks never
+# seen live, 10 to proposals. Live verdicts: false rejected 196 of 226, true
+# kept 49 of 61.
+#
+#   bash scripts/run_mfv2.sh osg_landing_vet_live_id <seed>
+defaults:
+  - mfv2_osg_landing_vet_live
+  - _self_
+
+verification:
+  stop_gate_vet_live_identity: true
+  stop_gate_vet_live_revet: true

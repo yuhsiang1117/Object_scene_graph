@@ -325,6 +325,16 @@ class VerificationConfig:
     # "no" is one presence reading, never a strike-off, and every verdict is
     # logged with its range (`live_vet_log`). False = no live vetting.
     stop_gate_vet_live: bool = False
+    # What a live "no" is worth. On osg_landing_vet_live (seeds 42-43) 85 of the
+    # 141 false commits left went to tracks the vetting had said "no" to: one
+    # presence reading, pumped back over the bar by the detector's next
+    # sightings of the same wrong object. `_identity`: a "no" also counts one
+    # identity rejection, as a STOP-gate "no" does, so a second "no" or a
+    # failed attempt retires the track. `_revet`: judge a track again when its
+    # best crop is replaced by a higher-scoring detection's (at most 3 times),
+    # so a better view can overturn the first verdict either way.
+    stop_gate_vet_live_identity: bool = False
+    stop_gate_vet_live_revet: bool = False
     # The pass-1 crop of the target INSTANCE as the clip recogniser's reference
     # (`StopGate._clip_reading`): the benchmark moves the object pass 1 saw, so
     # the prior map holds pictures of the very thing being looked for. The
