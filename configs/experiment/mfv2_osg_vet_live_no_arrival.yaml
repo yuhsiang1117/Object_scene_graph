@@ -1,0 +1,15 @@
+# @package _global_
+#
+# The final arm (`mfv2_osg_landing_vet_live`) with ONE change: the storey switch aimed at the stair edge, not where pass 1 arrived.
+# Paired against osg_landing_vet_live_s<seed>; the same ablation on the earlier
+# arm is `mfv2_osg_mouth_walk_no_arrival`.
+#
+#   bash scripts/run_mfv2.sh osg_vet_live_no_arrival <seed>
+defaults:
+  - mfv2_osg_landing_vet_live
+  - _self_
+
+floor:
+  prior_stair_mouth: edge
+  prefer_prior_stairs: false
+  prior_stair_max_failures: 0

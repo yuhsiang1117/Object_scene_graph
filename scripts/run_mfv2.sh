@@ -30,6 +30,9 @@
 #   osg_landing_vet_live_id osg_landing_vet_live, and a live "no" counted as identity evidence; a better view judged again
 #   osg_landing_vet_live_sticky  osg_landing_vet_live, and a live "no" held until a better view is judged "yes"
 #   osg_landing_vet_live_yesfinal  osg_landing_vet_live_sticky, and a revet only for a "no": a "yes" stands
+#   osg_vet_live_<x>  the FINAL arm (osg_landing_vet_live) with ONE change, as osg_mouth_walk_<x>:
+#            no_presence / no_search / no_vlm / no_belief / no_gate / no_route / no_arrival /
+#            affinity_llm / affinity_flat; oracle (privileged, a ceiling)
 #   osg_mouth_walk_<x>  the final arm with ONE change: no_presence / no_search / no_vlm /
 #            no_belief / no_gate / no_route / no_arrival / affinity_llm / affinity_flat
 #            remove or swap a component; vet and oracle (privileged, a ceiling) add one
