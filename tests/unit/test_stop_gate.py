@@ -554,3 +554,149 @@ def test_with_yes_final_a_no_is_still_judged_again():
     track.best_score = 0.6
     assert gate.vet_live(track) is True
     assert answers == [] and nav.stats["live_vet_revets"] == 1
+
+
+# ------------------------------------------- the ground-truth oracle (diagnostic)
+
+def test_the_oracle_admits_the_object_and_where_it_was_and_nothing_else():
+    from osg.eval.vet_oracle import VetOracle
+    o = VetOracle([0.0, 0.8, 0.0], [5.0, 0.8, 5.0], radius_m=1.0)
+    assert o.admits([0.9, 0.8, 0.0])                  # TRUE: within 1 m
+    assert o.admits([5.0, 1.5, 5.6])                  # STALE: where pass 1 saw it
+    assert not o.admits([1.2, 0.8, 0.0])              # past the radius
+    assert not o.admits([0.0, 3.6, 0.0])              # the storey above
+    assert not o.admits(None)
+    assert VetOracle([0.0, 0.8, 0.0], None, 1.0).admits([0.0, 0.8, 0.5])
+    with pytest.raises(ValueError):
+        VetOracle(None, None, 1.0)
+
+
+def _oracle_gate(mode, admits):
+    nav, track = _live_nav()
+    nav.cfg.verification.stop_gate_vet_oracle = mode
+    gate = StopGate(nav)
+    gate.oracle = SimpleNamespace(admits=lambda centre: admits)
+    return nav, track, gate
+
+
+def test_oracle_fp_holds_a_false_positive_for_the_episode_and_leaves_the_rest_to_the_arm():
+    nav, track, gate = _oracle_gate("fp", False)
+    gate._clip_verdict = lambda crop, **kw: pytest.fail("a held track is not judged")
+    track.from_prior, track.seen_live = True, False   # prior and proposal tracks are held too
+    assert gate.vet_live(track) is False and gate.vet_live(track) is False
+    assert nav.stats["oracle_held_tracks"] == [7] and nav.stats["oracle_held_steps"] == 2
+    nav, track, gate = _oracle_gate("fp", True)
+    gate._clip_verdict = lambda crop, **kw: False     # the arm's own "no" still reads down
+    track.presence.log_odds = -0.1
+    assert gate.vet_live(track) is False and nav.stats["live_vet_rejected"] == 1
+
+
+def test_oracle_full_replaces_the_recogniser_before_the_walk():
+    nav, track, gate = _oracle_gate("full", True)
+    gate._clip_verdict = lambda crop, **kw: pytest.fail("the oracle is the recogniser")
+    gate.vet_live(track)
+    assert nav.stats["live_vet_accepted"] == 1 and nav.stats["live_vet_log"][0]["oracle"] is True
+    nav, _ = _nav(mode="clip")
+    nav.cfg.verification.stop_gate_vet_prior = True
+    nav.cfg.verification.stop_gate_vet_oracle = "full"
+    tracks = [_prior_track(1), _prior_track(2)]
+    readings = _prior_layer(nav, tracks)
+    nav.object_layer.center_of = lambda t: np.array([float(t.id), 0.0, 0.0])
+    gate = StopGate(nav)
+    gate.oracle = SimpleNamespace(admits=lambda c: c[0] == 1.0)
+    gate._clip_verdict = lambda crop, **kw: pytest.fail("the oracle is the recogniser")
+    gate.vet_prior()
+    assert readings == [(1, True, 0.9, 0.2), (2, False, 0.9, 0.2)]
+
+
+def test_oracle_off_is_the_arm_and_on_without_a_layout_fails_loudly():
+    nav, track = _live_nav()
+    gate = StopGate(nav)                               # no stop_gate_vet_oracle key: off
+    assert gate.oracle_admits(track) is True and "oracle_held_steps" not in nav.stats
+    nav, track = _live_nav()
+    nav.cfg.verification.stop_gate_vet_oracle = "fp"
+    with pytest.raises(RuntimeError):
+        StopGate(nav).vet_live(track)
+    for retired in ("always", "refute", "refute_full"):   # refute*: v1, removed
+        nav.cfg.verification.stop_gate_vet_oracle = retired
+        with pytest.raises(ValueError):
+            StopGate(nav)
+
+
+def test_the_oracle_refutes_only_what_cannot_be_the_object_misplaced():
+    from osg.eval.vet_oracle import VetOracle
+    o = VetOracle([0.0, 0.8, 0.0], [5.0, 0.8, 5.0], radius_m=1.0)
+    assert not o.refutes([2.0, 0.8, 0.0])             # past the radius, inside the band
+    assert not o.refutes([5.0, 0.8, 7.4])             # near where pass 1 saw it
+    assert o.refutes([2.6, 0.8, 0.0])                 # past the band
+    assert o.refutes([0.0, 3.6, 0.0])                 # the storey above
+    assert not o.refutes(None)                        # nothing to judge
+
+
+def _refute_gate(mode, refutes):
+    nav, track = _live_nav()
+    nav.cfg.verification.stop_gate_vet_oracle = mode
+    nav.cfg.scene_graph.presence.max_identity_rejections = 2
+    gate = StopGate(nav)
+    gate.oracle = SimpleNamespace(refutes=lambda centre: refutes,
+                                  admits=lambda centre: pytest.fail("refute asks refutes"))
+    return nav, track, gate
+
+
+def test_oracle_sweep_retires_a_false_positive_at_candidacy_as_the_walk_would():
+    """The "fp" hold LOST 11 episodes: a held false positive is never walked
+    to, so its storey's floor-switch veto never lifts. Refuted, it is out of
+    candidacy and the storey belief and under the bar -- and NOT absent: the
+    walk to a false positive finds an object there, and a faked absence arms
+    the twin rule (v1, s42 00878: the prior anchor struck off 690 times)."""
+    nav, track, gate = _refute_gate("sweep", True)
+    gate._clip_verdict = lambda crop, **kw: pytest.fail("a refuted track is not judged")
+    assert gate.vet_live(track) is False
+    assert track.identity_rejections == 2 and getattr(track, "absence_arrivals", 0) == 0
+    assert track.presence.p < 0.45
+    assert nav.stats["oracle_refuted_tracks"] == [7]
+    assert nav.released == 1 and nav.held == 1        # it was the candidate: let go
+    nav, track, gate = _refute_gate("sweep", False)
+    gate._clip_verdict = lambda crop, **kw: False     # inside the band: the arm's recogniser
+    track.presence.log_odds = -0.1
+    assert gate.vet_live(track) is False and nav.stats["live_vet_rejected"] == 1
+    assert track.identity_rejections == 0 and "oracle_refuted_tracks" not in nav.stats
+
+
+def _sweep_gate(mode):
+    nav, _ = _nav(mode="clip")
+    nav.cfg.verification.stop_gate_vet_oracle = mode
+    nav.cfg.scene_graph.presence.max_identity_rejections = 2
+    tracks = [SimpleNamespace(id=tid, label=label, identity_rejections=0,
+                              presence=PresenceState(log_odds=3.0), x=x)
+              for tid, label, x in ((1, "cracker box", 0.0), (2, "cracker box", 9.0),
+                                    (3, "lamp", 9.0), (4, "Cracker Box", 9.0))]
+    nav.object_layer = SimpleNamespace(tracks=lambda: list(tracks),
+                                       center_of=lambda t: np.array([t.x, 0.0, 0.0]))
+    gate = StopGate(nav)
+    gate.oracle = SimpleNamespace(refutes=lambda c: c[0] > 2.5,
+                                  admits=lambda c: pytest.fail("sweep asks refutes"))
+    return nav, tracks, gate
+
+
+def test_the_sweep_retires_every_refuted_target_track_on_every_storey_once():
+    """Retiring only the current storey's false positives (at candidacy) empties
+    that storey's anchor while the others keep theirs: v1 s42 00873, the
+    airplane's storey left at 44% coverage."""
+    nav, tracks, gate = _sweep_gate("sweep")
+    nav._candidate_id = None
+    gate.oracle_sweep()
+    assert nav.stats["oracle_refuted_tracks"] == [2, 4]   # the label, not the lamp
+    assert [t.identity_rejections for t in tracks] == [0, 2, 0, 2]
+    assert tracks[1].presence.p < 0.45 and nav.released == 0
+    tracks[1].identity_rejections = 0                     # already retired: not again
+    gate.oracle_sweep()
+    assert nav.stats["oracle_refuted_tracks"] == [2, 4] and tracks[1].identity_rejections == 0
+
+
+def test_the_sweep_is_a_no_op_in_every_other_mode():
+    for mode in ("off", "fp", "full"):
+        nav, tracks, gate = _sweep_gate(mode)
+        gate.oracle_sweep()
+        assert "oracle_refuted_tracks" not in nav.stats
+        assert all(t.identity_rejections == 0 for t in tracks)

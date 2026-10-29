@@ -17,6 +17,7 @@ from __future__ import annotations
 
 import time
 from dataclasses import dataclass, field
+from pathlib import Path
 from typing import Any, Optional
 
 from ..mapping.costmap import HEIGHT_AXIS, PLANE
@@ -52,9 +53,26 @@ def run_episode(cfg, env, agent, episode, target, frame, detector, debug=None) -
         initial_floor_y=float(frame.camera_position[HEIGHT_AXIS])
         - float(cfg.agent.camera_height),
     )
+    gate = getattr(agent, "stop_gate", None)
+    if gate is not None:
+        # Before vet_prior, so the pass-1 crops it judges are written too.
+        gate.dump = None
+        dump_dir = str(getattr(cfg.eval, "vet_dump_dir", "") or "")
+        if dump_dir:
+            from .vet_dump import VetDump
+            root = Path(dump_dir)
+            if not root.is_absolute():
+                root = Path(str(cfg.output_dir)) / root
+            gate.dump = VetDump(str(root), episode_tag(episode), target)
+        gate.oracle = None
+        if str(getattr(cfg.verification, "stop_gate_vet_oracle", "off") or "off") != "off":
+            from .vet_oracle import VetOracle
+            meta = authored_episode_metadata(episode)
+            gate.oracle = VetOracle(meta.get("target_position"), meta.get("prior_position"),
+                                    float(cfg.ycb.object_success_distance_m))
     # The prior's target-labelled tracks judged before the first step, when the
     # arm asks for it (`verification.stop_gate_vet_prior`).
-    vet = getattr(getattr(agent, "stop_gate", None), "vet_prior", None)
+    vet = getattr(gate, "vet_prior", None)
     if outcome.map_note is not None and callable(vet):
         verdicts = vet()
         if verdicts is not None:

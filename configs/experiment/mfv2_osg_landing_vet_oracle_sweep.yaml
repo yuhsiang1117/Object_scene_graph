@@ -1,0 +1,26 @@
+# @package _global_
+#
+# DIAGNOSTIC, not a reported arm: `mfv2_osg_landing_vet_live_follows` with every
+# target-labelled track the layout puts beyond 2.5 m of the object and of where
+# it was (or on another storey) retired the step it is mapped, on every storey
+# (`verification.stop_gate_vet_oracle: sweep`, StopGate.oracle_sweep) -- no
+# false positive ever believed anywhere. The recogniser judges the rest as in
+# the arm. Paired against `_follows`, whose storey rules it shares.
+#
+# Replaces a first version as the ceiling: retiring only the current storey's
+# false positives (at candidacy) emptied that storey's anchor while every other
+# storey kept its own, and v1 also armed the twin rule with a faked absence
+# arrival -- seed 42: 42 vs 46, left the storey 12 vs 7.
+#
+# Measured (3 seeds): 134 vs `_follows` 131 and vs the final arm 136 (12 / 14
+# discordant); false-positive commits 212 -> 15, never reached the object's
+# storey 30 -> 21, left it 27 -> 31, never detected 4 -> 10. Perfect
+# false-positive refutation everywhere does not move SR.
+#
+#   bash scripts/run_mfv2.sh osg_landing_vet_oracle_sweep <seed>
+defaults:
+  - mfv2_osg_landing_vet_live_follows
+  - _self_
+
+verification:
+  stop_gate_vet_oracle: sweep

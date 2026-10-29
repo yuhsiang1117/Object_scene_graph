@@ -218,7 +218,7 @@ class StoreyBelief:
 
 
 def target_tracks(object_layer, target: str, max_rejections: int = 2,
-                  rejection_discount: float = 0.3):
+                  rejection_discount: float = 0.3, retirement=None):
     """`(centre_y, weight)` of every live, target-labelled track.
 
     The weight is the chance the track is the target where it is: its
@@ -230,7 +230,8 @@ def target_tracks(object_layer, target: str, max_rejections: int = 2,
     attempt, or `max_rejections` identity rejections) weighs nothing, and each
     rejection short of that multiplies its weight by `rejection_discount`.
     Blacklisted tracks are left out; a track without a presence filter counts
-    at 0.5.
+    at 0.5. With a `retirement` (objects/retirement.py), a stale twin the
+    candidate gate strikes off is left out too.
     """
     out = []
     for track in object_layer.tracks():
@@ -238,6 +239,9 @@ def target_tracks(object_layer, target: str, max_rejections: int = 2,
             continue
         rejected = int(getattr(track, "identity_rejections", 0) or 0)
         if int(getattr(track, "failed_attempts", 0) or 0) > 0 or rejected >= int(max_rejections):
+            continue
+        if retirement is not None and retirement.twin(track):
+            retirement.n_twins_dropped += 1
             continue
         centre = np.asarray(object_layer.center_of(track), dtype=float)
         presence = getattr(track, "presence", None)

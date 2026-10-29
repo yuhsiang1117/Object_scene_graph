@@ -1,0 +1,20 @@
+# @package _global_
+#
+# DIAGNOSTIC, not a reported arm: the final arm (`mfv2_osg_landing_vet_live`)
+# with every target-labelled commit candidate the layout says is neither the
+# object nor where it was held out for the episode
+# (`verification.stop_gate_vet_oracle: fp`, eval/vet_oracle.py). The final arm
+# minus its false-positive commits -- what the commit-time vetting could buy
+# if it removed them all, at no cost to a true track.
+#
+# Measured (3 seeds): 125 vs 136 (sign p 0.027) -- a held false positive is
+# never walked to, so never refuted, and a believed target forbids leaving its
+# storey (never reached: 37 vs 30). Not a ceiling; see `_oracle_sweep`.
+#
+#   bash scripts/run_mfv2.sh osg_landing_vet_oracle_fp <seed>
+defaults:
+  - mfv2_osg_landing_vet_live
+  - _self_
+
+verification:
+  stop_gate_vet_oracle: fp

@@ -1,0 +1,16 @@
+# @package _global_
+#
+# The final arm (`mfv2_osg_landing_vet_live`) with every recogniser judgement
+# written to `<output_dir>/vet_dump` (`eval.vet_dump_dir`, eval/vet_dump.py):
+# the crop, the verdict, the margin, the track's geometry, and for live and
+# STOP crops the full frame. The offline set for choosing a better recogniser
+# on the crops the agent actually judges. Read-only, so its episodes must be
+# the final arm's, field for field.
+#
+#   bash scripts/run_mfv2.sh osg_landing_vet_live_dump <seed>
+defaults:
+  - mfv2_osg_landing_vet_live
+  - _self_
+
+eval:
+  vet_dump_dir: vet_dump

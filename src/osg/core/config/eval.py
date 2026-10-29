@@ -83,6 +83,13 @@ class EvalConfig:
     # object was a legible object at that range or four grey pixels behind a
     # chair. Off by default; it writes one JPEG per in-view keyframe.
     gt_dump_dir: str = ""
+    # Recogniser dump: every crop the STOP gate's recogniser judges -- prior
+    # vetting, live vetting, the STOP itself -- written with its verdict, its
+    # margin and the track's geometry, plus the full frame for live and STOP
+    # crops so any other crop treatment can be re-cut offline
+    # (eval/vet_dump.py). Read-only; a run with it is the run without it. A
+    # relative path is under `output_dir`. Off by default.
+    vet_dump_dir: str = ""
     rgb_width: int = 640
     rgb_height: int = 480
     hfov_deg: float = 79.0

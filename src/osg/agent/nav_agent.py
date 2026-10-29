@@ -44,6 +44,7 @@ from ..exploration.strategy import ExplorationStrategy, WorldView
 from ..graph.scene_graph import ROOM_IDS_PER_FLOOR, SceneGraph
 from ..mapping.costmap import PLANE, Costmap2D
 from ..objects.object_layer import ObjectLayer
+from ..objects.retirement import Retirement
 from ..perception.detector import Detector
 from ..perception.vocabulary import target_vocabulary
 from ..pipeline.beliefs import build_affinity_prior, build_presence_filter
@@ -760,11 +761,15 @@ class NavAgent:
         storey: None or the belief test as configured -- unless this storey is
         disproved, in which case every target-labelled track on it is treated
         as not believed, so the _TARGET_PRESENT veto is lifted."""
-        believed = (
-            self._track_still_believed
-            if bool(getattr(self.cfg.exploration, "floor_evidence_by_presence", False))
-            else None
-        )
+        believed = None
+        if bool(getattr(self.cfg.exploration, "floor_evidence_by_presence", False)):
+            believed = self._track_still_believed
+            if bool(getattr(self.cfg.exploration, "storey_hold_follows_candidacy", False)):
+                retirement = Retirement(
+                    self.object_layer, self.target,
+                    int(self.cfg.scene_graph.presence.max_identity_rejections),
+                    bool(self.cfg.verification.retire_stale_twins_after_absence))
+                believed = lambda track_id: self._track_still_believed(track_id, retirement)
         if not self._storey_disproved(self.floors.current_id):
             return believed
         self.stats["floor_veto_lifted"] = self.stats.get("floor_veto_lifted", 0) + 1
@@ -1152,6 +1157,7 @@ class NavAgent:
             self.on_keyframe_detections(frame, named_dets)
         with self.profiler.timeit("object_layer"):
             self.object_layer.update(frame, dets, floor_key=self.floors.current_id)
+        self.stop_gate.oracle_sweep()             # a diagnostic; a no-op unless configured
         self.keyframes.add(frame)
         # Stair evidence used to accumulate ONLY on the one frame of a periodic
         # look-down, and `down_look_every` defaults to 0 -- so on every ycb
@@ -1343,18 +1349,25 @@ class NavAgent:
         self.exploration.note_progress(world)
         self.state = State.GOTO_FRONTIER
 
-    def _track_still_believed(self, track_id: int) -> bool:
+    def _track_still_believed(self, track_id: int, retirement=None) -> bool:
         """Is this mapped instance still believed to be where the map put it?
 
         The floor gate's question, answered by the presence filter rather than
         by the label alone. A track the agent has already walked to and not
         found (`absence_arrivals`) is not believed however high its log-odds
-        happens to sit, because that arrival is the direct test.
+        happens to sit, because that arrival is the direct test. With a
+        `retirement` (`exploration.storey_hold_follows_candidacy`), neither is
+        a track the candidate gate has struck off.
         """
         track = self.object_layer.get(int(track_id))
         if track is None:
             return False
         if int(getattr(track, "absence_arrivals", 0)) > 0:
+            return False
+        if retirement is not None and retirement.retired(track):
+            # The candidate gate has given up on it.
+            self.stats["floor_bonus_retired_skipped"] = (
+                self.stats.get("floor_bonus_retired_skipped", 0) + 1)
             return False
         presence = getattr(track, "presence", None)
         if presence is None:

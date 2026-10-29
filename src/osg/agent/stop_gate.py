@@ -58,6 +58,10 @@ MODES = ("off", "vlm", "clip")
 MAX_LIVE_VETS = 3
 
 
+# `verification.stop_gate_vet_oracle`; see eval/vet_oracle.py.
+ORACLE_MODES = ("off", "fp", "full", "sweep")
+
+
 class StopGate:
     def __init__(self, nav) -> None:
         self.nav = nav
@@ -75,7 +79,16 @@ class StopGate:
         if self.exemplar not in ("off", "log", "on"):
             raise ValueError(
                 f"verification.stop_gate_exemplar must be off|log|on, got {self.exemplar!r}")
+        self.oracle_mode = str(getattr(vc, "stop_gate_vet_oracle", "off") or "off")
+        if self.oracle_mode not in ORACLE_MODES:
+            raise ValueError(f"verification.stop_gate_vet_oracle must be "
+                             f"{'|'.join(ORACLE_MODES)}, got {self.oracle_mode!r}")
         self._vlm = None
+        # `eval.vet_dump_dir`: set per episode by eval/episode.py; read-only.
+        self.dump = None
+        # `verification.stop_gate_vet_oracle`: the episode's eval/vet_oracle.py
+        # VetOracle, set per episode by eval/episode.py.
+        self.oracle = None
         self.reset()
 
     def reset(self) -> None:
@@ -142,13 +155,18 @@ class StopGate:
                 out["no_crop"] += 1
                 continue
             with self.nav.profiler.timeit("stop_gate_vet"):
-                verdict = self._clip_verdict(crop, exemplars=False)
+                if self.oracle_mode == "full":
+                    verdict = self._truth(track)
+                    self.last_reading = {"oracle": verdict}
+                else:
+                    verdict = self._clip_verdict(crop, exemplars=False)
             if verdict is None:
                 out["no_opinion"] += 1
                 continue
             out["judged"] += 1
             out["accepted" if verdict else "rejected"] += 1
             out["tracks"].append([int(track.id), bool(verdict)])
+            self._dump("prior", track, crop, verdict)
             if presence is not None:
                 presence.apply_reading(track, bool(verdict), float(vc.stop_gate_recall),
                                        float(vc.stop_gate_q))
@@ -179,6 +197,8 @@ class StopGate:
         vc = self.nav.cfg.verification
         if self.mode != "clip" or not bool(getattr(vc, "stop_gate_vet_live", False)):
             return True
+        if not self.oracle_admits(track):
+            return False
         if getattr(track, "from_prior", False) and not getattr(track, "seen_live", False):
             return True                           # a prior track: vet_prior's business
         if getattr(track, "proposal_only", False):
@@ -209,7 +229,11 @@ class StopGate:
         track.live_vets = n_vets + 1
         track.live_vet_score = float(getattr(track, "best_score", 0.0))
         with self.nav.profiler.timeit("stop_gate_vet"):
-            verdict = self._clip_verdict(crop, exclude_id=int(track.id))
+            if self.oracle_mode == "full":
+                verdict = True                    # oracle_admits let it this far
+                self.last_reading = {"oracle": True}
+            else:
+                verdict = self._clip_verdict(crop, exclude_id=int(track.id))
         stats = self.nav.stats
         if verdict is None:
             stats["live_vet_no_opinion"] = stats.get("live_vet_no_opinion", 0) + 1
@@ -223,6 +247,8 @@ class StopGate:
              "range_m": rng, "bbox_px": round(float(getattr(track, "best_bbox_px", 0.0)), 1),
              "center": [round(float(v), 3) for v in centre], "n": n_vets + 1,
              **self.last_reading})
+        self._dump("live", track, crop, verdict, frame=getattr(track, "best_frame_rgb", None),
+                   bbox=getattr(track, "best_bbox_xyxy", None), range_m=rng)
         stats["live_vet_accepted" if verdict else "live_vet_rejected"] = (
             stats.get("live_vet_accepted" if verdict else "live_vet_rejected", 0) + 1)
         track.live_vet_last = bool(verdict)
@@ -241,6 +267,97 @@ class StopGate:
         if not verdict and bool(getattr(vc, "stop_gate_vet_live_sticky", False)):
             return False
         return float(track.presence.p) >= float(self.nav.cfg.scene_graph.presence.min_presence)
+
+    def oracle_admits(self, track) -> bool:
+        """`verification.stop_gate_vet_oracle` (a diagnostic): False for a
+        target-labelled track the layout says is not the target -- held out of
+        this round's candidacy ("fp" / "full"), or retired as the walk to it
+        would have retired it ("sweep"). True with no oracle."""
+        if self.oracle_mode == "off":
+            return True
+        if self._truth(track):
+            return True
+        stats = self.nav.stats
+        stats["oracle_held_steps"] = stats.get("oracle_held_steps", 0) + 1
+        held = stats.setdefault("oracle_held_tracks", [])
+        if int(track.id) not in held:
+            held.append(int(track.id))
+        if self.oracle_mode == "sweep":
+            self._refute(track)
+        return False
+
+    def oracle_sweep(self) -> None:
+        """`stop_gate_vet_oracle: sweep`: every target-labelled track the layout
+        refutes, on every storey, retired the step it is mapped -- not only at
+        candidacy, which is the current storey's alone. A no-op in every other
+        mode.
+
+        Why: retiring false positives where the agent stands empties THIS
+        storey's anchor while every other storey keeps its own, so the agent
+        leaves the right storey. Measured on a first version that retired at
+        candidacy alone (v1, seed 42), s42 00873 cross_anchor_01 50008 (toy airplane, on the start storey):
+        the start storey's anchor fell from 0.97 to 0.65, the other one held at
+        0.75, the agent climbed down at 44% coverage and never came back; the
+        final arm, its false positives intact, found the airplane at step 264.
+        """
+        if self.oracle_mode != "sweep":
+            return
+        layer = getattr(self.nav, "object_layer", None)
+        if layer is None:
+            return
+        target = normalize_label(self.nav.target)
+        refuted = set(self.nav.stats.get("oracle_refuted_tracks", ()))
+        for track in layer.tracks():
+            if int(track.id) in refuted or normalize_label(track.label) != target:
+                continue
+            if not self._truth(track):
+                self._refute(track)
+
+    def _truth(self, track) -> bool:
+        if self.oracle is None:
+            raise RuntimeError("verification.stop_gate_vet_oracle is on but the episode set no "
+                               "oracle (eval/episode.py, from the authored layout)")
+        centre = self.nav.object_layer.center_of(track)
+        if self.oracle_mode == "sweep":
+            return not self.oracle.refutes(centre)
+        return bool(self.oracle.admits(centre))
+
+    def _refute(self, track) -> None:
+        """The oracle's "not the target", recorded as the walk to it ends when
+        the STOP gate says no (`_reject`): the identity retired
+        (`max_identity_rejections`, out of candidacy and of the storey belief)
+        and the belief under the bar -- without the walk. Not an absence
+        arrival: a false positive is an object that IS there, so the walk
+        never records one. Faking it armed the twin rule (candidate.py), which
+        then struck off the never-seen prior anchor while the storey belief
+        kept it -- v1 s42 00878 cross_anchor_01 50003: 690 strikes, the anchor
+        at 0.90 on the wrong storey for 700 steps. What lifts the anchor test
+        and the floor gate's target bonus for a retired identity is
+        `exploration.storey_hold_follows_candidacy`, which the sweep preset
+        turns on.
+
+        Why not merely hold it out ("fp"): on osg_landing_vet_oracle_fp (3
+        seeds) that LOST 11 episodes (125 vs 136, sign p 0.027), 7 more never
+        reaching the object's storey -- a held false positive is never walked
+        to, so never refuted, and a believed target on this storey forbids
+        leaving it (graph/priors.floor_target_evidence, _anchor_untested).
+        """
+        nav = self.nav
+        presence = getattr(track, "presence", None)
+        if presence is not None:
+            bar = float(nav.cfg.scene_graph.presence.min_presence)
+            bar = min(max(bar, 1e-3), 1.0 - 1e-3)
+            under_the_bar = math.log(bar / (1.0 - bar)) - 0.87  # as _reject
+            presence.log_odds = min(float(presence.log_odds), under_the_bar)
+        track.identity_rejections = max(
+            int(getattr(track, "identity_rejections", 0) or 0),
+            int(nav.cfg.scene_graph.presence.max_identity_rejections))
+        refuted = nav.stats.setdefault("oracle_refuted_tracks", [])
+        if int(track.id) not in refuted:
+            refuted.append(int(track.id))
+        if getattr(nav, "_candidate_id", None) == track.id:
+            nav.release_candidate()
+            nav.hold_explore()
 
     # ------------------------------------------------------------- the check
 
@@ -293,6 +410,9 @@ class StopGate:
         }
         self.log.append(entry)
         stats["stop_gate_log"] = self.log
+        if self.dump is not None and self.mode == "clip":
+            self._dump("stop", track, crop_with_margin(rgb, det.bbox_xyxy), verdict, frame=rgb,
+                       bbox=det.bbox_xyxy)
         if verdict is None:
             stats["stop_gate_errors"] = stats.get("stop_gate_errors", 0) + 1
             return None
@@ -403,6 +523,16 @@ class StopGate:
 
     def _background(self) -> list:
         return background_for(self.nav.target, confuser_vocabulary(self.nav.cfg))
+
+    def _dump(self, kind: str, track, crop, verdict, frame=None, bbox=None,
+              range_m: Optional[float] = None) -> None:
+        """One judgement to `eval.vet_dump_dir`, when a dump is attached."""
+        if self.dump is None:
+            return
+        layer = getattr(self.nav, "object_layer", None)
+        centre = None if layer is None else layer.center_of(track)
+        self.dump.write(kind, int(self.nav.step_count), track, crop, verdict, self.last_reading,
+                        centre, frame=frame, bbox=bbox, range_m=range_m)
 
     # --------------------------------------------------------------- verdict
 

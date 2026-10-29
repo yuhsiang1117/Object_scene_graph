@@ -372,3 +372,29 @@ class VerificationConfig:
     # exemplar remembers the mistake, not the object.
     stop_gate_exemplar: str = "off"
     stop_gate_exemplar_tau: float = 0.79
+    # A DIAGNOSTIC ceiling, never a reported arm (eval/vet_oracle.py): the
+    # layout's ground truth stands in for the recogniser at commit candidacy.
+    # "fp" holds out of candidacy, for the episode, every target-labelled track
+    # that is neither the object nor where it was -- the arm minus its false-
+    # positive commits, the recogniser's own readings unchanged. "full" also
+    # gives `vet_prior` and `vet_live` the true verdict -- a perfect recogniser
+    # before the walk. The STOP check is the arm's in both; "off" = the arm.
+    # Why: on the live crops (osg_landing_vet_live_dump, 3 seeds) no margin,
+    # prompt, crop or size bound moves the 79%-true / 11%-false operating point
+    # without paying for it on the other side, so measure what the channel is
+    # worth before spending more on the recogniser.
+    # Measured (3 seeds, vs the arm's 136/219): "fp" 125 (sign p 0.027), "full"
+    # 131 -- a held false positive is never walked to, so never refuted, and a
+    # believed target forbids leaving its storey (never reached: 37 vs 30).
+    # "sweep" therefore REFUTES instead: every such track (beyond
+    # eval/vet_oracle.IDENTITY_BAND_M of the object and of its prior), on every
+    # storey, retired the step it is mapped as the walk to it would retire it
+    # (StopGate.oracle_sweep), with `storey_hold_follows_candidacy` on so the
+    # retired no longer hold their storey. Retiring at candidacy alone (v1,
+    # seed 42: 42 vs 46) emptied only the current storey's anchor.
+    # Measured (mfv2_osg_landing_vet_oracle_sweep, 3 seeds): 134 vs the arm's
+    # 136 (12 / 14 discordant), false-positive commits 212 -> 15. Never reached
+    # the object's storey 30 -> 21, but left it 27 -> 31 and never detected it
+    # 4 -> 10: a false positive's pull to its storey is as often right as
+    # wrong, so no recogniser, however good, moves SR on this benchmark.
+    stop_gate_vet_oracle: str = "off"

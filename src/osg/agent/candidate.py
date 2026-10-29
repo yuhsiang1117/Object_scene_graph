@@ -38,6 +38,7 @@ import numpy as np
 
 from ..core.types import FrameData
 from ..mapping.costmap import HEIGHT_AXIS, PLANE
+from ..objects.retirement import is_stale_twin, prior_refuted_in_place
 from ..planning.controller import TURN_LEFT, TURN_RIGHT, _wrap, agent_heading
 from ..verification.verifier import note_vlm
 from .state import TURN_ACTION, State
@@ -140,7 +141,7 @@ class CandidatePolicy:
             candidates = [t for t in candidates if gate.vet_live(t)]
         if not candidates:
             picked = self._appearance_pick()
-            if picked is None:
+            if picked is None or (gate is not None and not gate.oracle_admits(picked)):
                 return
             candidates = [picked]
         track = candidates[0]
@@ -347,16 +348,11 @@ class CandidatePolicy:
         """Once a prior-map track of the label has been refuted in place, the
         other prior-map tracks of the label that this episode has never seen
         are ghosts of the same static pass, not places to go."""
-        refuted = any(
-            bool(getattr(t, "from_prior", False))
-            and (int(getattr(t, "absence_arrivals", 0)) > 0
-                 or int(getattr(t, "failed_attempts", 0)) > 0)
-            for t in self.nav.object_layer.tracks(include_blacklisted=True)
-            if t.label.lower().replace(" ", "_") == self.nav.target.lower().replace(" ", "_")
-        )
+        refuted = prior_refuted_in_place(
+            self.nav.object_layer.tracks(include_blacklisted=True), self.nav.target)
         if not refuted:
             return candidates
-        kept = [t for t in candidates if not (getattr(t, "from_prior", False) and not t.seen_live)]
+        kept = [t for t in candidates if not is_stale_twin(t)]
         dropped = len(candidates) - len(kept)
         if dropped:
             self.nav.stats["stale_twins_retired"] = (

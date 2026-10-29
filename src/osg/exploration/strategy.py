@@ -34,6 +34,7 @@ import numpy as np
 from ..core.types import FrameData
 from ..mapping.costmap import PLANE, Costmap2D, nearest_free_xy
 from ..mapping.frontier import Frontier, FrontierExtractor
+from ..objects.retirement import Retirement
 from ..planning.controller import TURN_LEFT, TURN_RIGHT, _wrap, agent_heading
 from .search_belief import InspectionLog, build_container_candidates, select_candidate
 from .storey_belief import StoreyBelief, target_tracks
@@ -129,6 +130,10 @@ class ExplorationStrategy:
         self._max_identity_rejections = int(
             getattr(getattr(getattr(cfg, "scene_graph", None), "presence", None),
                     "max_identity_rejections", 2)
+        )
+        # And the gate's twin rule, for `storey_hold_follows_candidacy`.
+        self._twins_retired = bool(
+            getattr(getattr(cfg, "verification", None), "retire_stale_twins_after_absence", False)
         )
         self.planner = planner
         self.scorer = scorer
@@ -347,14 +352,20 @@ class ExplorationStrategy:
             self.mark_searched(world.step, arrived=arrived)
         if self.storey_belief is not None and world.storeys and self.forced_floor is None:
             with self.profiler.timeit("storey_belief"):
+                retirement = self._retirement(world)
                 self.requested_floor = self.storey_belief.decide(
                     world.step, world.storeys,
                     target_tracks(world.object_layer, world.target,
                                   max_rejections=self._max_identity_rejections,
                                   rejection_discount=float(getattr(
-                                      self.cfg, "storey_rejection_discount", 0.3))),
+                                      self.cfg, "storey_rejection_discount", 0.3)),
+                                  retirement=retirement),
                     world.floor_id,
                 )
+                if retirement is not None and retirement.n_twins_dropped:
+                    self.stats["storey_belief_twins_dropped"] = (
+                        self.stats.get("storey_belief_twins_dropped", 0)
+                        + retirement.n_twins_dropped)
         with self.profiler.timeit("frontier_extract"):
             frontiers = self.frontier_extractor.extract(
                 world.costmap, world.agent_xy,
@@ -862,6 +873,14 @@ class ExplorationStrategy:
                 return None
         return surface
 
+    def _retirement(self, world: WorldView):
+        """The candidate gate's verdicts for the storey readers, or None while
+        `storey_hold_follows_candidacy` is off (objects/retirement.py)."""
+        if not bool(getattr(self.cfg, "storey_hold_follows_candidacy", False)):
+            return None
+        return Retirement(world.object_layer, world.target, self._max_identity_rejections,
+                          self._twins_retired)
+
     def _anchor_untested(self, world: WorldView) -> bool:
         """Is a target-labelled track on THIS floor still believed and unvisited?
 
@@ -880,12 +899,17 @@ class ExplorationStrategy:
             return False
         layer = world.object_layer
         min_presence = float(self._anchor_min_presence)
+        retirement = self._retirement(world)
         for track in layer.tracks(include_blacklisted=True):
             if not same_label(getattr(track, "label", ""), world.target):
                 continue
             if int(getattr(track, "floor_key", world.floor_id)) != int(world.floor_id):
                 continue
             if int(getattr(track, "absence_arrivals", 0)) > 0:
+                continue
+            if retirement is not None and retirement.retired(track):
+                self.stats["anchor_test_retired_skipped"] = (
+                    self.stats.get("anchor_test_retired_skipped", 0) + 1)
                 continue
             presence = getattr(track, "presence", None)
             if presence is None or float(presence.p) >= min_presence:

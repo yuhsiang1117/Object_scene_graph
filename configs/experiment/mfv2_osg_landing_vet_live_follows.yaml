@@ -1,0 +1,25 @@
+# @package _global_
+#
+# `mfv2_osg_landing_vet_live`, and a storey held only by a track the candidate
+# gate would still walk to (`exploration.storey_hold_follows_candidacy`,
+# objects/retirement.py): a stale twin leaves the storey belief, and a twin or
+# an identity-retired track no longer forbids leaving through the anchor test
+# or the floor gate's target bonus.
+#
+# Why: on osg_landing_vet_live (3 seeds) the twin rule fired in 14 episodes and
+# 7 of them failed. s44 00821 cross_anchor_01 (toy airplane, moved up a storey):
+# the prior anchor was found empty at step 40, and its twin -- p 0.95, struck
+# off as a candidate 765 times, never walked to -- held the start storey's
+# anchor at 0.93-0.97 to step 1000.
+#
+# Measured (3 seeds): 131 vs 136 (1 won / 6 lost, sign p 0.125) -- a struck
+# twin can be the object itself (s42 00878 static 50001). Not adopted; the base
+# of `_oracle_sweep`.
+#
+#   bash scripts/run_mfv2.sh osg_landing_vet_live_follows <seed>
+defaults:
+  - mfv2_osg_landing_vet_live
+  - _self_
+
+exploration:
+  storey_hold_follows_candidacy: true

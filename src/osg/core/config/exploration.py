@@ -196,6 +196,22 @@ class ExplorationConfig:
     # track's weight in the storey belief by this; a failed attempt or the
     # candidate gate's own limit removes it (`storey_belief.target_tracks`).
     storey_rejection_discount: float = 0.3
+    # A track the candidate gate has struck off holds no storey: a stale twin
+    # (`verification.retire_stale_twins_after_absence`) leaves the storey
+    # belief, and a twin or an identity-retired track (`max_identity_rejections`)
+    # no longer forbids leaving through the anchor test or the floor gate's
+    # target bonus (objects/retirement.py). Why it was tried: on
+    # osg_landing_vet_live (3 seeds) the twin rule fired in 14 episodes and 7
+    # failed; s44 00821's twin (p 0.95, struck off 765 times, never walked to)
+    # held its storey's anchor at 0.93-0.97 to step 1000 with the toy airplane
+    # one storey up. OFF because it lost: mfv2_osg_landing_vet_live_follows (3
+    # seeds) 131 vs 136 (1 won / 6 lost, sign p 0.125), and still lost s44
+    # 00821. A struck twin may be the object itself (s42 00878 static 50001:
+    # the refuted prior was a pass-1 false positive, the true one a never-seen
+    # twin, so its storey's anchor went 0.90 -> 0 and the agent left); the
+    # gate's strike is undone once the twin is seen live, a belief strike means
+    # it is never looked at. Kept for the sweep oracle, which needs it.
+    storey_hold_follows_candidacy: bool = False
     storey_block_m: float = 0.5
     # Belief carried by the single most plausible mapped surface. The candidate
     # priors are affinity x proximity normalised so the best of them equals this,
