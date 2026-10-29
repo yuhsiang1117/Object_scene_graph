@@ -1,0 +1,24 @@
+# @package _global_
+#
+# The final arm (`mfv2_osg_landing_vet_live`) with ONE change: no text model on the
+# storey question (`exploration.floor_llm: false`) -- a directed storey request from
+# the posterior is acted on as it stands. Paired against osg_landing_vet_live_s<seed>.
+#
+# Why: on the final arm (3 seeds) the model was asked 355 times and said "stay"
+# 341 times, 267 of them citing the target "listed" on this floor -- the floor
+# description lists every target-labelled track the graph holds, the false
+# positives and the refuted ones with them, against "unknown objects" for an
+# unvisited storey. And the call is synchronous: one step of 00862 static 50005
+# stalled 92.8 s on it.
+#
+# Measured (3 seeds): 135 vs 136 (9 won / 10 lost, sign p 1.0). Never reached
+# the object's storey 30 -> 22, but every success it lost had taken 818-938 of
+# the 1000 steps in the arm: a reshuffle at the budget's edge, not a loss.
+#
+#   bash scripts/run_mfv2.sh osg_vet_live_no_floor_llm <seed>
+defaults:
+  - mfv2_osg_landing_vet_live
+  - _self_
+
+exploration:
+  floor_llm: false
