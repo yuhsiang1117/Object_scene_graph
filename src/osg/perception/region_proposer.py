@@ -100,10 +100,12 @@ class RegionProposer:
             retina_masks=True, verbose=False, device=str(self.cfg.device),
         )[0]
         if r.boxes is None or r.masks is None or len(r.boxes) == 0:
-            return [], []
+            return [], None
         boxes = r.boxes.xyxy.detach().cpu().numpy()
-        masks = r.masks.data.detach().cpu().numpy().astype(bool)
-        return list(boxes), list(masks)
+        # Masks stay on the device: only the winning region's is ever used,
+        # so only that one is copied to the host (`propose`), not every
+        # full-resolution mask of every keyframe.
+        return list(boxes), r.masks.data
 
     def propose(self, rgb: np.ndarray) -> Optional[Detection]:
         """The best region for the query on this frame, or None.
@@ -120,13 +122,13 @@ class RegionProposer:
         H, W = rgb.shape[:2]
         frame_px = float(H * W)
         keep = []
-        for box, mask in zip(boxes, masks):
+        for index, box in enumerate(boxes):
             x1, y1, x2, y2 = [float(v) for v in box]
             a = max(0.0, x2 - x1) * max(0.0, y2 - y1)
             # Too small to carry signal, or big enough to be the furniture.
             if a < float(self.cfg.min_area_px) or a > float(self.cfg.max_area_frac) * frame_px:
                 continue
-            keep.append((box, mask, a))
+            keep.append((box, index, a))
         if not keep:
             return None
         pad = float(self.cfg.pad_frac)
@@ -151,7 +153,8 @@ class RegionProposer:
         if score < float(self.cfg.tau):
             self.counters["region_below_tau"] += 1
             return None
-        box, mask, _ = keep[best]
+        box, index, _ = keep[best]
+        mask = masks[index].detach().cpu().numpy().astype(bool)
         self.counters["region_admitted"] += 1
         # The region's own feature rides along so the track can keep a running
         # mean over views without a second encode. What decides a commit is the

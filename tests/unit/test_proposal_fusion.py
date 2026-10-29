@@ -142,6 +142,7 @@ def test_the_proposal_detection_carries_its_feature_and_provenance():
         def detach(self): return self
         def cpu(self): return self
         def numpy(self): return self.a
+        def __getitem__(self, i): return T(self.a[i])   # masks are indexed on the device
 
     class Boxes:
         def __init__(self, a): self.xyxy = T(a)

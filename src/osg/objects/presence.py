@@ -32,7 +32,7 @@ from typing import List, Optional, Sequence, Set
 
 import numpy as np
 
-from ..core.geometry import Ellipse2D, ellipse_from_mask
+from ..core.geometry import Ellipse2D, det_ellipse
 from ..core.types import Detection, FrameData
 
 
@@ -288,7 +288,7 @@ class PresenceFilter:
             return seen
         det_boxes = []
         for det in dets:
-            e = ellipse_from_mask(det.mask)
+            e = det_ellipse(det)
             if e is not None:
                 det_boxes.append(e.bbox())
         if not det_boxes:

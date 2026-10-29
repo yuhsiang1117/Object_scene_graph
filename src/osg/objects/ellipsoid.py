@@ -13,7 +13,7 @@ from typing import Optional, Tuple
 
 import numpy as np
 
-from ..core.geometry import Ellipse2D, backproject_pixel, ellipse_from_mask
+from ..core.geometry import Ellipse2D, backproject_pixel, det_ellipse, mask_pixels
 from ..core.types import Detection, FrameData
 
 MIN_AXIS_M = 0.01
@@ -33,18 +33,30 @@ class Ellipsoid:
         D = np.diag([self.axes[0] ** 2, self.axes[1] ** 2, self.axes[2] ** 2, -1.0])
         return Z @ D @ Z.T
 
-    def project(self, K: np.ndarray, T_cw: np.ndarray) -> Optional[Ellipse2D]:
-        """Project to an image ellipse; None if behind camera or degenerate."""
+    def project(
+        self, K: np.ndarray, T_cw: np.ndarray,
+        Q: Optional[np.ndarray] = None, P: Optional[np.ndarray] = None,
+    ) -> Optional[Ellipse2D]:
+        """Project to an image ellipse; None if behind camera or degenerate.
+
+        `Q` (this ellipsoid's `Q_dual()`) and `P` (`K @ T_cw[:3, :]`) may be
+        passed precomputed by a caller that projects one ellipsoid through many
+        cameras, or one camera many times -- the refiner does both, ~175
+        residual evaluations of up to ten views each. They are the same
+        expressions, so the result is bit-identical."""
         center_c = T_cw[:3, :3] @ self.center + T_cw[:3, 3]
         if center_c[2] < 0.1:  # cheirality
             return None
-        P = K @ T_cw[:3, :]
-        C = P @ self.Q_dual() @ P.T
+        if P is None:
+            P = K @ T_cw[:3, :]
+        if Q is None:
+            Q = self.Q_dual()
+        C = P @ Q @ P.T
         if abs(C[2, 2]) < 1e-9:
             return None
         C = C / (-C[2, 2])  # bottom-right -> -1
         mu = -C[:2, 2]
-        cov = C[:2, :2] + np.outer(mu, mu)
+        cov = C[:2, :2] + mu[:, None] * mu[None, :]  # np.outer, without its call
         cov = 0.5 * (cov + cov.T)
         vals = np.linalg.eigvalsh(cov)
         if vals[0] <= 1e-6 or vals[1] > 1e8:
@@ -57,10 +69,10 @@ class Ellipsoid:
     ) -> Optional["Ellipsoid"]:
         """Paper recipe: 2D ellipse from mask moments + averaged sampled depth,
         back-projected to 3D; semi-axes scaled by z/f; R aligned to camera."""
-        ellipse = ellipse_from_mask(det.mask)
+        ellipse = det_ellipse(det)
         if ellipse is None:
             return None
-        ys, xs = np.nonzero(det.mask)
+        ys, xs = mask_pixels(det)
         d = frame.depth[ys, xs]
         valid = d > 1e-3
         if valid.sum() < 8:

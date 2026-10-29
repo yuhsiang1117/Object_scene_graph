@@ -19,7 +19,7 @@ from typing import List, Optional, Tuple
 
 import numpy as np
 
-from ..core.geometry import Ellipse2D, ellipse_from_mask, sqrtm_2x2_spd
+from ..core.geometry import Ellipse2D, det_ellipse, sqrtm_2x2_spd
 from ..core.types import Detection, FrameData
 from .ellipsoid import Ellipsoid
 from .presence import PresenceState
@@ -199,7 +199,7 @@ class DataAssociator:
 
         pairs = []  # (nwd, det_idx, track_id)
         for i, det in enumerate(dets):
-            obs = ellipse_from_mask(det.mask)
+            obs = det_ellipse(det)
             if obs is None:
                 continue
             obs_bbox = obs.bbox()

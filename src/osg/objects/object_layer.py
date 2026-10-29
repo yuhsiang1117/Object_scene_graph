@@ -7,7 +7,7 @@ from typing import Dict, List, Optional
 
 import numpy as np
 
-from ..core.geometry import backproject, ellipse_from_mask
+from ..core.geometry import backproject, det_ellipse, mask_pixels
 from ..core.labels import normalize_label
 from ..core.types import Detection, FrameData
 from ..mapping.costmap import HEIGHT_AXIS, PLANE
@@ -631,10 +631,10 @@ class ObjectLayer:
     def _make_observation(
         det: Detection, frame: FrameData, K: np.ndarray, T_cw: np.ndarray
     ) -> Optional[Observation]:
-        ellipse = ellipse_from_mask(det.mask)
+        ellipse = det_ellipse(det)
         if ellipse is None:
             return None
-        ys, xs = np.nonzero(det.mask)
+        ys, xs = mask_pixels(det)
         d = frame.depth[ys, xs]
         valid = d > 1e-3
         if not valid.any():

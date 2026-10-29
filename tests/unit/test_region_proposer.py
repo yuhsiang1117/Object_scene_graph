@@ -35,6 +35,7 @@ class _T:
     def detach(self): return self
     def cpu(self): return self
     def numpy(self): return self.v
+    def __getitem__(self, i): return _T(self.v[i])   # masks are indexed on the device
 
 
 class _Masks:

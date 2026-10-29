@@ -110,6 +110,10 @@ def ellipse_from_mask(mask: np.ndarray) -> Optional[Ellipse2D]:
     so we scale by 4 to recover the boundary ellipse.
     """
     ys, xs = np.nonzero(mask)
+    return _ellipse_from_pixels(ys, xs)
+
+
+def _ellipse_from_pixels(ys: np.ndarray, xs: np.ndarray) -> Optional[Ellipse2D]:
     if xs.size < 8:
         return None
     pts = np.stack([xs, ys], axis=1).astype(np.float64)
@@ -119,6 +123,32 @@ def ellipse_from_mask(mask: np.ndarray) -> Optional[Ellipse2D]:
     # Guard against degenerate (thin) masks
     cov += np.eye(2) * 1.0
     return Ellipse2D(mu=mu, cov=cov)
+
+
+def mask_pixels(det) -> Tuple[np.ndarray, np.ndarray]:
+    """`np.nonzero(det.mask)`, scanned once per detection.
+
+    The object layer asks for a detection's pixels up to five times a keyframe
+    -- presence, association, the observation, a new track's ellipsoid -- and
+    each was a full-frame scan: a quarter of the object layer's time. Cached on
+    the detection, keyed on the mask object itself so a replaced mask is
+    scanned afresh (masks are never edited in place), and read-only."""
+    cached = det.__dict__.get("_mask_pixels")
+    if cached is None or cached[0] is not det.mask:
+        ys, xs = np.nonzero(det.mask)
+        ys.flags.writeable = False
+        xs.flags.writeable = False
+        cached = (det.mask, ys, xs, _ellipse_from_pixels(ys, xs))
+        det.__dict__["_mask_pixels"] = cached
+    return cached[1], cached[2]
+
+
+def det_ellipse(det) -> Optional[Ellipse2D]:
+    """`ellipse_from_mask(det.mask)` from the cached scan (`mask_pixels`): the
+    same numbers, and a fresh object each call, as ellipse_from_mask gives."""
+    mask_pixels(det)
+    e = det.__dict__["_mask_pixels"][3]
+    return None if e is None else Ellipse2D(mu=e.mu.copy(), cov=e.cov.copy())
 
 
 def rotvec_to_matrix(rv: np.ndarray) -> np.ndarray:
@@ -178,10 +208,13 @@ def bresenham(r0: int, c0: int, r1: int, c1: int):
             c0 += sc
 
 
+_EYE2 = np.eye(2)
+
+
 def sqrtm_2x2_spd(M: np.ndarray) -> np.ndarray:
     """Closed-form principal square root of a 2x2 SPD matrix."""
     det = max(M[0, 0] * M[1, 1] - M[0, 1] * M[1, 0], 0.0)
     s = np.sqrt(det)
     tr = M[0, 0] + M[1, 1]
     denom = np.sqrt(max(tr + 2.0 * s, 1e-12))
-    return (M + s * np.eye(2)) / denom
+    return (M + s * _EYE2) / denom
