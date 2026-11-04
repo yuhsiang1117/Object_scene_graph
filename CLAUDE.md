@@ -171,7 +171,10 @@ it. Two golden files pin this:
   floor-estimator audit), `analyze_localization.py` / `analyze_trackloc.py` (stop pose vs GT),
   `analyze_approach.py` (why the terminal approach failed), `analyze_multifloor.py` (Benchmark v2:
 same-storey SR by class / start storey, storey decisions, stair climbs, goal commits TRUE / STALE /
-FP), `analyze_vlm.py` (every VLM verdict scored against the object's true and prior pose).
+FP), `analyze_vlm.py` (every VLM verdict scored against the object's true and prior pose),
+`analyze_mfv2.py` (the Benchmark v2 campaign: every arm by seed, each ablation paired against the
+final arm with a sign test, failure buckets, wall time). `scripts/release/package.py` packs the
+runs into the data release `docs/RELEASE.md` describes.
 - **Generated, not source:** `outputs/`, downloads under `data/`, `relative_work/` (the ASCENT
   checkout and its recorded reference runs) and `assets/` (the real-robot recordings) are all
   ignored. Keep secrets and machine-specific dataset paths in `docker/.env`.

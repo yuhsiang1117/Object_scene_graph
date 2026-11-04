@@ -28,6 +28,7 @@ date (superseded, never run) also say so at the top.
 | [CROSS_ANCHOR_REPRODUCTION.md](CROSS_ANCHOR_REPRODUCTION.md) | Whether the paper's single-floor cross-anchor headline re-derives, what was ruled out, and the 2026-09-27 re-run on the original prior maps. **Read before quoting Table I.** |
 | [ZERO_SHOT_AUDIT.md](ZERO_SHOT_AUDIT.md) | Every piece of hand-authored per-benchmark knowledge in the pipeline. |
 | [BENCHMARK_V2.md](BENCHMARK_V2.md) | The multi-floor moved-object set as re-built for the review: generation rules, episode classes and start storeys, the success rule, where objects are moved, and what the prior map holds. |
+| [RELEASE.md](RELEASE.md) | The revision's data release: every run's records and logs, the inputs a re-run needs, which code each run ran on, the tables re-derived from the bundle, and what was left out. |
 
 ## Figures and the video
 
