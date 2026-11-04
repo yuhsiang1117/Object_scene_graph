@@ -1,0 +1,57 @@
+# Khronos (open-set) on a DualMap release sequence, fed by frame_publisher.py.
+#
+#   ros2 launch scripts/baselines/khronos/dualmap_khronos.launch.yaml output_dir:=<dir> [mapper_config:=<yaml>]
+#   python scripts/baselines/khronos/frame_publisher.py --sequence <release>/<scene>
+#
+# map_sequence.sh runs both and stops khronos_node with SIGINT, on which it saves its map.
+#
+# Modelled on khronos_ros/launch/uhumans2_khronos.launch.yaml with the open-set branch taken:
+# semantic_inference's FastSAM + CLIP ViT-L/14 segmenter on the colour stream, and the pose
+# given (fix_input_poses), as the uHumans2 runs use ground-truth poses.
+---
+launch:
+  - arg: {name: output_dir}
+  # $(dirname) resolves lazily, against whichever file was included last, so it is pinned here.
+  - arg: {name: script_dir, default: $(dirname)}
+  - arg: {name: config_dir, default: $(var script_dir)/config}
+  - arg: {name: mapper_config, default: $(var config_dir)/mapper_dualmap_openset.yaml}
+  - arg: {name: sensor_min_range, default: '0.1'}
+  - arg: {name: sensor_max_range, default: '5.0'}
+  - arg: {name: segmenter_config, default: $(find-pkg-share khronos_ros)/config/openset/sam_clip.yaml}
+  - arg: {name: start_visualizer, default: 'false'}
+  - set_parameter: {name: use_sim_time, value: 'true'}
+  # The segmenter's topics are relative (color/image_raw -> semantic/image_raw), so it runs in a
+  # `semantic_inference` namespace, where Khronos's label topic expects its output.
+  - group:
+      - push_ros_namespace: {namespace: semantic_inference}
+      - set_remap: {from: /semantic_inference/color/image_raw, to: /dualmap/rgb/image_raw}
+      - include:
+          file: $(find-pkg-share semantic_inference_ros)/launch/open_set.launch.yaml
+          arg:
+            - {name: config_path, value: $(var segmenter_config)}
+  # The background prompts' embeddings, which Khronos waits for before it starts.
+  - executable:
+      cmd: python $(var script_dir)/background_embeddings.py --topic /dualmap/background/features
+      name: background_embeddings
+      output: screen
+  - include:
+      file: $(find-pkg-share khronos_ros)/launch/khronos.launch.yaml
+      arg:
+        - {name: input_config, value: $(var config_dir)/input_dualmap_openset.yaml}
+        - {name: mapper_config, value: $(var mapper_config)}
+        - {name: labelspace_config, value: $(find-pkg-share hydra)/config/label_spaces/ade20k_indoor_label_space.yaml}
+        - {name: extra_yaml, value: '{semantic_colormap_file: ""}'}
+        - {name: output_dir, value: $(var output_dir)}
+        - {name: evaluate, value: 'true'}
+        - {name: sensor_min_range, value: $(var sensor_min_range)}
+        - {name: sensor_max_range, value: $(var sensor_max_range)}
+        - {name: sensor_frame, value: camera}
+        - {name: robot_frame, value: base_link}
+        - {name: use_gt_frame, value: 'true'}
+        - {name: start_visualizer, value: $(var start_visualizer)}
+        - {name: rgb_topic, value: /dualmap/rgb/image_raw}
+        - {name: rgb_info_topic, value: /dualmap/rgb/camera_info}
+        - {name: depth_topic, value: /dualmap/depth/image_raw}
+        - {name: label_topic, value: /semantic_inference/semantic/image_raw}
+  - node: {pkg: tf2_ros, exec: static_transform_publisher, name: map_static_tf, args: --child-frame-id map --frame-id world}
+  - node: {pkg: tf2_ros, exec: static_transform_publisher, name: odom_static_tf, args: --child-frame-id odom --frame-id map}

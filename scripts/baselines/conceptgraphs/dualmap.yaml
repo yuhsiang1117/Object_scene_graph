@@ -1,0 +1,15 @@
+# ConceptGraphs dataconfig for a DualMap release sequence laid out by export_sequence.py.
+# The loader is ConceptGraphs' ReplicaDataset (results/frame*.jpg, results/depth*.png, traj.txt);
+# the camera is the release's (camera_intrinsics.json: 1200x680, fx = fy = 600, principal point
+# at the image centre) and its depth is in millimetres. Replica's own config differs only in
+# cx/cy (599.5/339.5) and its depth scale (6553.5).
+dataset_name: 'replica'
+camera_params:
+  image_height: 680
+  image_width: 1200
+  fx: 600.0
+  fy: 600.0
+  cx: 600.0
+  cy: 340.0
+  png_depth_scale: 1000.0
+  crop_edge: 0
