@@ -81,7 +81,8 @@ Beyond the fine-primitive settings:
 - 12 object-extraction workers (default 2): with 2 the extraction fell behind and the waiting
   objects held their frames (memory, and fewer, larger primitives); throughput only;
 - Khronos's backend change detection off: Clio runs its own backend. On 00829 and 00848, mapped
-  both ways, every cell of the table is identical (runs with it on: `nav_cd/`, `map_cd/`).
+  both ways, every cell of the table is identical (runs with it on: `nav_cd/`; their maps, 122 GB,
+  were deleted on 2026-11-04 once the comparison was settled).
 
 ## HOV-SG (`hovsg/`)
 

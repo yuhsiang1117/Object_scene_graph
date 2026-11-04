@@ -71,7 +71,7 @@ called 38 times in 219 episodes and changes no outcome (`osg_vet_live_no_vlm` is
 
 | left out | size | how to get it back |
 |---|---:|---|
-| per-step keyframes and `viz/` of every run | ~240 GB | re-run; the runner writes both |
+| per-step keyframes and `viz/` of every run | ~240 GB | re-run; the runner writes both. Since 2026-11-04 `outputs/` itself keeps them only for the final arm and ASCENT (`outputs/CLEANUP_2026-11-04.log`) |
 | the baselines' raw maps (Khronos, Clio, HOV-SG, ConceptGraphs) | 239 GB | `scripts/baselines/README.md`, per method |
 | HM3D scenes, YCB objects, model weights | licensed | `docs/SETUP.md` |
 | the collector's layout renders | HM3D renders | the collector |
