@@ -28,14 +28,14 @@ from .llm import LLMConfig
 from .mapping import MappingConfig
 from .region_proposal import RegionProposalConfig
 from .ros2 import Ros2Config
-from .scene_graph import PresenceConfig, SceneGraphConfig
+from .scene_graph import EllipsoidConfig, PresenceConfig, SceneGraphConfig
 from .verification import VerificationConfig
 from .ycb import YCB_TARGET_LABELS, YCBAuthoredConfig
 
 __all__ = [
     "AgentConfig", "DetectorConfig", "DualMapProtocolConfig", "EvalConfig",
     "ExplorationConfig", "FeatureMemoryConfig",
-    "FloorConfig", "LLMConfig", "MappingConfig", "OSGConfig", "PresenceConfig",
+    "FloorConfig", "LLMConfig", "MappingConfig", "OSGConfig", "PresenceConfig", "EllipsoidConfig",
     "RegionProposalConfig", "Ros2Config",
     "SceneGraphConfig", "VerificationConfig", "YCBAuthoredConfig",
     "DEFAULT_VOCABULARY", "YCB_TARGET_LABELS", "NAVIGATION_MODES",

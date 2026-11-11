@@ -62,6 +62,10 @@ OBS=${OBS:-outputs/maps_v2_ascent}
 OSG=${OSG:-outputs/maps_v2_osg}
 ROOT=${ROOT:-outputs/mfv2}
 SMOKE=${SMOKE:-0}
+# Further run_eval.py overrides, space-separated, appended to every scene --
+# e.g. OVERRIDES="eval.record_object_frames_dir=/abs/objrec" to record what the
+# object layer is fed (eval/object_recorder.py).
+read -r -a OVERRIDES_ARR <<< "${OVERRIDES:-}"
 SCENES=("$@")
 [ ${#SCENES[@]} -eq 0 ] && SCENES=(00800-TEEsavR23oF 00821-eF36g7L6Z9M \
   00862-LT9Jq6dN3Ea 00873-bxsVRursffK 00878-XB4GS9ShBRE)
@@ -110,7 +114,7 @@ for scene in "${SCENES[@]}"; do
   log "=== $scene"
   (
     python scripts/run_eval.py "+experiment=$PRESET" "ycb.scenes=[$scene]" \
-      "ycb.seed=$SEED" "${INPUTS[@]}" "${EXTRA[@]}" \
+      "ycb.seed=$SEED" "${INPUTS[@]}" "${EXTRA[@]}" "${OVERRIDES_ARR[@]}" \
       "output_dir=$OUT/$scene" > "$OUT/$scene.log" 2>&1
     status=$?
     if [ "$status" -ne 0 ]; then

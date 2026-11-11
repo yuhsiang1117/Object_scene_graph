@@ -15,11 +15,12 @@ set category_gate=True to require label equality (safer for SR-style eval).
 from __future__ import annotations
 
 from dataclasses import dataclass, field
-from typing import List, Optional, Tuple
+from typing import Any, List, Optional, Tuple
 
 import numpy as np
 
 from ..core.geometry import Ellipse2D, det_ellipse, sqrtm_2x2_spd
+from ..core.labels import normalize_label
 from ..core.types import Detection, FrameData
 from .ellipsoid import Ellipsoid
 from .presence import PresenceState
@@ -155,6 +156,14 @@ class ObjectTrack:
     # positive AND negative evidence (objects/presence.py). Default 1.5 log-odds
     # (p~0.82) so a track behaves exactly as before until the filter runs.
     presence: PresenceState = field(default_factory=PresenceState)
+    # scene_graph.ellipsoid (objects/point_buffer.py, objects/merge.py). All
+    # inert unless that group turns them on: `buffer` stays None, nothing reads
+    # the rest.
+    buffer: Optional[Any] = None          # VoxelBuffer of this object's depth points
+    geom_provisional: bool = False        # seeded from a truncated view
+    last_kf: int = -1                     # ObjectLayer keyframe index of the last observation
+    finalized_views: int = 0              # buffer views the last finalise had seen
+    assoc_ellipsoid: Optional[Ellipsoid] = None   # decouple_geometry: what association projects
 
     @property
     def n_obs(self) -> int:
@@ -175,6 +184,7 @@ class DataAssociator:
         iou_gate: float = 0.01,         # bbox-IoU spatial gate (old)
         nwd_accept: float = 1e-5,       # min NWD similarity to accept a match (old)
         category_gate: bool = False,    # old has NO label check; True = require label equality
+        normalize_labels: bool = False,  # compare labels through core.labels.normalize_label
     ) -> None:
         self.score_thresh = score_thresh
         self.depth_gate_m = depth_gate_m
@@ -182,6 +192,7 @@ class DataAssociator:
         self.iou_gate = iou_gate
         self.nwd_accept = nwd_accept
         self.category_gate = category_gate
+        self.normalize_labels = normalize_labels
 
     def associate(
         self, dets: List[Detection], frame: FrameData, tracks: List[ObjectTrack]
@@ -193,7 +204,11 @@ class DataAssociator:
         # Project every track's ellipsoid into the current frame (2D ellipse).
         projections = {}
         for tr in tracks:
-            ell = tr.ellipsoid.project(K, T_cw)
+            # `assoc_ellipsoid`: the move-limited copy association keeps when
+            # scene_graph.ellipsoid.decouple_geometry lets the reported
+            # geometry follow the buffer further than the limit allows.
+            src = tr.ellipsoid if getattr(tr, "assoc_ellipsoid", None) is None else tr.assoc_ellipsoid
+            ell = src.project(K, T_cw)
             if ell is not None:
                 projections[tr.id] = (tr, ell)
 
@@ -204,7 +219,10 @@ class DataAssociator:
                 continue
             obs_bbox = obs.bbox()
             for tid, (tr, proj) in projections.items():
-                if self.category_gate and tr.label != det.label:
+                if self.category_gate and (
+                    normalize_label(tr.label) != normalize_label(det.label)
+                    if self.normalize_labels else tr.label != det.label
+                ):
                     continue
                 if _bbox_iou(obs_bbox, proj.bbox()) <= self.iou_gate:
                     continue

@@ -784,10 +784,15 @@ class FloorPolicy:
         """Start the pursuit of a remembered staircase (`_remembered_stair`), or
         None when the reachability check refuses it."""
         goal_xy, other_floor = remembered
+        # `other_floor` comes from `known_levels()`, which holds storeys the
+        # estimator has never stood on (seeded from the prior obstacle map), so
+        # its height is read there too: `estimator.height_of` raised KeyError
+        # on one (mfv2 00800 seed 42, floor_llm off, 2026-11-06).
+        other_y = float(self.known_levels()[int(other_floor)])
         # An arrival is a point on THIS storey (`_remembered_arrival`).
         arrival = str(getattr(self.cfg.floor, "prior_stair_mouth", "edge")) == "arrival"
         if reachable_fn is not None and not reachable_fn(
-            goal_xy, float(floor_y) if arrival else self.estimator.height_of(other_floor)
+            goal_xy, float(floor_y) if arrival else other_y
         ):
             self.stats["prior_stair_unreachable"] = (
                 self.stats.get("prior_stair_unreachable", 0) + 1
@@ -818,7 +823,7 @@ class FloorPolicy:
             )
         return PortalGoal(
             goal_xy=np.asarray(goal_xy, dtype=float).copy(),
-            target_y=float(self.estimator.height_of(other_floor)),
+            target_y=other_y,
             deadline_steps=self.cfg.floor.portal_deadline_steps,
         )
 

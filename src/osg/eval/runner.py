@@ -10,6 +10,7 @@ from __future__ import annotations
 
 import json
 import dataclasses
+import time
 from pathlib import Path
 
 from ..core.config import resolve_navigation
@@ -38,6 +39,38 @@ from .record import (
     episode_tag,
 )
 from .visualize import save_topdown
+
+
+def _attach_object_recorder(cfg, out_dir, ep_tag, agent, episode, target):
+    """`eval.record_object_frames_dir`: record what this episode's object layer
+    is fed (eval/object_recorder.py). The layer is NavAgent's own, or the world
+    model's when the driving policy carries one (pass 1). None when off, or
+    when nothing in the agent holds an object layer."""
+    root = str(getattr(cfg.eval, "record_object_frames_dir", "") or "")
+    if not root:
+        return None
+    holder = getattr(agent, "world", None) or agent
+    layer = getattr(holder, "object_layer", None)
+    if layer is None:
+        return None
+    from .object_recorder import ObjectFrameRecorder
+    from .record import authored_episode_metadata
+
+    path = Path(root)
+    if not path.is_absolute():
+        path = Path(out_dir) / path
+    meta = {
+        "episode_tag": str(ep_tag),
+        "episode_id": str(getattr(episode, "episode_id", "")),
+        "scene": str(authored_episode_metadata(episode).get("scene", "")),
+        "layout_id": str(authored_episode_metadata(episode).get("layout_id", "")),
+        "target": str(target),
+        "map_in": str(getattr(cfg.ycb, "map_in", "") or ""),
+        "map_out": str(getattr(cfg.ycb, "map_out", "") or ""),
+        "wall_start": time.time(),
+    }
+    layer.recorder = ObjectFrameRecorder(str(path), str(ep_tag), meta)
+    return layer.recorder
 
 
 def _goal_floor_gap_m(episode):
@@ -328,6 +361,7 @@ def run_eval(cfg) -> dict:
             climb_nav_fn=(env.action_to_goal
                           if bool(getattr(cfg.agent, "climb_oracle", False)) else None),
         )
+        recorder = _attach_object_recorder(cfg, out_dir, ep_tag, agent, episode, target)
         debug = DebugVideo(cfg, out_dir, ep_tag) if cfg.eval.debug_frames else None
         outcome = run_episode(cfg, env, agent, episode, target, frame, detector, debug)
         if debug is not None:
@@ -342,6 +376,8 @@ def run_eval(cfg) -> dict:
         # After the record: the tour moves the agent, and the record reads its
         # final pose. Pass 1 only (it needs `ycb.map_out`).
         tour_target_views(cfg, env, agent, episode)
+        if recorder is not None:
+            recorder.close((getattr(agent, "world", None) or agent).object_layer)
         save_map_for_scene(cfg, agent, episode)
         results.append(rec)
         with open(episodes_file, "a") as f:

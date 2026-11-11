@@ -86,6 +86,30 @@ def _f(values) -> List[float]:
 
 
 def _track_record(track: ObjectTrack) -> Dict[str, Any]:
+    rec = _track_record_base(track)
+    a = getattr(track, "assoc_ellipsoid", None)
+    if a is not None:
+        # scene_graph.ellipsoid.decouple_geometry: what association projects,
+        # kept apart from the reported geometry. Absent when they agree.
+        rec["assoc_ellipsoid"] = {"center": [float(v) for v in a.center],
+                                  "axes": [float(v) for v in a.axes],
+                                  "R": [float(v) for v in np.asarray(a.R).reshape(-1)]}
+    buf = getattr(track, "buffer", None)
+    if buf is not None:
+        # scene_graph.ellipsoid.buffer: the object's depth points, compressed,
+        # so the next session can still associate against them in 3D. Absent
+        # (not null) without a buffer, so a snapshot with the group off is
+        # byte-identical to one written before it existed.
+        import copy
+
+        summary = copy.deepcopy(buf)
+        summary.compress(int(getattr(buf, "summary_voxels", 256)))
+        rec["points_vox"] = summary.to_record()
+        rec["points_vox"]["view_dirs"] = [[float(v) for v in d] for d in getattr(buf, "view_dirs", [])]
+    return rec
+
+
+def _track_record_base(track: ObjectTrack) -> Dict[str, Any]:
     ell = track.ellipsoid
     return {
         "id": int(track.id),
@@ -182,6 +206,16 @@ def _track_from_record(rec: Dict[str, Any]) -> ObjectTrack:
         )
         for o in rec.get("observations", [])
     ]
+    if rec.get("assoc_ellipsoid") is not None:
+        a = rec["assoc_ellipsoid"]
+        track.assoc_ellipsoid = Ellipsoid(center=np.asarray(a["center"], float),
+                                          axes=np.asarray(a["axes"], float),
+                                          R=np.asarray(a["R"], float).reshape(3, 3))
+    if rec.get("points_vox") is not None:
+        from ..objects.point_buffer import VoxelBuffer
+
+        track.buffer = VoxelBuffer.from_record(rec["points_vox"])
+        track.buffer.view_dirs = [np.asarray(d, float) for d in rec["points_vox"].get("view_dirs", [])]
     return track
 
 
@@ -308,6 +342,26 @@ def load_map(path: Path) -> Dict[str, Any]:
 PRIOR_SESSION_OFFSET = 1_000_000
 
 
+def restore_tracks(layer, blob: Dict[str, Any], *, max_log_odds: float = 1.5) -> int:
+    """The object half of `apply_map`: replace `layer`'s tracks with the
+    snapshot's, under the three rules `apply_map` documents (belief capped,
+    frame ids shifted out of this session, blacklist and identity cleared).
+    Separate so the offline replay (scripts/replay_object_layer.py) restores
+    a prior exactly as an episode does. Returns the track count."""
+    layer._tracks = {}
+    for rec in blob.get("tracks", []):
+        track = _track_from_record(rec)
+        track.blacklisted = False
+        track.identity_rejections = 0  # episode-scoped, for the same reason
+        track.from_prior = True
+        track.presence.log_odds = min(float(track.presence.log_odds), float(max_log_odds))
+        for obs in track.observations:
+            obs.frame_id = int(obs.frame_id) - PRIOR_SESSION_OFFSET
+        layer._tracks[track.id] = track
+    layer._next_id = int(blob.get("next_track_id", max(layer._tracks, default=-1) + 1))
+    return len(layer._tracks)
+
+
 def apply_map(
     agent,
     blob: Dict[str, Any],
@@ -349,17 +403,7 @@ def apply_map(
     out of the candidate list.
     """
     layer = agent.object_layer
-    layer._tracks = {}
-    for rec in blob.get("tracks", []):
-        track = _track_from_record(rec)
-        track.blacklisted = False
-        track.identity_rejections = 0  # episode-scoped, for the same reason
-        track.from_prior = True
-        track.presence.log_odds = min(float(track.presence.log_odds), float(max_log_odds))
-        for obs in track.observations:
-            obs.frame_id = int(obs.frame_id) - PRIOR_SESSION_OFFSET
-        layer._tracks[track.id] = track
-    layer._next_id = int(blob.get("next_track_id", max(layer._tracks, default=-1) + 1))
+    restore_tracks(layer, blob, max_log_odds=max_log_odds)
 
     grids = blob.get("_grids", {})
     version = int(blob.get("schema_version", 1))

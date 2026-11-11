@@ -4512,6 +4512,436 @@ discards a geometric ranking that already integrates the value map, information
 gain and path cost. The suspect is the LLM over-reacting to descriptions rather
 than the descriptions themselves.
 
+### S77 — depth-point ellipsoids: measured offline against instance ground truth
+
+**Question.** Two ellipsoid failures: wrong size from few views, and one
+object ending up as several tracks. Do depth points fix either? Five
+mechanisms sit behind `scene_graph.ellipsoid.*`, all off by default:
+
+- M1: points init (`init=points`, `reinit_truncated`);
+- M2: per-track voxel buffer from good views (`buffer`);
+- M3: refit from the buffer (`refine_mode=points`);
+- M4: 3D association plus split-mask merge (`assoc_3d_overlap`,
+  `merge_split_overlap`, `overlap_mode`);
+- M5: finalise-when-far, merging and compressing (`finalize`). This is the
+  "build it once the robot has moved away" proposal.
+
+**Harness, not a navigation run.**
+
+- Pass 1 (`run_prior_maps.sh`, ASCENT-driven) was re-run with
+  `eval.record_object_frames_dir=outputs/objrec_v2`. The trajectory does not
+  depend on the object layer, so `scripts/replay_object_layer.py` replays any
+  variant exactly. V0 replay is IDENTICAL to the live run on every episode of
+  all five scenes.
+- `scripts/label_object_frames.py` gives each detection its HM3D/YCB instance.
+  It re-renders semantics at the recorded pose; rendered depth matches the
+  recording to within 1 mm on ≥ 0.9997 of pixels.
+- `scripts/analyze_ellipsoids.py` scores the last chained episode per scene:
+  - extra tracks per instance;
+  - centre error;
+  - axis-aligned 3D IoU;
+  - purity, i.e. the share of a track's labelled observations that come from
+    its majority instance.
+- Statistics are paired per instance (Wilcoxon).
+- Dev scenes: 00800, 00821, 00808. 00808 stands in for 00862, whose layouts
+  are not on this machine. Test scenes: 00873, 00878, run once.
+
+**Pre-registered rule.**
+
+- Success: A = extra/inst −20% (p<0.05); or B = n_obs≤2 IoU +0.05 or centre
+  −20%.
+- Guardrails:
+  - purity drops at most 1 pt;
+  - YCB centre error not worse;
+  - per-keyframe time ≤ 1.5×.
+- At most three dev rounds, and no tuning on test.
+
+**Dev (3 scenes, 930 instances).**
+
+| variant | extra/inst | ctr med (m) | IoU med | purity | note |
+|---|---|---|---|---|---|
+| V0 | 3.247 | 0.367 | 0.086 | 0.926 | |
+| V3p = M1+M2+M3 | 3.223 | 0.318 | 0.179 | 0.936 | geometry, no duplication effect |
+| **R2M4** = V3p + M4 (voxel overlap) | **2.585 (−20.4%)** | 0.304 | 0.170 | 0.919 | only variant to pass all |
+| R3d0 (no voxel dilation) | 2.638 (−18.8%) | 0.304 | 0.170 | 0.924 | misses A |
+| R3v2 (2 cm voxels) | 2.599 (−19.96%) | 0.315 | 0.177 | 0.920 | misses A |
+| any M5 (finalise + merge) | 2.0–2.3 | | | 0.50–0.90 | fails purity |
+
+- R2M4 paired against V0:
+  - extra p=6e-37;
+  - centre p=2e-7;
+  - IoU p=1e-32;
+  - YCB centre median diff +1 mm, n=20, p=0.41.
+- Time is 42.8 vs 33.5 ms per keyframe (1.28×), measured solo on 00800.
+- B was never met. n_obs≤2 is about 93 instances, and no variant moved it
+  significantly.
+
+**Test (00873 + 00878, 418 instances), R2M4 only.**
+
+- extra/inst 3.050 → 2.344 (−23.1%, p=5e-16).
+- Centre error 0.289 → 0.233 m (p=5e-7).
+- IoU 0.114 → 0.266 (p=3e-21).
+- YCB not worse.
+- **Purity 0.9284 → 0.9173 (−1.11 pt): the guardrail fails.** By scene,
+  00873 drops 1.7 pt and 00878 drops 0.5 pt.
+
+Under the rule, R2M4 is **not adopted**.
+
+**What each part did** (leave-one-out on 00800 + 00821):
+
+- M3 carries the geometry. Without it, centre error is 0.41 m and IoU 0.08,
+  which is V0.
+- M1 adds a little: centre 0.30 → 0.33 m without it.
+- 3D association carries the de-duplication (2.22 → 2.60 without it), and
+  nearly all of the purity cost.
+- Split merge adds −0.2 extra/inst.
+- `normalize_labels` changes nothing; the output is bit-identical.
+
+**M5 fails, and why.**
+
+- Under the original "either one-way overlap" rule, a track whose buffer once
+  took a neighbour's points absorbs that neighbour. The merged buffer then
+  absorbs the next one.
+- Compression doubles the voxel size until at most 256 voxels remain, which
+  makes overlap near-universal.
+- Purity:
+  - merge only (no compression): 0.68;
+  - merge + compression: 0.50;
+  - symmetric overlap at 0.5 / 0.7: 0.874 / 0.902. Both still fail.
+- Building the ellipsoid from buffered points once the robot is far is not
+  what fails; refit without merging is purity 0.918. The cross-track merge it
+  was meant to enable is.
+
+**Where the purity cost lands.** On every scene the loss is concentrated on
+rows of adjacent same-label objects. On 00873, cabinet observations from a
+different instance rise 169 → 402, about 70% of the loss. Desk, shelf and
+pillow are next on 00821.
+
+**Reproduce.** All runs are under `outputs/objreplay/`:
+
+```bash
+python scripts/replay_object_layer.py +experiment=mf5_mapping_both eval.rgb_width=1280 \
+  eval.rgb_height=960 detector.imgsz=1280 +replay.root=outputs/objrec_v2 \
+  +replay.out=outputs/objreplay/R2M4 \
+  scene_graph.ellipsoid.{init=points,reinit_truncated=true,buffer=true,refine_mode=points} \
+  scene_graph.ellipsoid.{overlap_mode=voxel,assoc_3d_overlap=0.3,normalize_labels=true,merge_split_overlap=0.5}
+python scripts/analyze_ellipsoids.py --rec outputs/objrec_v2 --variant V0=outputs/objreplay/V0 \
+  --variant R2M4=outputs/objreplay/R2M4 --scenes 00800-TEEsavR23oF 00821-eF36g7L6Z9M 00808-y9hTuugGdiq
+```
+
+(The shell brace expansion above stands for the eight `scene_graph.ellipsoid.*=` overrides written out.)
+
+**Closed loop, exploratory (seed 42, run after the guardrail failure was
+known).** Two arms on the same pass-1 recording:
+
+- `osg_landing_vet_live` on `outputs/maps_v2_osg_V0`. That map is
+  byte-identical to pass 1's snapshot.
+- `osg_vet_live_ellipsoid` (R2M4, live too) on `outputs/maps_v2_osg_R2M4`,
+  which is the replayed snapshot. Its target coverage is the same as V0's
+  (`audit_map_coverage`: the same 1–3 static targets missing per scene).
+
+**This is not the final arm as published.** Both arms differ from it in the
+same three ways:
+
+- `verification.absence_use_vlm=false`
+- `exploration.floor_llm=false`
+- `exploration.affinity_llm=false`
+
+The reason: there was no NIM key, and `meta/llama-3.2-11b-vision-instruct`
+reached end of life on NIM on 2026-11-05. The VLM URL pointed at a dead port,
+and the episode records show 0 verify calls and 0 errors in every episode of
+both arms. Coverage is 4 scenes (00800, 00821, 00873, 00878); 00862 has no
+layouts on this machine. Episodes were paired one to one.
+
+Both arms first hit a `KeyError` in `FloorPolicy._pursue_remembered`. It read
+a storey known only from the prior map out of the online estimator. That was
+fixed (now read from `known_levels()`, regression test in
+`test_prior_stairs.py`), and 00800 was re-run for both arms.
+
+| (58 paired episodes) | V0 | R2M4 | paired |
+|---|---|---|---|
+| success on the object's storey | 36 | 39 | 6 better / 3 worse, sign p = 0.51 |
+| first-attempt success | 27 | 27 | |
+| FP goal commits | 53 | 38 | 13 fewer / 7 more episodes, Wilcoxon p = 0.10 |
+| — of them live tracks | 38 | 24 | |
+| TRUE / STALE commits | 47 / 31 | 52 / 27 | p = 0.33 / 0.34 |
+| best stop, horizontal distance to object (median) | 0.69 m | 0.65 m | n = 52, Wilcoxon p = 0.014 |
+| `analyze_stages`: FAIL_approach (all far misses) | 21 | 19 | |
+
+The FP reduction is concentrated on two scenes: 00878 (12 → 3) and 00800
+(6 → 3). 00821, the scene whose offline purity dropped most, is unchanged
+(20 → 20).
+
+**Reading.** At n = 58 and one seed, none of this is an SR claim. The one
+paired trace metric that resolves is the stop distance, which is slightly
+closer. The direction of the FP commits favours R2M4 but is not significant.
+The 1.11 pt purity cost offline does not show up as more false commits.
+Whether the de-duplication's fewer FP commits are real needs the three seeds
+and the VLM that the published arm has; on this machine that VLM no longer
+exists.
+
+### S78 — R2M4's ellipsoid / ground-truth IoU: where it is lost, and three rounds at it
+
+**Question.** R2M4's 3D IoU against instance ground truth is 0.170 (dev
+median, 827 objects). What limits it, and can the fit raise it?
+
+**Pre-registered.**
+- Success: dev IoU median at least +0.03 over R2M4, paired p < 0.05; then the
+  test scenes once. This is the test scenes' second use after S77.
+- Guardrails, all against R2M4:
+  - paired median centre diff at most +0.01 m;
+  - extra/inst no more than 2% worse;
+  - purity no more than 0.3 pt lower;
+  - YCB centre not worse.
+- At most three rounds.
+
+**Where it is lost** (main track per object):
+
+1. Size limits IoU more than the centre does. Swapping in the true centre
+   gives 0.233; swapping in the true size gives 0.292.
+2. Fixed shrinkage on small objects. Log size ratio by size: 0–25 cm −0.25,
+   25–50 cm −0.15, then near 0. YCB targets come out about 27% small. This
+   fits a buffer that keeps one centroid per voxel, so its outermost points
+   sit up to half a voxel inside.
+3. Only 54% of final ellipsoids are point fits, and those score 0.314.
+   Instrumented replay of the dev first episodes, 427 objects:
+   - 138 objects keep their initial ellipsoid (IoU 0.03–0.05). 43 of them
+     have 2+ views of points whose refits the 0.5 m centre-move limit kept
+     rejecting;
+   - 59 objects are left with the 2D refine (IoU 0.006–0.06).
+4. Yaw. Refitting the same buffered points in the world axes instead of the
+   track's own yaw: 0.170 → 0.267 (better in 75% of objects; multi-sided
+   88%). Two sources:
+   - a one-sided fit takes its axes from the line of sight;
+   - a multi-sided fit takes them from the points' principal axis.
+
+   Representation is not the issue: the oriented-box AABB scores 0.165.
+
+**Rounds** (dev, 3 scenes):
+
+| round | variant | IoU med | purity | note |
+|---|---|---|---|---|
+| — | R2M4 | 0.170 | 0.919 | |
+| 1 | + `extent_pad_m=0.015` | 0.182 | 0.917 | kept as the base |
+| 1 | + `buffer_truncated` (+pad) | 0.174 (0.185) | 0.906 (0.903) | fails purity |
+| 1 | `depth_axis` mean_ab / thickness, `extent_pct` 2, pad 0.03 | 0.165–0.176 | | no gain |
+| 2 | + move limit 1.0 m / `refit_override_overlap` 0.3 | 0.191 / 0.190 | 0.911 / 0.913 | fails purity |
+| 2 | + no move limit | 0.165 | 0.905 | one YCB target moved 2.9 m |
+| 2 | + `refit_min_views=1` | 0.182 | 0.917 | no gain |
+| 3 | + `yaw_mode=world` (reference) | 0.193 | 0.915 | |
+| 3 | + `yaw_mode=manhattan` | 0.194 | 0.915 | |
+| 3 | + `yaw_mode=manhattan`, `refit_min_views=1` | **0.196** | 0.917 | best; +0.026, p = 6e-7 |
+
+**Outcome: not adopted.**
+- No variant reaches +0.03.
+- The best (+0.026) passes the paired-median centre guardrail (+0.001 m), but
+  the unpaired centre median rose 0.304 → 0.356 m.
+- That loss sits in elongated objects: 16–18% of them are more than 0.2 m
+  worse. Under room-aligned axes, the one-sided depth rule
+  (`lateral` = depth equals the horizontal half-width) can take the object's
+  LONG axis as its width.
+- The test scenes were not run, as the rule says.
+
+**Kept** (all default-off, each with a unit test):
+- `extent_pad_m`;
+- `buffer_truncated`;
+- `refit_min_views`;
+- `refit_override_overlap`;
+- `yaw_mode` with `point_buffer.ManhattanFrame`, which estimates the room's
+  wall direction from depth normals. It recovered every scene's walls to
+  within 0.5 deg after 20 keyframes.
+
+**What the numbers point to, untested:**
+- a depth rule that knows which room axis it is completing;
+- keeping the move-limited ellipsoid for association while reporting the
+  buffer fit as the geometry. The purity cost of every move-limit relaxation
+  came through association. The offline refit bounds this at 0.267.
+
+**Rounds 4–6** (budget extended by the user). Same criteria, plus one more
+guardrail: the unpaired centre median must not be more than 0.01 m worse
+than R2M4's.
+
+- **Depth rule, simulated first.** One-sided completion rules were simulated
+  offline in room axes on the dev buffers (396 one-sided objects).
+  `thickness` (only the depth actually seen) scored IoU 0.320 / centre
+  0.16 m, against `lateral` at 0.240 / 0.23 m; on elongated objects it was
+  0.183 against 0.090. Seen obliquely in room axes, the side face IS the
+  depth. In round 1 the line-of-sight frame hid that.
+
+| round | variant (on I3mv1 = pad + manhattan + `refit_min_views=1`) | IoU med | ctr med | extra/inst | purity |
+|---|---|---|---|---|---|
+| 4 | + `depth_axis=thickness` (I4t) | 0.245 | 0.298 | 2.610 | 0.915 |
+| 4 | + `decouple_geometry` | 0.178 | 0.372 | 2.578 | 0.917 |
+| 5 | I4t + `assoc_2d_min_overlap` 0.1–0.5 (veto) | 0.32–0.34 | | **17–19** | 0.98 |
+| 5 | I4t + `assoc_3d_unique` | 0.256 | 0.279 | 2.727 (+5.5%) | 0.922 |
+| 6 | **I4t + `assoc_2d_reassign=0.1` (I6r1)** | **0.254** | **0.298** | 2.617 (+1.2%) | **0.929** |
+| 6 | I6r1 + `overlap_dilate=0` | 0.258 | 0.277 | 2.652 (+2.6%) | 0.935 |
+
+What each row showed:
+
+- **Decoupling.** Reporting the refits the limit refused moved centres the
+  wrong way: mean centre +0.20 m, YCB p = 0.04. Many refused refits were
+  contaminated buffers, not bad inits.
+- **Veto.** A thin one-sided ellipsoid does not contain the next view's
+  points of a not-yet-seen side, so the veto opened a track per view.
+- **Reassignment fixes the purity cost of I4t.** I4t's loss was 00808's
+  dining chairs trading observations through the 1%-bbox projection gate
+  (impure chair observations 222 → 436). Reassignment hands a 2D match to the
+  unmatched same-label track that actually holds the detection's points, and
+  never unmatches.
+
+**I6r1 against R2M4, dev** (3 scenes, 930 instances):
+
+- IoU 0.170 → 0.254 (paired median +0.012, mean +0.052, p = 3e-18).
+- Centre: paired median diff −0.000; unpaired median 0.304 → 0.298.
+- extra/inst +1.2%; purity +1.0 pt; YCB centre median diff 0 (p = 0.76).
+- Solo time 48.0 ms per keyframe against V0's 35.7–44.0 (≤ 1.34×).
+- Every dev scene improves on both IoU and purity.
+
+**Test** (00873 + 00878, 418 instances; the test scenes' second use for this
+question, third overall):
+
+| | V0 | R2M4 | I6r1 |
+|---|---|---|---|
+| IoU med | 0.114 | 0.266 | **0.388** (vs R2M4 paired p = 6e-16) |
+| ctr med (m) | 0.289 | 0.233 | **0.172** (p = 2e-4) |
+| extra/inst | 3.050 | 2.344 | **2.325** |
+| purity | 0.928 | 0.917 | **0.935** |
+
+YCB is not worse (p = 0.74), and both test scenes improve on all three.
+**Adopted as the ellipsoid variant** (`configs/experiment/mfv2_osg_vet_live_ellipsoid_v2.yaml`).
+Against V0 it also clears S77's own bar on test: duplication −24% with purity
++0.7 pt, where R2M4 lost 1.11 pt.
+
+The defaults are unchanged; every arm stays bit-identical with the group off.
+
+**Closed loop (seed 42, same conditions as S77's).**
+- Arm `osg_vet_live_ellipsoid_v2` on `outputs/maps_v2_osg_I6r1`: pass 1
+  replayed under I6r1. The snapshot's track counts equal the offline replay's,
+  and every non-object key is identical to pass 1's.
+- VLM, floor LLM and affinity LLM are off as in S77. 0 verify calls in all 58
+  episodes.
+- Paired against S77's two arms.
+
+**The loop is deterministic under these conditions.** R2M4 was re-run alone on
+00878 (`outputs/mfv2_ell_rerun`), where S77 had run it alongside V0. All 16
+episodes reproduce exactly: steps, success and every commit centre. So the
+differences below are what the object layer does on this seed, not run noise.
+They are still one seed: a small change of geometry changes the route (only
+27 of 58 episodes keep R2M4's step count).
+
+| (58 paired) | V0 | R2M4 | I6r1 | I6r1 vs R2M4 |
+|---|---|---|---|---|
+| success on the object's storey | 36 | 39 | 35 | 2 better / 6 worse, sign p = 0.29 |
+| first-attempt success | 27 | 27 | 24 | |
+| FP commits (live) | 53 (38) | 38 (24) | 38 (24) | p = 0.95; vs V0 p = 0.07 |
+| TRUE / STALE commits | 47 / 31 | 52 / 27 | 45 / 34 | p = 0.33 / 0.12 |
+| best stop, horizontal distance (median) | 0.69 m | 0.65 m | 0.68 m | n = 50, Wilcoxon p = 0.006 |
+
+| scene | SR V0 / R2M4 / I6r1 | FP V0 / R2M4 / I6r1 |
+|---|---|---|
+| 00800 (n=12) | 6 / 7 / 8 | 6 / 3 / 4 |
+| 00821 (n=16) | 8 / 7 / 7 | 20 / 20 / 15 |
+| 00873 (n=14) | 11 / 13 / 10 | 15 / 12 / 8 |
+| 00878 (n=16) | 11 / 12 / 10 | 12 / 3 / 11 |
+
+**Diagnosis.**
+- *Stop distance.* The approach's viewpoint ring sits at the target's largest
+  semi-axis (`nav_agent._horizontal_radius_m`). R2M4 shrank the YCB targets:
+  median largest semi-axis 0.090 m against a true 0.109 m over 27 targets.
+  I6r1 restores them to 0.116 m, a median +0.015 m per target, which moves the
+  ring out by about half of the measured +0.03 m. It is a consequence of the
+  size being right, and it is well inside the success radius.
+- *A lost episode, 00873 cross_anchor_01 / 50001.* I6r1's recorded pass-2
+  frames were replayed through both layers (online replay matches except one
+  presence counter). The R2M4 layer builds the same live "cracker box" tracks
+  at the stale location (888 / 793 `seen_live`, 5 and 38 observations). The
+  failure is the route that walked past them, not I6r1's geometry.
+
+**Reading.** The offline gain (IoU 0.266 → 0.388, centre 0.233 → 0.172 m)
+does not become a closed-loop gain on this seed. Against R2M4, I6r1 is level
+on FP commits and four successes lower (not significant). Its stops are 3 cm
+farther, which is explained. Against V0, it keeps R2M4's FP reduction
+(53 → 38). I6r1 stays the adopted *geometry* variant, on the offline result;
+no navigation claim is made for it or for R2M4. Deciding that would take the
+three seeds and the published arm's VLM (S77).
+
+### S79 — merging a pass-1 snapshot's duplicate tracks before it is saved
+
+**Question.** In pass 2 under I6r1, two thirds of the extra tracks per object
+come from the prior map (5711 of 8508 over 5183 (episode, object) pairs).
+Pass 2 restores them with shifted frame ids, so they never link to each
+other. Does merging them once, at save time, reduce pass 2's duplicates?
+
+**Rule** (`ObjectLayer.consolidate`, run from `save_map_for_scene`;
+`scene_graph.ellipsoid.consolidate_*`):
+- a live track with at most `max_obs` observations is folded into the nearest
+  live track of the same label and floor;
+- that track must have at least 3× its observations;
+- the two world AABBs must be within 0.2 m of each other;
+- the two must never have been observed in the same keyframe;
+- the kept track is not refit.
+
+**Pre-registered.** Success needs one of these:
+- pass-2 extra/inst −20%, paired p < 0.05;
+- the geometry criteria of S77.
+
+Guardrails:
+- purity at most 1 pt lower;
+- YCB target centre not worse.
+
+At most one diagnostic round.
+
+**Method.**
+- Pass 1 is replayed under I6r1 with consolidation on, giving new snapshots.
+- Pass 2's recorded frames (I6r1's closed loop, 58 episodes) are replayed
+  from each snapshot.
+- Pass 2 re-keys floors on load (floor matching, `drop_prior_landings`), so
+  the replay learns each episode's snapshot→online floor map from the
+  recorded prior.
+- With I6r1's own snapshot, this path reproduces the recorded prior in 58/58
+  episodes, ignoring agent-only fields. Without the map, only 34/58 match. A
+  first run without it is void.
+- Baseline check: the I6r1 snapshot run through this path (I6r1S) gives
+  geometry identical to the direct replay in the same 55/58 episodes. All
+  metrics are equal.
+
+| | I6r1 | C2 (`max_obs=2`) | C5 (`max_obs=5`) |
+|---|---|---|---|
+| pass-1 snapshot extra/inst (950 obj.) | 2.555 | 2.338 (−8.5%) | 2.197 (−14%) |
+| pass-1 snapshot purity | 0.917 | 0.915 | 0.908 |
+| pass-2 extra/inst (5183) | 1.642 | 1.621 (−1.3%, p = 9e-10) | 1.595 (−2.9%, p = 1e-19) |
+| pass-2 prior-born extras | 5711 | 5531 | 5258 |
+| pass-2 pass-2-born tracks | 3384 | 3469 | 3615 |
+| pass-2 IoU med (paired p) | 0.330 | 0.326 (0.08) | 0.321 (3e-6) |
+| pass-2 centre med (m) | 0.168 | 0.168 | 0.171 |
+| pass-2 purity | 0.940 | 0.939 | 0.934 |
+| prior re-id / new track beside prior | 84.8% / 33.1% | 84.7% / 33.6% | 83.9% / 35.0% |
+| YCB target centre med | 0.021 | 0.021 | 0.021 |
+
+**Outcome: not adopted.**
+- Neither arm comes close to −20%.
+- C5 also lowers IoU significantly, and purity by 0.6 pt in pass 2 (0.9 pt
+  in the snapshot).
+
+**Why it does not carry over.**
+- The rule removes 3% (C2) to 8% (C5) of the prior-born extras.
+- Pass 2 then opens 85 to 231 more tracks of its own: re-id falls and "new
+  track beside prior" rises. Each fragment that is merged away stops being a
+  match target for a view that only it explained.
+- Most prior duplicates are not small fragments, so a merge rule that touches
+  them would have to merge established tracks. That is the purity risk S77
+  guarded against.
+
+**Fixed along the way, kept:** `VoxelBuffer.merge` with two different voxel
+sizes now re-keys the other buffer's cells by centroid. A snapshot's
+summarised buffer is coarser than a live one, and before the fix its points
+landed in the wrong cells. It did not change these numbers: C2 with and
+without the fix are identical.
+
+The flag stays default-off with a unit test. Every arm is bit-identical with
+it off.
+
 ## Planned — not yet run
 
 ### S29 — re-test the approach re-check with BLIP-2 ITM

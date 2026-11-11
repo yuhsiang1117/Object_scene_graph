@@ -90,6 +90,12 @@ class EvalConfig:
     # (eval/vet_dump.py). Read-only; a run with it is the run without it. A
     # relative path is under `output_dir`. Off by default.
     vet_dump_dir: str = ""
+    # Object-layer recording: every keyframe `ObjectLayer.update` is handed
+    # (depth, pose, detections with masks and crops), one directory per
+    # episode, so object-layer variants can be replayed offline on identical
+    # input (eval/object_recorder.py, scripts/replay_object_layer.py).
+    # Read-only. A relative path is under `output_dir`. Off by default.
+    record_object_frames_dir: str = ""
     rgb_width: int = 640
     rgb_height: int = 480
     hfov_deg: float = 79.0

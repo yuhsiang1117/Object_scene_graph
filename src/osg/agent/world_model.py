@@ -37,9 +37,8 @@ from ..core.profiler import Profiler
 from ..core.types import Detection, FrameData
 from ..graph.scene_graph import ROOM_IDS_PER_FLOOR, SceneGraph
 from ..mapping.costmap import PLANE, Costmap2D
-from ..objects.object_layer import ObjectLayer
+from ..pipeline.objects import build_object_layer
 from ..perception.keyframe import KeyframeSelector, KeyframeStore
-from ..pipeline.beliefs import build_presence_filter
 from .floor_policy import FloorPolicy
 
 
@@ -77,26 +76,7 @@ class WorldModel:
         self.stats: dict = stats if stats is not None else {}
 
         self.floors = FloorPolicy(cfg, self.stats)
-        self.object_layer = ObjectLayer(
-            assoc_score_thresh=cfg.scene_graph.assoc_score_thresh,
-            assoc_depth_gate_m=cfg.scene_graph.assoc_depth_gate_m,
-            assoc_category_gate=cfg.scene_graph.assoc_category_gate,
-            min_obs_for_refine=cfg.scene_graph.min_obs_for_refine,
-            refine_every=cfg.scene_graph.refine_every,
-            refine_max_center_move_m=cfg.scene_graph.refine_max_center_move_m,
-            link_dist_m=cfg.scene_graph.link_dist_m,
-            link_max_frame_gap=cfg.scene_graph.link_max_frame_gap,
-            min_det_score=cfg.scene_graph.min_det_score,
-            min_det_bbox_px=cfg.scene_graph.min_det_bbox_px,
-            confirm_baseline_m=cfg.scene_graph.confirm_baseline_m,
-            repeat_view_discount=cfg.scene_graph.repeat_view_discount,
-            presence_filter=build_presence_filter(cfg),
-            target_bypasses_gates=cfg.scene_graph.target_bypasses_gates,
-            max_range_m=cfg.mapping.max_range_m,
-            fp_disable_radius_m=cfg.scene_graph.fp_disable_radius_m,
-            cloud_stride=cfg.scene_graph.cloud_stride,
-            cloud_cap=cfg.scene_graph.cloud_cap,
-        )
+        self.object_layer = build_object_layer(cfg)
         self.scene_graph = SceneGraph(
             container_top_h_m=tuple(cfg.scene_graph.container_top_h_m),
             container_min_area_m2=cfg.scene_graph.container_min_area_m2,

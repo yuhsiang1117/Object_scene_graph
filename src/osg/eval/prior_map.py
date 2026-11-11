@@ -516,6 +516,9 @@ def save_map_for_scene(cfg, agent, episode) -> None:
     agent = getattr(agent, "world", None) or agent
     if not hasattr(agent, "_floor_stack"):
         return
+    # Small same-label fragments folded into their object before the map is
+    # kept (scene_graph.ellipsoid.consolidate_max_obs; a no-op when 0).
+    agent.object_layer.consolidate()
     from ..graph.map_store import load_map, save_map
 
     authored = authored_episode_metadata(episode)

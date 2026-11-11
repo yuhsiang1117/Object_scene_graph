@@ -49,7 +49,7 @@ register_configs()
 # collision is real -- a "plate" mask covering 124506 px of wall and television.
 # Offsetting the injected ids restores what the original dualmap authoring did
 # with 50001+, without touching the layouts.
-SEMANTIC_ID_OFFSET = 50000
+from osg.eval.gt_semantic import SEMANTIC_ID_OFFSET  # noqa: E402  (re-exported for build_verifier_set)
 
 # Candidate names for `labels` mode: what else this thing might be called.
 PROBE_LABELS: Dict[str, List[str]] = {

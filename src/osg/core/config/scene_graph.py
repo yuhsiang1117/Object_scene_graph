@@ -76,6 +76,158 @@ class PresenceConfig:
 
 
 @dataclass
+class EllipsoidConfig:
+    """How an object's ellipsoid is built from depth (docs/history/AB_RESULTS.md,
+    the ellipsoid sections; objects/point_buffer.py, objects/merge.py).
+
+    Every default reproduces the layer as it was measured before this group
+    existed -- mask-moment initialisation, a 2D-only refine, projection-only
+    association, no buffer -- so no arm changes unless it asks to.
+    """
+
+    # M1 initialisation. "moments" = Ellipsoid.init_from_detection (2D ellipse
+    # moments + the mean of 50 sampled depths, third axis (a+b)/2, camera-
+    # aligned rotation). "points" = Ellipsoid.init_from_points: the mask's
+    # depth pixels cleaned (erosion, flying pixels, MAD) and fitted in a
+    # gravity-aligned frame.
+    init: str = "moments"
+    erode_px: int = 2
+    # A pixel whose depth jumps by more than this fraction of its own depth to
+    # a 4-neighbour sits on an occlusion boundary: mixed foreground/background.
+    flying_rel: float = 0.05
+    # Depths further than k robust sigmas (1.4826 * MAD) from the median.
+    mad_k: float = 3.0
+    # Extents from the [p, 100-p] percentiles, rescaled as for a uniform spread.
+    extent_pct: float = 5.0
+    # Added to every half-extent of a points fit. A buffer keeps one centroid
+    # per voxel, so its outermost points sit up to half a voxel inside the
+    # surface; with mask erosion that shrank 0-25 cm objects by ~22% (log
+    # ratio -0.25) and YCB targets by ~27% (S78).
+    extent_pad_m: float = 0.0
+    # The axis along the view, which one depth image cannot see the back of:
+    # "lateral" = the horizontal half-width (objects are about as deep as they
+    # are wide), "mean_ab" = (lateral + vertical)/2 as the moments init does,
+    # "thickness" = what the visible surface spans, at least `min_axis_m`.
+    depth_axis: str = "lateral"
+    # Where a points fit takes its horizontal axes from. "fit" = the line of
+    # sight (one view) or the points' principal axis (several); "manhattan" =
+    # the room's dominant wall direction from depth normals
+    # (point_buffer.ManhattanFrame), the nearest of its four; "world" = the
+    # world axes, which in HM3D happen to be the walls' (a reference, not a
+    # deployable choice). Refitting the dev buffers in the world axes lifted
+    # IoU 0.170 -> 0.267 (S78).
+    yaw_mode: str = "fit"
+    min_axis_m: float = 0.02
+    # Pixels per detection the cleaning keeps at most (evenly strided, no RNG).
+    max_pixels: int = 6000
+    # A bbox within this many px of an image edge is a truncated view: its
+    # extent is a lower bound, so it seeds a provisional track and may not
+    # enter the buffer.
+    border_px: int = 4
+    # Re-initialise a provisional track from its first full view.
+    reinit_truncated: bool = False
+
+    # M2 buffer: per-track voxel hash of cleaned points from good views only.
+    buffer: bool = False
+    voxel_m: float = 0.03
+    buffer_cap: int = 6000
+    view_range_m: Tuple[float, float] = (0.3, 4.5)
+    min_valid_frac: float = 0.5
+    # Let a truncated view (bbox at the image edge) add its points too. Its
+    # surface is real, only incomplete, and a buffer accumulates pieces; a
+    # large object touches the edge in nearly every view, so the rule kept 91
+    # dev tracks (median 1.8 m) out of the buffer entirely: IoU 0.036 (S78).
+    buffer_truncated: bool = False
+
+    # M3 refine. "2d" = WassersteinRefiner as measured. "joint" = 2D residuals
+    # plus point-to-surface distances from the buffer, weighted `depth_weight`
+    # px per metre and balanced by residual count. "points" = refit from the
+    # buffer directly, then nothing else.
+    refine_mode: str = "2d"
+    depth_weight: float = 200.0
+    depth_max_pts: int = 300
+    # Centre-move reject for refines that see depth; < 0 = refine_max_center_move_m.
+    depth_max_center_move_m: float = -1.0
+    # Buffer views a "points" refit needs; fewer falls back to the 2D refine,
+    # whose ellipsoids scored IoU 0.006-0.060 on the dev first episodes (S78).
+    refit_min_views: int = 2
+    # Accept a points refit whatever its centre move when the CURRENT
+    # ellipsoid holds less than this share of its own buffered points: it no
+    # longer describes its own data. 0 = off (the move limit always applies).
+    # The move limit kept 43 dev objects at their initial ellipsoid (IoU 0.045)
+    # while 2+ views of points said otherwise (S78).
+    refit_override_overlap: float = 0.0
+    # A points refit the move limit refuses still becomes the track's
+    # REPORTED geometry; association keeps projecting the last ellipsoid the
+    # limit accepted (ObjectTrack.assoc_ellipsoid), so what a detection joins
+    # is unchanged. Every relaxation of the limit cost purity, and that cost
+    # came through association (S78).
+    decouple_geometry: bool = False
+
+    # M4 association.
+    normalize_labels: bool = False
+    # An unmatched detection joins the same-label track holding at least this
+    # share of its cleaned points (inside the ellipsoid inflated by
+    # `assoc_3d_inflate`, or in the track's buffer voxels). 0 = off.
+    assoc_3d_overlap: float = 0.0
+    assoc_3d_inflate: float = 1.25
+    # What "overlap" means for 3D association and the finalise merge.
+    # "ellipsoid": inside the inflated ellipsoid OR within a voxel of the
+    # buffer. "voxel": within a voxel of the buffer only -- a wrong, oversized
+    # ellipsoid then cannot swallow its same-label neighbours (dev round 1:
+    # "ellipsoid" took purity 0.924 -> 0.905 at V4 and -> 0.525 at V5).
+    overlap_mode: str = "ellipsoid"
+    # Voxels of slack around the buffer when counting a point as overlapping.
+    overlap_dilate: int = 1
+    # Leave a detection unmatched when its points overlap two or more
+    # same-label tracks: adjacent same-label objects (a row of cabinets, the
+    # pillows on a bed) are where 3D association took the wrong one.
+    assoc_3d_unique: bool = False
+    # Same-frame, same-label detections whose points overlap this much are
+    # one object split in two masks: merged before association. 0 = off.
+    merge_split_overlap: float = 0.0
+    # Veto a projection match when less than this share of the detection's
+    # cleaned points lies in the track's ellipsoid (inflated by
+    # `assoc_3d_inflate`) or near its buffer. 0 = off. With room-aligned,
+    # visible-depth ellipsoids (S78 round 4) adjacent same-label chairs
+    # started trading observations through the 1%-bbox-overlap gate.
+    assoc_2d_min_overlap: float = 0.0
+    # Reassign instead of vetoing: a projection match keeping under this share
+    # of the detection's points goes to the unmatched same-label track holding
+    # at least `assoc_3d_overlap` of them, if there is one. 0 = off.
+    assoc_2d_reassign: float = 0.0
+
+    # M5 finalise: once the camera is `finalize_dist_m` away and the track has
+    # gone unobserved for `finalize_unseen_kf` keyframes, refit it from its
+    # buffer, merge same-label tracks that hold `merge_overlap` of each
+    # other's points, and compress the buffer to `summary_voxels`.
+    finalize: bool = False
+    finalize_dist_m: float = 3.0
+    finalize_unseen_kf: int = 5
+    merge_overlap: float = 0.3
+    # Require `merge_overlap` BOTH ways (min of the one-way overlaps) instead
+    # of either way: "either" lets a track whose buffer once took a
+    # neighbour's points absorb that neighbour, and the merged buffer the
+    # next one (dev round 2: purity 0.92 -> 0.68 without compression).
+    merge_symmetric: bool = False
+    summary_voxels: int = 256
+
+    # Save-time consolidation (ObjectLayer.consolidate, run by pass 1 just
+    # before the snapshot is written): a same-label track with at most
+    # `consolidate_max_obs` observations is folded into the nearest same-label
+    # track with `consolidate_ratio` times as many whose world AABB is within
+    # `consolidate_gap_m` of its own, unless the two were ever observed in the
+    # same keyframe (two masks at once are two objects). The kept track's
+    # ellipsoid is not refit. 0 = off.
+    # Measured on I6r1 (AB_RESULTS S79), not adopted: max_obs 2 / 5 cut the
+    # pass-1 snapshot's extra tracks per object by 8.5% / 14%, but pass 2's
+    # by only 1.3% / 2.9%, with IoU lower (p = 3e-6 at 5) and purity -0.6 pt.
+    consolidate_max_obs: int = 0
+    consolidate_gap_m: float = 0.2
+    consolidate_ratio: float = 3.0
+
+
+@dataclass
 class SceneGraphConfig:
     keyframe_trans_m: float = 0.25
     keyframe_rot_deg: float = 30.0
@@ -250,4 +402,5 @@ class SceneGraphConfig:
     # 0 keeps the flat-only behaviour every measured arm ran on.
     container_merge_sigma: float = 0.0
     presence: PresenceConfig = field(default_factory=PresenceConfig)
+    ellipsoid: EllipsoidConfig = field(default_factory=EllipsoidConfig)
 

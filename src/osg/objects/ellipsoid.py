@@ -8,6 +8,7 @@ C* = P Q* P^T which, normalized so its bottom-right entry is -1, reads
 """
 from __future__ import annotations
 
+import math
 from dataclasses import dataclass
 from typing import Optional, Tuple
 
@@ -89,6 +90,64 @@ class Ellipsoid:
         # Axes initially aligned with the camera frame (x, y image axes, z depth)
         return Ellipsoid(center=center, axes=np.array([a, b, c]), R=frame.T_wc[:3, :3].copy())
 
+    @staticmethod
+    def init_from_points(pts, frame, ecfg, yaw: Optional[float] = None) -> Optional["Ellipsoid"]:
+        """One view's cleaned depth points (objects/point_buffer.clean_points)
+        fitted in a gravity-aligned frame: up is world +y, forward is the
+        camera's view direction flattened onto the floor.
+
+        Lateral and vertical extents are what the surface spans (percentiles,
+        rescaled as for a uniform spread). The axis along the view cannot be
+        measured from one side, so its half-length follows
+        `ecfg.depth_axis`, and the centre sits that far BEHIND the nearest
+        visible surface -- the visible surface is the front of the object,
+        not its middle, which is where the moments initialisation put it.
+        """
+        if pts is None or len(pts.world) < 8:
+            return None
+        forward = frame.T_wc[:3, 2]
+        if yaw is not None:
+            forward = snap_yaw(forward, yaw)
+        R = gravity_frame(forward, frame.T_wc[:3, 0])
+        return _fit_in_frame(pts.world, R, ecfg, one_sided=True)
+
+    @staticmethod
+    def fit_points(world: np.ndarray, view_dirs: np.ndarray, ecfg,
+                   yaw: Optional[float] = None) -> Optional["Ellipsoid"]:
+        """Many views' buffered points: yaw from the horizontal principal axis,
+        extents per axis. When every view saw the object from about one side
+        (horizontal spread under 60 deg) the far side is completed exactly as
+        `init_from_points` completes it, along the mean view direction."""
+        world = np.asarray(world, float)
+        if len(world) < 8:
+            return None
+        horiz = world[:, [0, 2]] - world[:, [0, 2]].mean(axis=0)
+        cov = horiz.T @ horiz / max(len(horiz) - 1, 1)
+        vals, vecs = np.linalg.eigh(cov)
+        major = vecs[:, int(np.argmax(vals))]
+        dirs = np.asarray(view_dirs, float).reshape(-1, 2)
+        one_sided = True
+        mean_dir = np.array([major[0], 0.0, major[1]])
+        if len(dirs):
+            m = dirs.mean(axis=0)
+            spread = float(np.max(np.arccos(np.clip(
+                dirs @ (m / max(np.linalg.norm(m), 1e-9)), -1.0, 1.0))))
+            one_sided = 2.0 * spread < np.radians(60.0) and np.linalg.norm(m) > 1e-6
+            if np.linalg.norm(m) > 1e-6:
+                mean_dir = np.array([m[0], 0.0, m[1]])
+        if yaw is not None:
+            # Manhattan: the object's axes are the room's, not its points'
+            # principal axis or the line of sight (S78).
+            mean_dir = snap_yaw(mean_dir, yaw)
+            major = snap_yaw(np.array([major[0], 0.0, major[1]]), yaw)[[0, 2]]
+        if one_sided:
+            R = gravity_frame(mean_dir, None)
+        else:
+            a = np.array([major[0], 0.0, major[1]])
+            up = np.array([0.0, 1.0, 0.0])
+            R = np.stack([a, up, np.cross(a, up)], axis=1)
+        return _fit_in_frame(world, R, ecfg, one_sided=one_sided)
+
     def mean_depth_at(self, T_cw: np.ndarray) -> float:
         return float((T_cw[:3, :3] @ self.center + T_cw[:3, 3])[2])
 
@@ -134,3 +193,62 @@ class Ellipsoid:
         idx = np.array(plane, dtype=int)
         Q = self.shape_matrix()
         return self.center[idx].copy(), Q[np.ix_(idx, idx)].copy()
+
+
+def snap_yaw(direction: np.ndarray, yaw: float) -> np.ndarray:
+    """The horizontal unit vector at `yaw + k * 90 deg` (radians, measured as
+    atan2(z, x)) closest to `direction`'s horizontal part."""
+    d = np.asarray(direction, float)
+    a = math.atan2(float(d[2]), float(d[0])) if np.hypot(d[0], d[2]) > 1e-9 else float(yaw)
+    k = round((a - float(yaw)) / (math.pi / 2))
+    s = float(yaw) + k * math.pi / 2
+    return np.array([math.cos(s), 0.0, math.sin(s)])
+
+
+def gravity_frame(forward: np.ndarray, right_hint: Optional[np.ndarray]) -> np.ndarray:
+    """Columns (lateral, up, forward): up is world +y, forward is `forward`
+    with its vertical part removed. Looking straight down, `right_hint`
+    (the camera's x axis) fixes the yaw instead."""
+    up = np.array([0.0, 1.0, 0.0])
+    f = np.asarray(forward, float).copy()
+    f[1] = 0.0
+    if np.linalg.norm(f) < 1e-6 and right_hint is not None:
+        r = np.asarray(right_hint, float).copy()
+        r[1] = 0.0
+        f = np.cross(r, up)
+    if np.linalg.norm(f) < 1e-6:
+        f = np.array([0.0, 0.0, 1.0])
+    f /= np.linalg.norm(f)
+    lat = np.cross(up, f)
+    return np.stack([lat, up, f], axis=1)
+
+
+def _fit_in_frame(world: np.ndarray, R: np.ndarray, ecfg, one_sided: bool) -> Optional[Ellipsoid]:
+    mean = world.mean(axis=0)
+    q = (world - mean) @ R
+    p = float(ecfg.extent_pct)
+    lo = np.percentile(q, p, axis=0)
+    hi = np.percentile(q, 100.0 - p, axis=0)
+    scale = max(1.0 - 2.0 * p / 100.0, 1e-3)
+    pad = float(getattr(ecfg, "extent_pad_m", 0.0))
+    half = (hi - lo) / 2.0 / scale + pad
+    centre = (hi + lo) / 2.0
+    min_ax = float(ecfg.min_axis_m)
+    if one_sided:
+        vis = max(float(half[2]), min_ax)
+        rule = str(ecfg.depth_axis)
+        if rule == "lateral":
+            depth_half = max(float(half[0]), vis)
+        elif rule == "mean_ab":
+            depth_half = max(0.5 * float(half[0] + half[1]), vis)
+        elif rule == "thickness":
+            depth_half = vis
+        else:
+            raise ValueError(f"scene_graph.ellipsoid.depth_axis: unknown {rule!r}")
+        near = float(lo[2]) - pad
+        centre[2] = near + depth_half
+        half[2] = depth_half
+    half = np.clip(half, max(MIN_AXIS_M, min_ax), MAX_AXIS_M)
+    if not np.all(np.isfinite(half)) or not np.all(np.isfinite(centre)):
+        return None
+    return Ellipsoid(center=mean + R @ centre, axes=half, R=R.copy())

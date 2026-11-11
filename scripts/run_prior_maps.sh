@@ -98,6 +98,9 @@ WM_IMGSZ=${WM_IMGSZ:-1280}
 MF5="00800-TEEsavR23oF 00821-eF36g7L6Z9M 00862-LT9Jq6dN3Ea 00873-bxsVRursffK 00878-XB4GS9ShBRE 00808-y9hTuugGdiq"
 DUALMAP="00829-QaLdnwvtxbs 00848-ziup5kvtCCR 00880-Nfvxx8J5NCo"
 COLLECTOR_LAYOUTS=${COLLECTOR_LAYOUTS:-outputs/collector_layouts}
+# Further run_eval.py overrides, space-separated, appended to every scene's
+# command -- e.g. EXTRA="eval.record_object_frames_dir=/abs/objrec" to record
+# what the world model's object layer is fed (eval/object_recorder.py).
 
 SCENES=("$@")
 [ ${#SCENES[@]} -eq 0 ] && SCENES=($MF5 $DUALMAP)
@@ -155,7 +158,7 @@ PYCOUNT
     "ycb.map_tour_views=$TOUR_VIEWS" \
     ycb.obstacle_map_union=true \
     eval.behaviour_log=true eval.save_viz=false \
-    "${extra[@]}" "output_dir=$OUT/$scene" > "$OUT/$scene.log" 2>&1
+    "${extra[@]}" ${EXTRA:-} "output_dir=$OUT/$scene" > "$OUT/$scene.log" 2>&1
   status=$?
   snaps=$(compgen -G "$OBS/${scene}__*.json" > /dev/null && ls "$OBS/${scene}__"*.json | wc -l || echo 0)
   graph=$([ -f "$OSG/$scene.json" ] && echo yes || echo NO)

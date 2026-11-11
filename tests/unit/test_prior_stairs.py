@@ -161,3 +161,18 @@ def test_steps_on_floor_is_what_counts_not_the_episode_step():
                                min_interval_steps=0, no_switch_after_frac=0.7)
     assert not policy.may_switch_to_known_stairs(300, steps_on_floor=5)
     assert policy.may_switch_to_known_stairs(300, steps_on_floor=60)
+
+
+def test_pursuing_a_storey_known_only_from_the_prior_map_does_not_raise():
+    """`known_levels()` holds storeys the online estimator never stood on (the
+    stack's layers, seeded from the prior obstacle map). `_remembered_stair`
+    may name one; `_pursue_remembered` read its height from the estimator and
+    raised KeyError (mfv2 00800 seed 42, 2026-11-06)."""
+    policy = _policy(True, [StairEdge(GROUND, 2, entry_xy=np.array([5.0, 5.0]), step=10)])
+    policy.stack._layers = {2: SimpleNamespace(floor_y=5.8)}
+    assert 2 not in policy.estimator._levels
+    remembered = _remembered(policy, target_floor=2)
+    assert remembered is not None and remembered[1] == 2
+    frame = SimpleNamespace(camera_position=np.array([0.0, 1.2, 0.0]))
+    goal = policy._pursue_remembered(frame, 0, remembered, 0.0, None, True, [])
+    assert goal is not None and goal.target_y == pytest.approx(5.8)

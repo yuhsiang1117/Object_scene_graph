@@ -144,3 +144,50 @@ class WassersteinRefiner:
             if float(np.linalg.norm(refined.center - track.ellipsoid.center)) > self.max_center_move_m:
                 return None
         return refined
+
+
+def surface_residuals(params: np.ndarray, pts: np.ndarray) -> np.ndarray:
+    """Per buffered point, its radial distance to the ellipsoid's surface:
+    (||diag(1/axes) R^T (p - t)|| - 1) times the mean semi-axis, i.e. roughly
+    metres. Visible-surface points constrain the near side; the 2D residuals
+    still constrain the silhouette, which is what bounds the far side."""
+    e = _ellipsoid_from(params)
+    q = ((pts - e.center) @ e.R) / e.axes
+    return (np.linalg.norm(q, axis=1) - 1.0) * float(np.mean(e.axes))
+
+
+def refine_with_points(
+    track: ObjectTrack, points: np.ndarray, depth_weight: float,
+    max_center_move_m: float, max_nfev: int = 50, max_obs: int = 10,
+) -> Optional[Ellipsoid]:
+    """`WassersteinRefiner.refine` with the buffer's points in the objective.
+
+    `depth_weight` is pixels per metre: 200 makes 1 cm of surface error cost
+    what 2 px of silhouette error costs. The point term is rescaled by
+    sqrt(n_2d / n_3d) so that 300 points do not outvote ten views by sheer
+    number. Same rejection rules as the 2D refine."""
+    obs = track.observations[-max_obs:]
+    pts = np.asarray(points, float)
+    if len(obs) < 1 or len(pts) < 8:
+        return None
+    x0 = _params_from(track.ellipsoid)
+    consts = view_constants(obs)
+    balance = float(depth_weight) * np.sqrt(5.0 * len(obs) / float(len(pts)))
+
+    def fn(x):
+        return np.concatenate([residuals(x, obs, consts), balance * surface_residuals(x, pts)])
+
+    r0 = fn(x0)
+    try:
+        sol = least_squares(fn, x0, method="trf", max_nfev=max_nfev, x_scale="jac")
+    except Exception:
+        return None
+    if not np.isfinite(sol.x).all() or sol.cost > 0.5 * float(r0 @ r0) + 1e3:
+        return None
+    refined = _ellipsoid_from(sol.x)
+    if not np.isfinite(refined.center).all():
+        return None
+    if max_center_move_m > 0.0 and float(
+            np.linalg.norm(refined.center - track.ellipsoid.center)) > max_center_move_m:
+        return None
+    return refined
