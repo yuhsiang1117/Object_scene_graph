@@ -112,6 +112,34 @@ poses as `traj.txt`; `dualmap.yaml` carries the release's intrinsics and millime
 Queried as its own `visualize_cfslam_results.py` does (`query_map.py`). Environment: Python 3.10,
 torch 2.0.1 + CUDA 11.8, Grounded-SAM at a4d76a2, as its README.
 
+### On a recorded pass 1 (map quality, AB_RESULTS S80)
+
+The same ConceptGraphs scored against the object layer's instance ground truth on the frames a
+pass 1 recorded (`eval.record_object_frames_dir`; labelled by `scripts/label_object_frames.py`):
+
+```bash
+# nav env: re-render RGB + semantic at every 5th keyframe, write a Replica scene per scene
+python scripts/baselines/conceptgraphs/export_recording.py +experiment=mf5_mapping_both \
+    +export.rec=outputs/objrec_v2 +export.out=outputs/baselines/cg_rec +export.stride=5
+# front end A: the recording's own detections (then the clip pass below with --detections gsa_detections_osg)
+python scripts/baselines/conceptgraphs/osg_detections.py --rec outputs/objrec_v2 \
+    --cg outputs/baselines/cg_rec --scene <scene>
+# front end B, ConceptGraphs env, from its conceptgraph/ dir, GSA_PATH set, PYTORCH_CUDA_ALLOC_CONF unset:
+python /workspace/scripts/baselines/conceptgraphs/run_detections.py --pass masks \
+    --dataset_root <root> --dataset_config <root>/dataconfig.yaml --scene_id <scene> --class_set none --stride 1
+python /workspace/scripts/baselines/conceptgraphs/run_detections.py --pass clip --dataset_root <root> --scene_id <scene>
+# map (one scene at a time; RES keeps memory in bounds on long scenes), then score
+bash scripts/baselines/conceptgraphs/map_recording.sh outputs/baselines/cg_rec osg <scenes...>
+RES=640x480 bash scripts/baselines/conceptgraphs/map_recording.sh outputs/baselines/cg_rec none <scenes...>
+python scripts/baselines/conceptgraphs/score_recording.py --rec outputs/objrec_v2 --cg outputs/baselines/cg_rec \
+    --ours I6r1_s5=outputs/objreplay/I6r1_s5 --cg-map 'CGosg=pcd_saves/full_pcd_osg_*_post.pkl.gz' \
+    --cg-map 'CG480=pcd_saves/full_pcd_none_*_480p_post.pkl.gz'
+```
+
+`run_detections.py` splits `generate_gsa_results.py` into a SAM pass and a CLIP pass so that one
+large model is on a shared GPU at a time. Its outputs are the script's own. The object-layer arm
+is `scripts/replay_object_layer.py` with `+replay.stride=5`, so both see the same frames.
+
 ## DualMap rerun
 
 `scripts/run_dualmap_released_native.py` unchanged, seeds 12/13/14, in `dualmap-venv` (below).

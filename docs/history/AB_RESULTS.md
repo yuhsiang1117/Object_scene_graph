@@ -4942,6 +4942,111 @@ without the fix are identical.
 The flag stays default-off with a unit test. Every arm is bit-identical with
 it off.
 
+### S80 — ConceptGraphs' mapper on the same recorded pass 1
+
+**Question.** Is the object layer's map competitive with a published 3D
+open-vocabulary mapper? Numbers reported on ScanNet / Replica by other papers
+are not comparable to ours: different data, ground truth and metrics. So
+ConceptGraphs (`93277a0`) is run on the frames our pass 1 recorded and scored
+with our metric.
+
+**Method** (`scripts/baselines/conceptgraphs/`; `scripts/baselines/README.md`
+has the commands).
+- Input: the recording `outputs/objrec_v2`, 37 pass-1 episodes over 5
+  scenes, each scene as one chain.
+- Frames: every 5th keyframe, which is ConceptGraphs' own stride. That is 6888
+  frames at 1280×960.
+- `export_recording.py` re-renders RGB and the semantic image at each pose.
+  The depth check passes on every frame. It writes the recorded depth (clamp
+  pixels set to 0) and the poses as a Replica scene.
+- Two front ends:
+  - **CGosg:** our recorded detections (label, score, box, full-res mask),
+    with CLIP features from ConceptGraphs' own code. Mapped with the
+    ConceptGraphs-Detect parameters from its README. Its 2D filters remove
+    nothing on these detections.
+  - **CG480:** full ConceptGraphs, class-agnostic (SAM segment-all + CLIP
+    ViT-H-14, `run_detections.py`), mapped with the README's class-agnostic
+    parameters at `image_width=640 image_height=480`.
+- Why 640×480: at 1280×960 the mapper keeps every merged detection's
+  full-resolution mask, so memory grows with frame count. On 00808 it grew
+  about 3.5 GB per 100 frames, then jumped to 104 GB near the end and was
+  OOM-killed. That happened with the scene running alone; scenes run in
+  parallel were killed too. Peak at 640×480: 17–33 GB per scene.
+- Resolution control: 00800, 00873 and 00878 also mapped at 1280×960. Over
+  their 646 instances, paired: IoU 0.541 vs 0.537 (p = 0.63); centre error
+  differs by under 0.5 cm (p = 0.05); extra/inst 0.576 vs 0.546. Resolution
+  does not explain the result.
+- Ours: **I6r1_s5**, the I6r1 replay of the same chains with `+replay.stride=5`
+  (the same frames ConceptGraphs gets). I6r1 at full keyframe rate is also
+  shown.
+- Scoring: `score_recording.py`, `analyze_ellipsoids.score_map` unchanged.
+  - Same 1348 instances: those our detector labelled at least twice.
+  - A ConceptGraphs object is a track whose extent is the AABB of its point
+    cloud. Each of its detections is labelled from the semantic image under
+    its mask, as ours are.
+  - The script reproduces analyze_ellipsoids exactly for I6r1.
+  - `_pre` is ConceptGraphs' map before its post-processing. The final map
+    drops objects with fewer than 3 detections, then denoises and merges.
+
+| 1348 instances | mapped | extra/inst | centre med (m) | IoU med | IoU≥0.5 | purity | objects |
+|---|---|---|---|---|---|---|---|
+| I6r1 (all keyframes) | 89.9% | 2.527 | 0.257 | 0.292 | 27.4% | 0.931 | 5515 |
+| **I6r1_s5** | 78.4% | 1.367 | 0.255 | 0.294 | 27.5% | **0.939** | 3341 |
+| CGosg | 61.1% | 0.171 | 0.114 | 0.458 | 45.2% | 0.892 | 1220 |
+| CGosg_pre | 85.9% | 1.033 | 0.116 | 0.418 | 39.7% | 0.944 | 3133 |
+| **CG480** | 73.1% | 0.737 | **0.081** | **0.520** | **51.5%** | 0.886 | 3353 |
+| CG480_pre | 85.5% | 1.798 | 0.081 | 0.479 | 48.0% | 0.890 | 6787 |
+
+| YCB, 33 instances | mapped | IoU med | centre med (m) |
+|---|---|---|---|
+| I6r1_s5 | **81.8%** | 0.483 | 0.026 |
+| CGosg / CGosg_pre | 30.3% / 87.9% | 0.347 / 0.365 | 0.037 / 0.028 |
+| CG480 / CG480_pre | 54.5% / 84.8% | **0.519** / 0.431 | **0.009** / 0.014 |
+
+Paired against I6r1_s5, on instances both mapped:
+- CGosg_pre: n = 1026; centre 0.255 → 0.118 (p = 1e-42); IoU 0.295 → 0.430
+  (p = 2e-32).
+- CG480: n = 846; centre 0.285 → 0.082 (p = 2e-61); IoU 0.292 → 0.541
+  (p = 6e-56).
+
+Every scene goes the same way.
+
+Representation control: ours scored as the AABB of each track's summarised
+buffer points, against CGosg_pre. Centre 0.176 vs 0.118 (p = 8e-27); IoU
+0.301 vs 0.430 (p = 2e-34). The summary keeps at most 256 voxels, about
+12 cm each, so this bound is coarse, but it does not close the gap.
+
+**Reading.**
+- **Geometry.** With identical detections, ConceptGraphs' mapper places
+  objects about 2× closer and with clearly higher IoU. With its own front end,
+  its geometry is better still. Our ellipsoid layer, fed the same input, is
+  not competitive on centre or IoU.
+- **Duplicates.** ConceptGraphs' post-processing roughly halves our
+  extra/inst. The cost: 5–17 pt fewer instances mapped, mostly objects seen
+  fewer than 3 times. Before post-processing, its duplicate rate is similar
+  to or above ours.
+- **Purity: ours is better** (0.939 vs 0.886–0.892). ConceptGraphs fuses
+  distinct objects more often. Part of the CG480 gap is SAM's part-level
+  masks, not the mapper.
+- **YCB targets:** ours keeps the most (81.8% vs 54.5% in CG480's final map).
+  CG480 places the ones it keeps more accurately.
+- **Speed:** measured with the GPU shared with other containers, each step
+  run alone.
+  - CG480 is about 5.7 s per frame: SAM 1.75, CLIP 1.68, mapping 2.26
+    (0.76–4.78 by scene).
+  - The object layer is about 0.05 s per keyframe at five times the frame
+    rate, detector excluded.
+  - ConceptGraphs is offline at this scale. Ours runs in the control loop.
+- **Bias of the instance set:** it comes from our detector (labelled at least
+  twice). It favours our coverage, and it does not count what CG480's
+  class-agnostic masks map beyond our vocabulary.
+
+**Outcome.** We cannot claim map quality competitive with ConceptGraphs. What
+holds up is online operation, purity, and keeping rarely-seen small targets.
+Geometry and duplicate rate are where it falls behind. A next step would be
+to try ConceptGraphs-style point-cloud fusion and periodic merging as the
+geometry behind our tracks.
+
 ## Planned — not yet run
 
 ### S29 — re-test the approach re-check with BLIP-2 ITM
