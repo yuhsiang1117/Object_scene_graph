@@ -14,7 +14,7 @@ from ..mapping.costmap import HEIGHT_AXIS, PLANE
 from .association import DataAssociator, Observation, ObjectTrack
 from .ellipsoid import Ellipsoid
 from .feature_memory import cosine, merge_running_mean
-from .linking import object_center, relink
+from .linking import object_center, relink, reported_geometry
 from .presence import PresenceFilter
 from .optimization import WassersteinRefiner
 
@@ -259,6 +259,8 @@ class ObjectLayer:
             matches = self._reassign_2d(matches, dets, pts_of, same_floor, is_prop)
         if self._geo and float(self.ecfg.assoc_3d_overlap) > 0.0:
             matches = self._associate_3d(matches, dets, pts_of, same_floor, is_prop)
+        if self._geo and float(self.ecfg.xlabel_overlap) > 0.0:
+            matches = self._associate_xlabel(matches, dets, pts_of, same_floor, is_prop)
         K = frame.intrinsics.K()
         T_cw = frame.T_cw
         cam_xy = frame.camera_position[list(PLANE)]
@@ -306,7 +308,7 @@ class ObjectLayer:
                 if not self._marginal(det, frame):
                     track.out_of_range = False
                 if self._geo and self.ecfg.reinit_truncated and track.geom_provisional \
-                        and not self._truncated(det, frame):
+                        and not self.ecfg.fuse and not self._truncated(det, frame):
                     ell = (Ellipsoid.init_from_points(pts_of.get(det_idx), frame, self.ecfg, yaw=self._yaw_ref())
                            if self.ecfg.init == "points" else None)
                     if ell is None:
@@ -319,7 +321,7 @@ class ObjectLayer:
             track.observations.append(obs)
             if self._geo:
                 track.last_kf = self._kf_index
-                self._buffer_view(track, det, frame, pts_of.get(det_idx))
+                relink_needed |= self._buffer_view(track, det, frame, pts_of.get(det_idx))
             if det.clip_ft is not None:
                 track.clip_ft, track.clip_n = merge_running_mean(
                     track.clip_ft, track.clip_n, det.clip_ft
@@ -352,6 +354,9 @@ class ObjectLayer:
             due = (
                 track.n_obs >= self.min_obs_for_refine
                 and track.n_obs - track.refined_at_obs >= self.refine_every
+                # `fuse`: the buffer is the geometry; the refine only runs for a
+                # track whose views never gave it depth points.
+                and not (self._geo and self.ecfg.fuse and track.buffer is not None and len(track.buffer) >= 8)
             )
             if due:
                 refined = (self._refine_geo(track) if self._geo and self.ecfg.refine_mode != "2d"
@@ -363,6 +368,9 @@ class ObjectLayer:
 
         if self._geo and self.ecfg.finalize:
             relink_needed |= self._finalize_far(frame, floor_key)
+        if self._geo and int(self.ecfg.xlabel_merge_every) > 0 \
+                and self._kf_index % int(self.ecfg.xlabel_merge_every) == 0:
+            relink_needed |= self._xlabel_merge()
 
         if relink_needed:
             # Proposal-only tracks are never linked: a link would fold a
@@ -832,11 +840,49 @@ class ObjectLayer:
         self.funnel["assoc_3d"] = self.funnel.get("assoc_3d", 0) + len(found)
         return [(i, found.get(i, tid) if tid is None else tid) for i, tid in matches]
 
-    def _buffer_view(self, track, det, frame, pts) -> None:
+    def _associate_xlabel(self, matches, dets, pts_of, same_floor, is_prop):
+        from .merge import associate_xlabel
+
+        taken = {tid for _i, tid in matches if tid is not None}
+        unmatched = [(i, dets[i].label, None if pts_of.get(i) is None else pts_of[i].world)
+                     for i, tid in matches if tid is None and not is_prop(dets[i])]
+        found = associate_xlabel(unmatched, same_floor, taken, float(self.ecfg.xlabel_overlap),
+                                 float(self.ecfg.xlabel_size_ratio), bool(self.ecfg.normalize_labels),
+                                 int(self.ecfg.overlap_dilate))
+        self.funnel["assoc_xlabel"] = self.funnel.get("assoc_xlabel", 0) + len(found)
+        return [(i, found.get(i, tid) if tid is None else tid) for i, tid in matches]
+
+    def _xlabel_merge(self) -> bool:
+        """Fold same-floor track pairs of any label that hold each other's
+        points (merge.xlabel_merge_pairs). Returns whether any were folded."""
+        from .merge import merge_into, xlabel_merge_pairs
+
+        pairs = xlabel_merge_pairs(list(self._tracks.values()), float(self.ecfg.xlabel_merge_small),
+                                   float(self.ecfg.xlabel_merge_big), float(self.ecfg.xlabel_size_ratio),
+                                   int(self.ecfg.overlap_dilate))
+        for drop_id, keep_id in pairs:
+            keep, drop = self._tracks[keep_id], self._tracks.pop(drop_id)
+            merge_into(keep, drop)
+            self._merged_into[drop_id] = keep_id
+            if self.ecfg.fuse:
+                self._fuse_refit(keep, force=True)
+            self._merged_report(keep)
+        if pairs:
+            self.funnel["xlabel_merged"] = self.funnel.get("xlabel_merged", 0) + len(pairs)
+        return bool(pairs)
+
+    def _buffer_view(self, track, det, frame, pts) -> bool:
+        """Add this view to the track's buffer. Returns whether the track's
+        geometry changed (only a fused buffer refits here)."""
         from .point_buffer import VoxelBuffer, view_ok
 
+        if self.ecfg.buffer and self.ecfg.fuse:
+            return self._add_fused(track, det, frame, "buffer") and self._fuse_refit(track)
+        if self.ecfg.fuse_report and not self.ecfg.fuse \
+                and self._add_fused(track, det, frame, "fuse_buffer"):
+            self._report_refit(track)   # the ellipsoid is untouched: nothing to relink
         if not self.ecfg.buffer or not view_ok(det, frame, pts, self.ecfg):
-            return
+            return False
         if track.buffer is None:
             track.buffer = VoxelBuffer(self.ecfg.voxel_m, self.ecfg.buffer_cap)
             track.buffer.summary_voxels = int(self.ecfg.summary_voxels)
@@ -847,6 +893,92 @@ class ObjectLayer:
         if n > 1e-6:
             dirs = getattr(track.buffer, "view_dirs", [])
             track.buffer.view_dirs = (dirs + [d / n])[-64:]
+        return False
+
+    def _add_fused(self, track, det, frame, attr: str) -> bool:
+        """This view's fused points (point_buffer.fused_points) into the
+        track's `attr` buffer. Returns whether any were added."""
+        from .point_buffer import VoxelBuffer, fused_points
+
+        fp = fused_points(det, frame, self.ecfg)
+        if fp is None:
+            return False
+        buf = getattr(track, attr)
+        if buf is None or buf.voxel_m != float(self.ecfg.fuse_voxel_m):
+            # A snapshot's summary is coarser than a live buffer: re-key its
+            # centroids into a fine grid so this session's points stay fine
+            # (adding them at the summary's size kept every later episode of
+            # a pass-1 chain at 5-20 cm voxels).
+            fine = VoxelBuffer(self.ecfg.fuse_voxel_m, self.ecfg.fuse_cap)
+            if buf is not None:
+                fine.merge(buf)
+            fine.summary_voxels = int(self.ecfg.fuse_summary_voxels)
+            setattr(track, attr, fine)
+        getattr(track, attr).add(fp)
+        return True
+
+    def _fused_box(self, buf, anchor: Optional[np.ndarray] = None) -> Optional[Ellipsoid]:
+        """World AABB of one DBSCAN cluster of the buffer, padded, R = I: the
+        largest, or with `anchor` the one nearest it (None if none forms).
+        DBSCAN's radius never drops below 1.5 voxels, so a buffer re-keyed
+        coarser by a snapshot's summary still connects."""
+        from .point_buffer import anchored_cluster, largest_cluster
+
+        eps = max(float(self.ecfg.fuse_eps_m), 1.5 * float(buf.voxel_m))
+        if anchor is None:
+            pts = largest_cluster(buf.points(), eps, int(self.ecfg.fuse_min_pts))
+        else:
+            pts = anchored_cluster(buf.points(), eps, int(self.ecfg.fuse_min_pts), anchor)
+            if pts is None:
+                return None
+        lo, hi = pts.min(axis=0), pts.max(axis=0)
+        return Ellipsoid(center=0.5 * (lo + hi),
+                         axes=np.maximum(0.5 * (hi - lo) + float(self.ecfg.fuse_pad_m),
+                                         float(self.ecfg.min_axis_m)),
+                         R=np.eye(3))
+
+    def _refit_due(self, track, buf, force: bool) -> bool:
+        """At least 8 voxels, and grown by `fuse_refit_growth` since the last
+        fit (the clustering is the cost)."""
+        n = len(buf) if buf is not None else 0
+        if n < 8:
+            return False
+        last = int(getattr(track, "fuse_fit_n", 0))
+        if not force and last > 0 and n < last * (1.0 + float(self.ecfg.fuse_refit_growth)):
+            return False
+        track.fuse_fit_n = n
+        return True
+
+    def _report_refit(self, track, force: bool = False) -> None:
+        """`fuse_report`: refit the reported box from the fused buffer, the
+        cluster nearest the ellipsoid association keeps."""
+        if self._refit_due(track, track.fuse_buffer, force):
+            box = self._fused_box(track.fuse_buffer, anchor=track.ellipsoid.center)
+            if box is not None:     # no cluster yet: keep reporting what it had
+                track.extent = box
+                self.funnel["report_refits"] = self.funnel.get("report_refits", 0) + 1
+
+    def _merged_report(self, keep) -> None:
+        """After `merge_into` folded another track's fused buffer into
+        `keep`'s, refit the reported box from the union."""
+        if self.ecfg.fuse_report and not self.ecfg.fuse and keep.fuse_buffer is not None:
+            self._report_refit(keep, force=True)
+
+    def extent_of(self, track: ObjectTrack) -> Ellipsoid:
+        """The geometry the map reports for this track: the fused box under
+        `fuse_report` once it has one, else the ellipsoid itself."""
+        return reported_geometry(track)
+
+    def _fuse_refit(self, track, force: bool = False) -> bool:
+        """`fuse`: the track's geometry is the fused box (`_fused_box`),
+        refit when due (`_refit_due`)."""
+        if not self._refit_due(track, track.buffer, force):
+            return False
+        track.ellipsoid = self._fused_box(track.buffer)
+        track.assoc_ellipsoid = None
+        track.geom_provisional = False
+        self.funnel["fuse_refits"] = self.funnel.get("fuse_refits", 0) + 1
+        return True
 
     def _yaw_ref(self) -> Optional[float]:
         """The yaw a points fit snaps its axes to, or None to keep its own."""
@@ -944,6 +1076,7 @@ class ObjectLayer:
                 del self._tracks[drop.id]
                 self._merged_into[drop.id] = keep.id
                 self.funnel["merged"] = self.funnel.get("merged", 0) + 1
+                self._merged_report(keep)
                 if keep.buffer is not None and keep.buffer.n_views >= 1:
                     refit = Ellipsoid.fit_points(keep.buffer.points(),
                                                  np.asarray(getattr(keep.buffer, "view_dirs", [])), self.ecfg,
@@ -975,6 +1108,7 @@ class ObjectLayer:
             keep, drop = self._tracks[keep_id], self._tracks.pop(drop_id)
             merge_into(keep, drop)
             self._merged_into[drop_id] = keep_id
+            self._merged_report(keep)
         if pairs:
             self.funnel["consolidated"] = self.funnel.get("consolidated", 0) + len(pairs)
             relink([t for t in self._tracks.values() if not t.proposal_only],

@@ -150,6 +150,13 @@ def merge_into(keep: ObjectTrack, drop: ObjectTrack) -> None:
             keep.buffer = drop.buffer
         else:
             keep.buffer.merge(drop.buffer)
+    if getattr(drop, "fuse_buffer", None) is not None:
+        # `fuse_report`: the caller refits `extent` from the union.
+        if keep.fuse_buffer is None:
+            keep.fuse_buffer = drop.fuse_buffer
+        else:
+            keep.fuse_buffer.merge(drop.fuse_buffer)
+        keep.fuse_fit_n = 0
     if drop.points_w is not None:
         keep.points_w = (drop.points_w if keep.points_w is None
                          else np.vstack([keep.points_w, drop.points_w])[-max(len(keep.points_w), len(drop.points_w)):])
@@ -214,4 +221,108 @@ def consolidate_minor(
             if best is not None:
                 out.append((m, best[1]))
                 frames[best[1]] |= frames[m]
+    return out
+
+
+def _extent(lo: np.ndarray, hi: np.ndarray) -> float:
+    return float(np.max(hi - lo))
+
+
+def associate_xlabel(
+    unmatched: Sequence[Tuple[int, str, np.ndarray]],
+    tracks: Sequence[ObjectTrack],
+    taken: set,
+    min_overlap: float,
+    size_ratio: float,
+    normalize: bool,
+    dilate: int = 1,
+) -> Dict[int, int]:
+    """`scene_graph.ellipsoid.xlabel_overlap`: {detection index: track id} for
+    detections no same-label track took, joined to an OTHER-label track whose
+    buffer voxels hold at least `min_overlap` of the detection's points and
+    whose world extent is comparable (smaller / larger >= `size_ratio`).
+    Greedy by overlap, one detection per track per frame."""
+    pairs = []
+    boxes = {t.id: world_aabb(t) for t in tracks
+             if not t.proposal_only and getattr(t, "buffer", None) is not None and len(t.buffer)}
+    for i, label, pts in unmatched:
+        if pts is None or not len(pts):
+            continue
+        plo, phi = pts.min(axis=0), pts.max(axis=0)
+        pe = _extent(plo, phi)
+        for t in tracks:
+            box = boxes.get(t.id)
+            if box is None or t.id in taken or same_label(t.label, label, normalize):
+                continue
+            lo, hi = box
+            if np.any(plo > hi + 0.05) or np.any(lo > phi + 0.05):
+                continue
+            te = _extent(lo, hi)
+            if min(pe, te) < size_ratio * max(pe, te):
+                continue
+            ov = point_overlap(t, pts, 1.0, "voxel", dilate)
+            if ov >= min_overlap:
+                pairs.append((ov, i, t.id))
+    pairs.sort(key=lambda p: (-p[0], p[1], p[2]))
+    out: Dict[int, int] = {}
+    used = set(taken)
+    for _ov, i, tid in pairs:
+        if i in out or tid in used:
+            continue
+        out[i] = tid
+        used.add(tid)
+    return out
+
+
+def xlabel_merge_pairs(
+    tracks: Sequence[ObjectTrack],
+    min_small: float,
+    min_big: float,
+    size_ratio: float,
+    dilate: int = 1,
+) -> List[Tuple[int, int]]:
+    """`scene_graph.ellipsoid.xlabel_merge_every`: (drop id, keep id) pairs of
+    same-floor tracks, any label, whose buffers overlap at least `min_small`
+    of the smaller's points and `min_big` of the larger's, with comparable
+    world extents, never observed in the same keyframe. Greedy by the
+    smaller's overlap; a track takes part in at most one fold per call."""
+    live = [t for t in tracks if not t.blacklisted and not t.proposal_only
+            and getattr(t, "buffer", None) is not None and len(t.buffer) >= 8]
+    if len(live) < 2:
+        return []
+    lo = np.array([world_aabb(t)[0] for t in live])
+    hi = np.array([world_aabb(t)[1] for t in live])
+    ext = (hi - lo).max(axis=1)
+    frames = {}
+    cands = []
+    for a in range(len(live)):
+        near = np.all(lo[a] <= hi + 0.05, axis=1) & np.all(lo <= hi[a] + 0.05, axis=1)
+        near[: a + 1] = False
+        for b in np.nonzero(near)[0]:
+            ta, tb = live[a], live[int(b)]
+            if int(ta.floor_key) != int(tb.floor_key):
+                continue
+            if min(ext[a], ext[b]) < size_ratio * max(ext[a], ext[b]):
+                continue
+            for t in (ta, tb):
+                if t.id not in frames:
+                    frames[t.id] = {int(o.frame_id) for o in t.observations}
+            if frames[ta.id] & frames[tb.id]:
+                continue
+            small, big = (ta, tb) if len(ta.buffer) <= len(tb.buffer) else (tb, ta)
+            f_small = float(big.buffer.contains(_probe(small.buffer.points()), dilate=dilate).mean())
+            if f_small < min_small:
+                continue
+            f_big = float(small.buffer.contains(_probe(big.buffer.points()), dilate=dilate).mean())
+            if f_big < min_big:
+                continue
+            cands.append((f_small, ta, tb))
+    cands.sort(key=lambda c: (-c[0], c[1].id, c[2].id))
+    used, out = set(), []
+    for _f, ta, tb in cands:
+        if ta.id in used or tb.id in used:
+            continue
+        keep, drop = choose_keeper(ta, tb)
+        out.append((drop.id, keep.id))
+        used.update((ta.id, tb.id))
     return out

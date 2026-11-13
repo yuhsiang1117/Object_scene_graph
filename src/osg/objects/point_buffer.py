@@ -97,6 +97,79 @@ def clean_points(det, frame, ecfg) -> Optional[CleanPoints]:
                        median_depth=float(np.median(z)))
 
 
+def largest_cluster(pts: np.ndarray, eps: float, min_pts: int) -> np.ndarray:
+    """The largest DBSCAN cluster of `pts`; all of them when none forms (too
+    few points for a core). ConceptGraphs' denoise step."""
+    from sklearn.cluster import DBSCAN
+
+    pts = np.asarray(pts, float)
+    if len(pts) < max(int(min_pts), 1):
+        return pts
+    lab = DBSCAN(eps=float(eps), min_samples=int(min_pts)).fit_predict(pts)
+    good = lab[lab >= 0]
+    if not len(good):
+        return pts
+    return pts[lab == np.bincount(good).argmax()]
+
+
+def anchored_cluster(pts: np.ndarray, eps: float, min_pts: int,
+                     anchor: np.ndarray) -> Optional[np.ndarray]:
+    """The DBSCAN cluster of `pts` holding the clustered point nearest to
+    `anchor`, or None when no cluster forms. `fuse_report`: the anchor is the
+    track's own ellipsoid, so a buffer that also took a far detection of
+    another object (2D association matches in the image, not in depth) still
+    reports the object association placed, not whichever is bigger."""
+    from sklearn.cluster import DBSCAN
+
+    pts = np.asarray(pts, float)
+    if len(pts) < max(int(min_pts), 1):
+        return None
+    lab = DBSCAN(eps=float(eps), min_samples=int(min_pts)).fit_predict(pts)
+    good = np.nonzero(lab >= 0)[0]
+    if not len(good):
+        return None
+    near = good[int(np.argmin(np.linalg.norm(pts[good] - np.asarray(anchor, float), axis=1)))]
+    return pts[lab == lab[near]]
+
+
+def voxel_centroids(pts: np.ndarray, voxel_m: float) -> np.ndarray:
+    if not len(pts):
+        return pts
+    keys = np.floor(pts / float(voxel_m)).astype(np.int64)
+    _, inv = np.unique(keys, axis=0, return_inverse=True)
+    inv = inv.reshape(-1)
+    sums = np.zeros((int(inv.max()) + 1, 3))
+    np.add.at(sums, inv, pts)
+    return sums / np.bincount(inv)[:, None]
+
+
+def fused_points(det, frame, ecfg) -> Optional[np.ndarray]:
+    """One view's contribution to a fused buffer (`scene_graph.ellipsoid.fuse`):
+    every mask pixel with a real depth (after `fuse_erode_px` of erosion; no
+    depth band), the raw points ConceptGraphs fuses -- at most `fuse_max_pixels` of them
+    (evenly strided), voxelised, then their largest DBSCAN cluster, which is
+    what drops the background a mask bleeds onto."""
+    ys, xs = _eroded_pixels(det, int(ecfg.fuse_erode_px))
+    if not len(ys):
+        return None
+    z = frame.depth[ys, xs].astype(np.float64)
+    lo, hi = (float(v) for v in ecfg.fuse_depth_range_m)
+    ok = (z > lo + 1e-2) & (z < hi - 1e-2)
+    ys, xs, z = ys[ok], xs[ok], z[ok]
+    cap = int(ecfg.fuse_max_pixels)
+    if len(z) > cap:
+        sel = np.linspace(0, len(z) - 1, cap).astype(int)
+        ys, xs, z = ys[sel], xs[sel], z[sel]
+    if len(z) < 8:
+        return None
+    intr = frame.intrinsics
+    cam = np.stack([(xs - intr.cx) / intr.fx * z, (ys - intr.cy) / intr.fy * z, z], axis=1)
+    world = cam @ frame.T_wc[:3, :3].T + frame.T_wc[:3, 3]
+    pts = largest_cluster(voxel_centroids(world, float(ecfg.fuse_voxel_m)),
+                          float(ecfg.fuse_eps_m), int(ecfg.fuse_min_pts))
+    return pts if len(pts) else None
+
+
 def view_ok(det, frame, pts: Optional[CleanPoints], ecfg) -> bool:
     if pts is None:
         return False

@@ -5047,6 +5047,288 @@ Geometry and duplicate rate are where it falls behind. A next step would be
 to try ConceptGraphs-style point-cloud fusion and periodic merging as the
 geometry behind our tracks.
 
+### S81 — fused point-cloud geometry and label-tolerant association (S80's next step)
+
+**Question.** S80's gap has two causes. Can our tracks close them while
+staying online?
+- **Geometry:** our boxes come out too small. 44% of objects are more than
+  20% undersized, against 27% for ConceptGraphs.
+- **Duplicates:** 70% of extra tracks overlap their main track on the same
+  floor but carry a different label (cabinet/shelf, bed/pillow,
+  chair/stool). 72% were co-observed with the main track within 50
+  keyframes, so time gating is not the bottleneck.
+
+The premise (`docs/BENCHMARK_V2.md`) is that pass 1 is static and objects
+move only while unseen, between passes. That makes fusing every view of a
+track legitimate.
+
+**Mechanisms**, all behind `scene_graph.ellipsoid.*` and off by default:
+- **`fuse`** (`point_buffer.fused_points`, `ObjectLayer._fuse_refit`)
+  - Each detection's mask is eroded by `fuse_erode_px=2`.
+  - Depth is clipped to 0.5–5 m and the points are voxelised at 2.5 cm into
+    the track's buffer.
+  - When the buffer has grown by 10%, the geometry is refit: the AABB of the
+    buffer's largest DBSCAN cluster (`eps=0.1 m`), plus a pad of
+    `fuse_pad_m=1.25 cm`, with R = I.
+- **`xlabel_overlap`** (`merge.associate_xlabel`): a detection the
+  same-label association left unmatched joins an other-label track when at
+  least that share of its points falls in the track's buffer (size-ratio
+  guard 0.5).
+- **`xlabel_merge_every`** (`merge.xlabel_merge_pairs`): every N keyframes,
+  two same-floor tracks never seen in one keyframe are folded together. The
+  smaller cloud must lie at least `xlabel_merge_small` inside the larger,
+  and the larger at least `xlabel_merge_big` inside the smaller.
+
+**Method.**
+- Deterministic replays of the S77 recording (`outputs/objrec_v2`) at full
+  keyframe rate, against I6r1 (`outputs/objreplay/I6r1_all`).
+- Scored with `scripts/analyze_ellipsoids.py`, paired per instance.
+- Dev scenes: 00800, 00808, 00821. Test scenes: 00873, 00878, run once.
+- **Disclosure:** the offline knobs (erosion, pad, DBSCAN, the overlap
+  thresholds) were chosen before this run, by a diagnostic that fused each
+  I6r1_s5 track's points over all five scenes. The test scenes had therefore
+  been looked at once.
+
+**Pre-registered criteria.**
+- **F1 (`fuse` alone):**
+  - median IoU at least +0.05;
+  - median centre error at least 15% lower than I6r1;
+  - paired p < 0.05.
+- **Association/merge arms:** extra/inst at least 15% below F1, paired
+  p < 0.05.
+- **Guardrails** against I6r1:
+  - purity falls by at most 1 pt;
+  - YCB centre error is not worse;
+  - YCB mapped at most 1 fewer;
+  - time at most 1.5×.
+- At most 3 dev rounds.
+
+**Dev**, 930 instances (`outputs/objreplay/_F12_dev.txt`, `_F2abl_dev.txt`,
+`_F3_dev.txt`):
+
+| arm | tracks | extra/inst | centre med (m) | IoU med | purity | YCB centre | YCB mapped | ms/kf* |
+|---|---|---|---|---|---|---|---|---|
+| I6r1 | 3908 | 2.617 | 0.298 | 0.254 | 0.929 | 0.020 | 20/20 | 193 |
+| F1 `fuse` | 3800 | 2.535 | 0.226 | 0.372 | 0.931 | 0.019 | 20/20 | 242 |
+| F2 = F1 + `xlabel_overlap=0.7` + merge (0.7/0.3) | 3038 | 1.840 | 0.223 | 0.368 | 0.915 | 0.022 | — | 240 |
+| F2a = F1 + `xlabel_overlap=0.7` | 3341 | 2.099 | 0.214 | 0.378 | 0.927 | 0.019 | 20/20 | 223 |
+| F2m = F1 + merge (0.7/0.3) | 3113 | 1.904 | 0.214 | 0.367 | 0.920 | 0.019 | 20/20 | 237 |
+| F3s = F2a + merge (0.85/0.5) | 3148 | 1.935 | 0.223 | 0.379 | 0.923 | 0.019 | — | 262 |
+| F3m = F2a + merge (0.85/0.3) | 3080 | 1.878 | 0.223 | 0.369 | 0.919 | 0.022 | — | 263 |
+
+\*Replays ran two or three at a time, so these times are relative only. Run
+alone on 00800 at stride 5: I6r1 188 ms/kf, `fuse` 240 ms/kf (1.27×).
+
+- **Round 1.**
+  - F1 passes. Paired against I6r1: centre −0.009 m (p = 6e-10), IoU
+    +0.032 (p = 6e-28). The difference of the arm medians is +0.118 IoU and
+    −24% centre.
+  - F2 cuts extra/inst by 27% against F1 but fails the purity guardrail
+    (−1.4 pt).
+  - 21 instances lose their own track. About a third are ground-truth
+    granularity (window frame → window, blanket → couch). The rest are wrong
+    merges (door → refrigerator, stairs → box).
+- **Round 2: ablation.**
+  - Association alone (F2a): −17% extra against F1 (p = 6e-33), purity
+    −0.2 pt.
+  - The merge carries the purity cost: F2m −0.9 pt, and centre error paired
+    against F1 is worse (p = 0.018).
+  - F2m's one YCB outlier (banana, 3 m) is a scoring tie, not a bad fit: a
+    mixed track elsewhere holds 2 banana and 2 chair observations.
+- **Round 3: stricter merge.**
+  - F3s removes another 7.8% of extras against F2a (p = 7e-10), at −0.4 pt
+    purity and about +40 ms/kf.
+  - This does not clear the stated bar (clearly beyond F2a without losing
+    purity), so the candidate is **F1 + F2a**, with the merge off.
+
+**Test**, 418 instances (`outputs/objreplay/_Ftest.txt`), run once. F3s was
+included as a reference only.
+
+| arm | extra/inst | centre med (m) | IoU med | purity | YCB centre | YCB mapped | ms/kf* |
+|---|---|---|---|---|---|---|---|
+| I6r1 | 2.325 | 0.172 | 0.388 | **0.935** | **0.013** | 13/13 | 211 |
+| F1 | 2.177 | 0.124 | 0.450 | 0.911 | 0.027 | 13/13 | 299 |
+| F2a | 1.715 | 0.131 | 0.448 | 0.908 | 0.025 | 13/13 | 299 |
+| F3s | 1.553 | 0.131 | 0.451 | 0.906 | 0.025 | 13/13 | 300 |
+
+- **Geometry and duplicates hold up on test.**
+  - F1 paired against I6r1: centre −0.006 m (p = 8e-6), IoU +0.037
+    (p = 4e-10).
+  - F2a: extra/inst −21% against F1, and paired against I6r1 p = 6e-15.
+- **The guardrails do not hold.**
+  - F1 already loses 2.4 pt of purity.
+  - Median YCB centre error doubles, 13 → 27 mm. Paired, +5 mm,
+    p = 0.09 (n = 13).
+
+**Diagnosis**, the single round the stopping rule allows, with no tuning on
+test:
+- **Purity.** Almost all of the loss is one pair in 00873, pillow ← pillow:
+  817 → 1697 impure observations, out of a total rise of 847.
+  - DBSCAN's `eps = 0.1 m` exceeds the gap between touching pillows, so the
+    "largest cluster" spans the pile.
+  - The box grows to cover it, and the 2D association then pulls the
+    neighbouring pillows' detections into the track.
+  - 00878 shows the same pattern on a smaller scale (pillow ← couch,
+    pillow ← armchair).
+- **YCB.** The degraded objects are small ones with few views, with the same
+  cause.
+  - The mustard bottle (3 observations) is the clearest: its fused half
+    width in x is 0.137 m against a true 0.042 m, so it absorbed what stands
+    next to it. Its IoU falls from 0.63 to 0.15.
+  - Large or often-seen YCB objects improve: the cracker box's IoU goes
+    0.72 → 0.84 and 0.58 → 0.74, the toy airplane's 0.24 → 0.63.
+- The dev scenes have few such touching piles, so they did not show it.
+
+**Outcome.** Not adopted. The defaults stay off, and every measured arm is
+unchanged (the goldens gained only the new keys).
+- What holds on held-out scenes: fused geometry fixes the undersizing
+  (centre and IoU), and label-tolerant point-overlap association removes
+  about a fifth of the duplicates.
+- Both rest on the cluster step, which joins touching neighbours.
+- Fixes for a new dev round, on fresh scenes or a scene-level split:
+  - an eps tied to the per-view extent, not a fixed 0.1 m;
+  - a cap on how far a refit may grow beyond the union of single-view
+    boxes;
+  - a consensus over per-observation clouds instead of their union.
+- The periodic merge is not worth its purity cost at any threshold tried.
+
+### S82 — report the fused box, associate with the ellipsoid (`fuse_report`)
+
+**Question.** S81's test failure came from feedback, not from the fused
+geometry. With I6r1's association fixed (offline, stride 5, test scenes),
+the same fused box kept purity (0.944 both) and moved IoU 0.396 → 0.492,
+centre 0.178 → 0.129 m, YCB centre unchanged (p = 1). Online, the grown box
+was also what association projected: it pulled in neighbours' detections and
+grew again. Can the map report the fused box while association keeps
+I6r1's ellipsoid, with no new tuned value?
+
+**Mechanism.** `scene_graph.ellipsoid.fuse_report` (off by default):
+- Each associated view's fused points (S81's `fuse_*` values, unchanged) go
+  into a second buffer, `track.fuse_buffer`.
+- The reported box `track.extent` is refit from it.
+- The ellipsoid, its buffer, refine, association and linking run exactly as
+  with the flag off.
+- Merges fold the fused buffers and refit.
+- Snapshots carry `extent` and a 1024-voxel `fuse_vox` summary (both absent
+  with the flag off). `ObjectLayer.extent_of` returns the box.
+- `analyze_ellipsoids.py` now scores `extent` when a replay has one.
+
+**Pre-registered** (S81's F1 bar):
+- Association identical to I6r1 in every episode;
+- median IoU at least +0.05 and median centre error at least 15% lower,
+  paired p < 0.05;
+- YCB centre not worse and YCB mapped unchanged;
+- solo time at most 1.5×;
+- dev, then test once, the `fuse_*` values not touched.
+
+**Dev** (00800, 00808, 00821; 930 instances; `outputs/objreplay/_R2_dev.txt`):
+- **Round 1 (R1):**
+  - Association is identical (22 of 22 episodes, every field), so purity
+    (0.929) and extra/inst (2.617) are unchanged.
+  - IoU 0.254 → 0.352, centre 0.298 → 0.215 m.
+  - One YCB target failed: the toy airplane was reported 5.4 m away. Its
+    track had also taken far detections of a chair (2D association matches
+    in the image, not in depth), and the largest cluster was that chair.
+  - A track of 8 voxels formed no cluster and reported all its points: 1 m
+    deep.
+- **Round 2 (R2), two changes and no new parameter:**
+  - report the cluster nearest the ellipsoid, not the largest;
+  - with no cluster yet, keep reporting the ellipsoid.
+  - The rule was chosen from that one dev case.
+  - Paired against I6r1: IoU +0.026 (p = 8e-29), centre −0.008 m
+    (p = 3e-13).
+  - YCB centre median −3 mm (p = 0.57); airplane 0.26 m; 20/20 mapped.
+
+**Test** (00873, 00878; 418 instances; once; `outputs/objreplay/_R2_test.txt`):
+
+| arm | centre med (m) | IoU med | purity | extra/inst | YCB centre med | YCB IoU med | YCB mapped |
+|---|---|---|---|---|---|---|---|
+| I6r1 | 0.172 | 0.388 | 0.935 | 2.325 | **0.013** | 0.517 | 13/13 |
+| **R2** | **0.135** (−21.5%) | **0.437** (+0.049) | 0.935 (identical) | 2.325 (identical) | 0.027 | **0.553** | 13/13 |
+
+- Paired against I6r1: IoU +0.028 (p = 5e-10), centre −0.005 m (p = 7e-5).
+  For base n_obs ≤ 2: IoU +0.021 (p = 5e-6).
+- Association is identical in all 15 test episodes.
+- YCB centre is paired +5 mm, p = 0.09 (n = 13): the same as S81's F1, so
+  that regression is the fused box itself, not the feedback.
+- Solo time on 00800: 88.8 → 130.7 ms/kf mean (1.47×); p95 266 → 447 ms.
+- Snapshot record: 00821's last episode 69 → 119 MB (+72%), of which
+  `fuse_vox` is 50 MB (median 435 voxels per track, as JSON).
+
+**Diagnosis.** The YCB objects that got worse are small, seen 3 times, and
+stand on something.
+- Bowls and the soup can come out too tall: log y +0.48 to +0.73. Their
+  masks bleed onto the support surface, and touching surfaces are one
+  cluster.
+- The mustard bottle in 00873 takes in its neighbour: log x +1.17, IoU
+  0.63 → 0.15.
+- Large or often-seen YCB objects improve: cracker box 0.72 → 0.84 and
+  0.58 → 0.74; toy airplane 0.52 → 0.59 and 0.24 → 0.63.
+- I6r1's cleaned points (MAD depth filter) suit these few-view small objects
+  better than a raw-mask union.
+
+**Outcome.** Not adopted under the pre-registered rules.
+- IoU missed its bar by 0.001 on test.
+- The YCB-centre guardrail is worse at the median (13 → 27 mm), although
+  not significantly.
+- Everything else holds: association and purity unchanged by construction,
+  centre −21.5%, all YCB mapped, time 1.47×.
+- The open problem is no longer association. It is few-view small objects
+  whose mask touches a support or a neighbour.
+
+**Adopted afterwards, by decision rather than by the bar.** Both misses are
+within noise (IoU 0.001 short; YCB centre +5 mm at p = 0.09), and the gain is
+paired and significant on every object and on the n_obs ≤ 2 bin, so R2 is
+adopted as the ellipsoid variant: `configs/experiment/mfv2_osg_vet_live_ellipsoid_v3.yaml`
+(I6r1 + `fuse_report`). This relaxes the pre-registered rule after seeing the
+test result, and the numbers above are the ones it was decided on.
+- To make the report reach the agent, `objects.linking.reported_geometry`
+  (the box once fitted, else the ellipsoid) now feeds `object_center`
+  (so every `center_of`: goals, approach, stop gate), the scene graph's
+  container footprints, heights and member supports, and the viewpoint
+  ring's radius. Association, presence's "would we have seen it" and refine
+  still read the ellipsoid. With the flag off `extent` is never set, so every
+  other arm is unchanged.
+- Prior map: `outputs/maps_v2_osg_R2`, the pass-1 recording replayed under
+  the preset's overrides (`+replay.snapshots`), obstacle maps copied from
+  `outputs/maps_v2_osg`.
+- Known cost: few-view small objects on a support are reported too tall, and
+  the YCB centre median is 14 mm worse on test.
+
+**Closed loop (seed 42, S78's conditions).**
+- Arm `osg_vet_live_ellipsoid_v3` on `outputs/maps_v2_osg_R2`.
+- VLM, floor LLM and affinity LLM are off; 0 verify calls in all 58
+  episodes. Pass 2 recorded to `outputs/objrec_p2/R2`.
+- The route changes in half the episodes: 29 of 58 keep I6r1's step count.
+
+| (58 paired) | V0 | R2M4 | I6r1 | R2 (v3) | R2 vs I6r1 |
+|---|---|---|---|---|---|
+| success on the object's storey | 36 | 39 | 35 | 36 | 4 better / 3 worse, sign p = 1.00 |
+| first-attempt success | 27 | 27 | 24 | 28 | |
+| FP commits (live) | 53 (38) | 38 (24) | 38 (24) | 39 (25) | p = 0.77; vs V0 p = 0.20 |
+| TRUE / STALE commits | 47 / 31 | 52 / 27 | 45 / 34 | 46 / 29 | p = 0.97 / 0.13 |
+| best stop, horizontal distance (median) | 0.69 m | 0.65 m | 0.68 m | 0.71 m | n = 50, Wilcoxon p = 0.77 |
+| object layer, mean ms per call | | | 262 | 421 (1.61×) | |
+
+| scene | SR I6r1 / R2 | FP I6r1 / R2 |
+|---|---|---|
+| 00800 (n=12) | 8 / 8 | 4 / 7 |
+| 00821 (n=16) | 7 / 8 | 15 / 16 |
+| 00873 (n=14) | 10 / 10 | 8 / 11 |
+| 00878 (n=16) | 10 / 10 | 11 / 5 |
+
+- No trace metric moves significantly against I6r1. The per-scene FP
+  changes go both ways (00878 −6, 00800 +3, 00873 +3).
+- Online the object layer costs 1.61× I6r1's time, over the 1.5× guardrail
+  (offline, solo: 1.47×). Wall time 4.5 h → 6.7 h for the 4 scenes. Other
+  containers shared the GPU during this run, so part of that may be
+  contention; it was not re-measured solo.
+
+**Reading.** The offline geometry gain (IoU +0.049, centre −21.5%) does not
+become a closed-loop gain on this seed, as with I6r1 in S78. No navigation
+claim is made. v3 stays the adopted geometry variant, by the user's decision;
+its online cost is the open item.
+
 ## Planned — not yet run
 
 ### S29 — re-test the approach re-check with BLIP-2 ITM

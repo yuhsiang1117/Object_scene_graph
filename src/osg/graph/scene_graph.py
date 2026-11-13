@@ -13,6 +13,7 @@ from typing import Dict, List, Optional, Tuple
 import numpy as np
 
 from ..mapping.costmap import HEIGHT_AXIS, PLANE, Costmap2D
+from ..objects.linking import reported_geometry
 from ..objects.object_layer import ObjectLayer
 from . import containers as containers_mod
 
@@ -421,7 +422,7 @@ class SceneGraph:
             if view is None:
                 continue
             geoms = [
-                (i, getattr(tracks[i], "ellipsoid", None))
+                (i, reported_geometry(tracks[i]))
                 for i in sorted(members)
                 if i in views
             ]
@@ -529,7 +530,7 @@ class SceneGraph:
                 continue
             if obj.track_id in member_of_container or index.cid.size == 0:
                 continue
-            ell = getattr(tracks.get(obj.track_id), "ellipsoid", None)
+            ell = reported_geometry(tracks.get(obj.track_id))
             if ell is None:
                 continue
             bottom = self._member_geometry(obj.center, ell, _BOTTOM)
@@ -541,7 +542,7 @@ class SceneGraph:
                 (int(c) for c in supporting),
                 key=lambda c: (self.containers[c].area_m2, -self.containers[c].top_h),
             )
-            rep_ell = getattr(tracks[cid], "ellipsoid", None)
+            rep_ell = reported_geometry(tracks[cid])
             obj.container_id = cid
             obj.p_rel = containers_mod.relative_pose(
                 self.containers[cid].center, rep_ell.R, obj.center

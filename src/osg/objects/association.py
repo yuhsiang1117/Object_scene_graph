@@ -163,7 +163,12 @@ class ObjectTrack:
     geom_provisional: bool = False        # seeded from a truncated view
     last_kf: int = -1                     # ObjectLayer keyframe index of the last observation
     finalized_views: int = 0              # buffer views the last finalise had seen
+    fuse_fit_n: int = 0                   # `fuse`: buffer size at the last geometry fit
     assoc_ellipsoid: Optional[Ellipsoid] = None   # decouple_geometry: what association projects
+    # `fuse_report`: the fused buffer and the world box fitted to it (R = I),
+    # reported in place of the ellipsoid; nothing in the layer reads them.
+    fuse_buffer: Optional[Any] = None
+    extent: Optional[Ellipsoid] = None
 
     @property
     def n_obs(self) -> int:

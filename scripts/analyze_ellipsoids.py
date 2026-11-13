@@ -23,6 +23,10 @@ Per instance, on the map at the end of each scene's last episode:
             shape matrix) against the AABB
   log_ext   per world axis, log(estimated half extent / true half extent)
 
+A track's box is its `extent` when the replay wrote one
+(scene_graph.ellipsoid.fuse_report: the fused box the map reports, while
+association keeps the ellipsoid), else the ellipsoid's.
+
 and per track, `purity`: the share of its labelled observations that are of
 its majority instance -- the guard against merging two objects into one.
 
@@ -55,6 +59,14 @@ def shape_half_extents(rec) -> np.ndarray:
     axes = np.asarray(rec["axes"], float)
     Q = R @ np.diag(axes ** 2) @ R.T
     return np.sqrt(np.maximum(np.diag(Q), 0.0))
+
+
+def reported(rec):
+    """(centre, half extents) of the box the map reports for this track."""
+    e = rec.get("extent")
+    if e is not None:
+        return np.asarray(e["center"], float), np.asarray(e["axes"], float)
+    return np.asarray(rec["center"], float), shape_half_extents(rec)
 
 
 def iou3d(c1, h1, c2, h2) -> float:
@@ -120,11 +132,11 @@ def score_map(replay_file: Path, labels, gt_insts) -> Dict:
         owner[tid] = (iid, n / len(ids), len(ids))
 
     def center_of(t):
-        cs = [np.asarray(t["center"], float)]
+        cs = [reported(t)[0]]
         for lid in t.get("linked_ids", []):
             o = tracks.get(int(lid))
             if o is not None and o["floor_key"] == t["floor_key"]:
-                cs.append(np.asarray(o["center"], float))
+                cs.append(reported(o)[0])
         return np.mean(cs, axis=0)
 
     by_inst = defaultdict(list)
@@ -140,7 +152,7 @@ def score_map(replay_file: Path, labels, gt_insts) -> Dict:
             main = max(tids, key=lambda i: (len(tracks[i]["observations"]), -i))
             t = tracks[main]
             c_gt, h_gt = np.asarray(g["center"], float), np.asarray(g["half"], float)
-            c, h = np.asarray(t["center"], float), shape_half_extents(t)
+            c, h = reported(t)
             row.update(
                 ctr_err=float(np.linalg.norm(center_of(t) - c_gt)),
                 iou=iou3d(c, h, c_gt, h_gt),

@@ -43,6 +43,7 @@ from ..exploration.selector import frontier_goal_xy
 from ..exploration.strategy import ExplorationStrategy, WorldView
 from ..graph.scene_graph import ROOM_IDS_PER_FLOOR, SceneGraph
 from ..mapping.costmap import PLANE, Costmap2D
+from ..objects.linking import reported_geometry
 from ..pipeline.objects import build_object_layer
 from ..objects.retirement import Retirement
 from ..perception.detector import Detector
@@ -78,7 +79,7 @@ def _horizontal_radius_m(track) -> float:
     big costs a little distance, one that is too small lands in an occupied cell
     and loses the viewpoint entirely.
     """
-    ellipsoid = getattr(track, "ellipsoid", None)
+    ellipsoid = reported_geometry(track)
     axes = getattr(ellipsoid, "axes", None)
     if axes is None:
         return 0.0

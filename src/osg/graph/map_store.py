@@ -106,6 +106,20 @@ def _track_record(track: ObjectTrack) -> Dict[str, Any]:
         summary.compress(int(getattr(buf, "summary_voxels", 256)))
         rec["points_vox"] = summary.to_record()
         rec["points_vox"]["view_dirs"] = [[float(v) for v in d] for d in getattr(buf, "view_dirs", [])]
+    ext = getattr(track, "extent", None)
+    if ext is not None:
+        # scene_graph.ellipsoid.fuse_report: the reported box, and its fused
+        # points compressed so the next session keeps fusing onto them. The
+        # ellipsoid above stays what association projects. Both absent with
+        # the flag off.
+        import copy
+
+        rec["extent"] = {"center": _f(ext.center), "axes": _f(ext.axes)}
+        fb = getattr(track, "fuse_buffer", None)
+        if fb is not None:
+            summary = copy.deepcopy(fb)
+            summary.compress(int(getattr(fb, "summary_voxels", 1024)))
+            rec["fuse_vox"] = summary.to_record()
     return rec
 
 
@@ -216,6 +230,14 @@ def _track_from_record(rec: Dict[str, Any]) -> ObjectTrack:
 
         track.buffer = VoxelBuffer.from_record(rec["points_vox"])
         track.buffer.view_dirs = [np.asarray(d, float) for d in rec["points_vox"].get("view_dirs", [])]
+    if rec.get("extent") is not None:
+        e = rec["extent"]
+        track.extent = Ellipsoid(center=np.asarray(e["center"], float),
+                                 axes=np.asarray(e["axes"], float), R=np.eye(3))
+    if rec.get("fuse_vox") is not None:
+        from ..objects.point_buffer import VoxelBuffer
+
+        track.fuse_buffer = VoxelBuffer.from_record(rec["fuse_vox"])
     return track
 
 

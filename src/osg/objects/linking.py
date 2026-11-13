@@ -104,14 +104,22 @@ def relink(
                 m.linked_ids = ids - {m.id}
 
 
+def reported_geometry(track):
+    """The geometry the map reports for a track: the fused box
+    (scene_graph.ellipsoid.fuse_report, `track.extent`) once it has one, else
+    the ellipsoid. Association, presence and refine keep the ellipsoid."""
+    ext = getattr(track, "extent", None)
+    return getattr(track, "ellipsoid", None) if ext is None else ext
+
+
 def object_center(track: ObjectTrack, all_tracks: Dict[int, ObjectTrack]) -> np.ndarray:
-    """True object center = mean of linked-component centers."""
-    centers = [track.ellipsoid.center]
+    """True object center = mean of linked-component (reported) centers."""
+    centers = [reported_geometry(track).center]
     for lid in track.linked_ids:
         other = all_tracks.get(lid)
         if (
             other is not None and not other.blacklisted
             and getattr(other, "floor_key", 0) == getattr(track, "floor_key", 0)
         ):
-            centers.append(other.ellipsoid.center)
+            centers.append(reported_geometry(other).center)
     return np.mean(np.stack(centers), axis=0)

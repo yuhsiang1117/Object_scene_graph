@@ -139,6 +139,77 @@ class EllipsoidConfig:
     # dev tracks (median 1.8 m) out of the buffer entirely: IoU 0.036 (S78).
     buffer_truncated: bool = False
 
+    # Fused geometry (AB_RESULTS S81). The buffer takes EVERY view a track is
+    # associated with -- no view gate -- as the raw depth under the mask,
+    # each view reduced to its largest DBSCAN cluster, ConceptGraphs' point
+    # fusion; the track's geometry is then the world AABB of the buffer's
+    # largest cluster (R = I), refit whenever the buffer has grown by
+    # `fuse_refit_growth`, with no centre-move limit and no 2D refine. A
+    # detection's views do not move while seen, only while unseen, so fusing
+    # every view of one session is safe. Offline, I6r1_s5's association with
+    # this geometry: IoU 0.294 -> 0.424, centre 0.255 -> 0.182 m; without the
+    # DBSCAN steps IoU 0.054. Needs `buffer`.
+    fuse: bool = False
+    fuse_voxel_m: float = 0.025
+    fuse_eps_m: float = 0.1
+    fuse_min_pts: int = 10
+    fuse_max_pixels: int = 20000
+    # Erode the mask this many px first: a mask bleeds onto the surface its
+    # object stands on, and the two touch, so DBSCAN cannot split them.
+    # Offline on I6r1_s5: 0 / 1 / 2 px IoU 0.424 / 0.445 / 0.451.
+    fuse_erode_px: int = 2
+    # Added to every half extent: the AABB is of voxel centroids, half a voxel
+    # inside the surface. Offline (erode 2): YCB IoU 0.391 -> 0.501 at 1.25 cm,
+    # 0.494 at 2.5 cm; all instances 0.451 -> 0.446 / 0.391.
+    fuse_pad_m: float = 0.0125
+    fuse_cap: int = 12000
+    fuse_refit_growth: float = 0.1
+    fuse_summary_voxels: int = 1024
+    # The sensor's clamp (eval.depth_min_m / depth_max_m): a pixel pinned to
+    # either end is not a measurement.
+    fuse_depth_range_m: Tuple[float, float] = (0.5, 5.0)
+    # Report the fused box, associate with the ellipsoid (S82). The same
+    # fused buffer and box as `fuse` (every `fuse_*` knob above applies), kept
+    # beside the track as `extent` while the ellipsoid, its buffer, refine,
+    # association and linking run exactly as with this off. Online, `fuse`
+    # fed the grown box back into 2D association: a box spanning a pile of
+    # touching pillows pulled in the neighbours' detections and grew again
+    # (S81 test: purity 0.935 -> 0.911). With association fixed, the same box
+    # on the test scenes kept purity and moved IoU 0.396 -> 0.492. The box is
+    # the DBSCAN cluster NEAREST the ellipsoid, not the largest: 2D
+    # association matches in the image, so a buffer can also hold a far
+    # detection of another object (a toy airplane's track reported a chair
+    # 5 m away); with no cluster yet the ellipsoid is reported. Ignored when
+    # `fuse` is on (the box is then the geometry itself). The report is what
+    # `ObjectLayer.center_of`, the scene graph's container geometry and the
+    # viewpoint ring read (`objects.linking.reported_geometry`). Off here (the
+    # group is off); on in `mfv2_osg_vet_live_ellipsoid_v3`, adopted by
+    # decision although S82's test missed the IoU bar by 0.001 and its YCB
+    # centre median went 13 -> 27 mm (p = 0.09).
+    fuse_report: bool = False
+
+    # Cross-label association and merge (S81). The detector names one object
+    # by several labels across views (cabinet/shelf, picture/mirror,
+    # chair/stool): 81% of I6r1's pass-1 extra tracks carry another label than
+    # their object's main track, and the label gate opens a track per name.
+    # `xlabel_overlap` > 0: a detection still unmatched after the same-label
+    # 3D pass joins the other-label track whose buffer voxels hold at least
+    # this share of its cleaned points, when the two are of comparable size
+    # (`xlabel_size_ratio`: the smaller's largest world extent over the
+    # larger's) -- the guard for an object lying on, and masked together
+    # with, its support (dev offline: (bed, toy airplane) pairs).
+    xlabel_overlap: float = 0.0
+    xlabel_size_ratio: float = 0.5
+    # Every `xlabel_merge_every` keyframes, fold track pairs of any label
+    # whose buffers overlap at least `xlabel_merge_small` of the smaller's
+    # points and `xlabel_merge_big` of the larger's, of comparable size, never
+    # observed in one keyframe (two detections in one image are two
+    # objects). Offline on I6r1_s5 with fused clouds such pairs were one
+    # object 85% of the time (AABB overlap: 60%). 0 = off.
+    xlabel_merge_every: int = 0
+    xlabel_merge_small: float = 0.7
+    xlabel_merge_big: float = 0.3
+
     # M3 refine. "2d" = WassersteinRefiner as measured. "joint" = 2D residuals
     # plus point-to-surface distances from the buffer, weighted `depth_weight`
     # px per metre and balanced by residual count. "points" = refit from the
