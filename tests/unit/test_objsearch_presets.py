@@ -29,7 +29,7 @@ def test_ellipsoid_a_is_the_adopted_block_and_nothing_else():
 
 
 def test_storey_turns_on_m1_and_m2b_and_nothing_else():
-    base = _compose()
+    base = _compose("+experiment=ascentnav")              # the S71 arm, every addition off
     s = _compose("+experiment=objsearch_storey")
     on = {"storey_belief": True, "verify_climb": True, "climb_fail_cap": 2, "stair_stop_guard": True}
     changed = {k: v for k, v in s["agent"]["search"].items() if base["agent"]["search"][k] != v}
@@ -49,3 +49,17 @@ def test_relay_is_storey_plus_the_one_switch():
     s.pop("experiment", None)
     r.pop("experiment", None)
     assert r == s
+
+
+def test_the_default_is_the_s71_arm_with_m1_and_m2b():
+    """S86: `agent: s86` is `ascentnav` plus the `objsearch_storey` switches."""
+    default = _compose()
+    storey = _compose("+experiment=objsearch_storey")
+    s71 = _compose("+experiment=ascentnav")
+    for c in (default, storey, s71):
+        c.pop("experiment", None)
+    assert default == storey
+    on = {k: v for k, v in default["agent"]["search"].items() if s71["agent"]["search"][k] != v}
+    assert on == {"storey_belief": True, "verify_climb": True, "climb_fail_cap": 2, "stair_stop_guard": True}
+    s71["agent"]["search"] = default["agent"]["search"]
+    assert s71 == default

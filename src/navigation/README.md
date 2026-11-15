@@ -185,6 +185,12 @@ Two things the additions read that the reference does not: the pose's height
 name (`floor_table`; the transcription, like the reference, asks under the
 COCO name and reads zeros for sofa, tv_monitor and plant).
 
+**The default since S86.** `configs/agent/s86.yaml`, which `configs/config.yaml`
+selects, turns on `storey_belief`, `verify_climb` (cap 2) and
+`stair_stop_guard`; `+experiment=ascentnav` (`agent: s71`) is the arm without
+them, and every preset measured before S86 keeps `s71`. The dataclass defaults
+stay off, so the transcription tests are untouched.
+
 `configs/experiment/objsearch_storey.yaml` turns on the storey belief, the
 climb verification with a cap of 2, and the guard; `objsearch_relay.yaml` adds
 `climb_relay`. Compare a run against the

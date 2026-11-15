@@ -5,9 +5,11 @@
 #   bash scripts/serve_perception.sh                          # five servers
 #   python scripts/run_eval.py +experiment=ascentnav eval=scenes20_ep0to4
 #
-# THIS IS THE DEFAULT CONFIG, kept under its name so earlier runs and
-# docs/history/AB_RESULTS.md stay comparable; `python scripts/run_eval.py` with no
-# preset composes to exactly this (pinned by the fingerprint golden).
+# This was the default config from S71 to S86 and is kept under its name so
+# earlier runs and docs/history/AB_RESULTS.md stay comparable. Since S86 the
+# default (`agent: s86`) is this plus the storey belief and the climb
+# verification (`agent.search.*`); this preset keeps `agent: s71`, where every
+# addition is off and the policy is the transcription action for action.
 #
 # `src/navigation/agent.py` is a transcription of `Ascent_Policy.act` and the
 # `Map_Controller` it drives, for one environment, on the vendored ASCENT maps,

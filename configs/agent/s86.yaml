@@ -1,0 +1,25 @@
+# The default since S86: the S71 arm (`agent: s71`, ASCENT's control flow on
+# the frozen PointNav mover) plus the first two search additions of S83
+# (docs/history/AB_RESULTS.md S85, S86), adopted by decision:
+#
+#   M1   storey_belief   a belief over the storeys ASCENT has mapped may ask
+#                        for the staircase before the storey runs out of
+#                        frontiers (`navigation/search/storey.py`)
+#   M2b  verify_climb    a climb that ends on the level it began is a failed
+#        climb_fail_cap  attempt; two of those ban that direction for 125 steps
+#        stair_stop_guard  a point-goal STOP on the walk to a staircase steps
+#                        forward instead, once per storey and direction
+#
+# Measured: scenes20_ep0to4 65 -> 67/100, the goal's storey reached 5 -> 11 of
+# 22 (6 better, 0 worse); held-out scenes20_ep5to9 58 -> 60/100, 7 -> 9. Both
+# SR differences are inside the +-3 of n = 100. Every value is the dataclass
+# default (`AgentSearchConfig`); only the switches are set here. `agent: s71`
+# (`+experiment=ascentnav`) is the arm without them.
+defaults:
+  - s71
+
+search:
+  storey_belief: true
+  verify_climb: true
+  climb_fail_cap: 2
+  stair_stop_guard: true

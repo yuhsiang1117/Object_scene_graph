@@ -5704,6 +5704,18 @@ held-out — but it is not the large SR gain the cross-floor failure count
 suggested, and the 200-episode evidence for an SR effect is weak. The next
 lever on this axis is the on-stairs steering itself, not when to climb.
 
+**Adopted by decision** as the default (`configs/agent/s86.yaml`, selected by
+`configs/config.yaml`), on the consistent direction across both splits and
+every guardrail holding on held-out, not on a significant SR gain. The S71
+arm stays `+experiment=ascentnav` (`agent: s71`); every preset measured
+before S86 composes to what it was measured with. Seven presets moved in the
+fingerprint golden, each in those four switches only, all of them presets
+that inherit the default agent group rather than name one: the mixins
+`osg_unified_pipeline` and `mfv2_dataset`, the harness checks `nav2_habitat`
+and `floor_schedule_habitat`, the robot presets `stretch3_map` and
+`stretch3_search` (which run `nav_agent`, where the switches are never read),
+and `objsearch_ellipsoid_a`.
+
 ## Planned — not yet run
 
 ### S29 — re-test the approach re-check with BLIP-2 ITM
