@@ -5329,6 +5329,381 @@ become a closed-loop gain on this seed, as with I6r1 in S78. No navigation
 claim is made. v3 stays the adopted geometry variant, by the user's decision;
 its online cost is the open item.
 
+### S83 — searching beyond ASCENT: the baseline, where it loses, and what each addition could act on
+
+**Question.** The default arm is a transcription of ASCENT (S71, 63/100) and
+S72–S76 moved its failures between STOP and timeout without removing them.
+Before adding anything: where exactly are the 35 failures, and for each
+proposed addition — a storey belief (M1), finding and surviving stairs (M2),
+inspecting the object layer's candidates (M3), a room posterior (M4), a
+deadline stop (M5) — how many episodes could it act on at all?
+
+**Setup.**
+- `data/priors/hm3d_floor_prior.json` did not exist on this machine
+  (`python scripts/make_priors.py --ascent relative_work/ascent`); the v1
+  episodes were downloaded. Both are what S71 had.
+- Baseline: `python scripts/run_eval.py eval.behaviour_log=true
+  agent.search.trace=true agent.osg_world_model=true
+  eval.record_object_frames_dir=objrec output_dir=outputs/s83_baseline_v0`.
+  The OSG world model is attached with its default ellipsoid ("V0") only so
+  its keyframes are recorded (16 GB) for S84; `ascentnav` never reads it.
+- `agent.search.trace` adds trace columns and no behaviour: three smoke
+  episodes with it on, off, and off again gave identical action sequences
+  (`outputs/_smoke_s83_{plain,plain2,trace}`), and the first three episodes of
+  the 100 match them too.
+- `scripts/analyze_objectnav_search.py` (new) gives every episode exactly one
+  class from the trace and the dataset's goal geometry, pairs two runs, and
+  holds the offline replays below. An instance is "in view" by the S71 rule
+  (3 m, ±40°) and only while the agent stands on its storey.
+
+**Baseline: 65/100, SPL 0.366** (`outputs/s83_baseline_v0`; S71 was 63,
+native ASCENT 65).
+
+| class | n | same-floor | cross-floor |
+|---|---|---|---|
+| success | 65 | 61 | 4 |
+| cross-floor, never on the goal's storey: no stair toward it on the map | 4 | | 4 |
+| ... stair mapped, no climb started | 5 | | 5 |
+| ... climbs started, none ended there | 8 | | 8 |
+| saw → wrong STOP | 5 | 5 | |
+| saw → near miss (STOP within 1 m of a viewpoint) | 2 | 2 | |
+| saw → timeout | 4 | 3 | 1 |
+| never saw → STOP | 4 | 4 | |
+| never saw → timeout | 3 | 3 | |
+
+- Same-floor 61/78, cross-floor 4/22. Reached the goal's storey: 5 of 22, and
+  4 of those 5 succeeded. **17 of the 35 failures never stood on the goal's
+  storey.**
+- SAW 76, conversion given SAW 0.855, median first-SAW step 58; committed 89,
+  P(success | committed) 0.719; 40 give-ups; 10.8% of all steps in climb mode
+  (6.0% on same-floor episodes).
+- STOP came from a commit 80 times (64 succeeded) and from the walk to a
+  staircase twice (0): a PointNav STOP raised there ends the episode
+  (`_navigate_stair_if_unexplored_floor`, the reference's `:847`).
+
+**Noise floor.** The 21 cross-floor episodes again, same config
+(`outputs/s83_baseline_v0_xfloor_rerun`): 4/21 against 4/21, **0 episodes
+flipped** (McNemar p = 1.0), reached the goal's storey 4 against 5. A change
+on this subset has to exceed 0 flips in success and ±1 in storeys reached.
+
+**Climbing is where the cross-floor episodes go.** 60 climb attempts:
+
+| how the attempt ended | n |
+|---|---|
+| changed the agent's height by ≥ 1.5 m | 8 |
+| "arrived" (left the stair map after its centroid) within 0.5 m of where it began | 11 |
+| "arrived" having gained 0.5–1.5 m | 15 |
+| stalled on the stairs (`paused` 30) below 0.5 m gained | 16 |
+| stalled after gaining more than 0.5 m | 8 |
+| never reached the stair centroid (2 of these are the climb STOPs) | 3 |
+
+- **No single attempt covered a storey.** The 8 that moved the agent ≥ 1.5 m
+  moved it 1.5–1.8 m, to a landing; the storeys here are 2.6–3.4 m apart
+  (agent base heights, from the traces):
+
+  | scene | standing levels (m) | landings |
+  |---|---|---|
+  | 6s7QHgap2fW | 0.10 / 2.90 | |
+  | XB4GS9ShBRE | 0.00 / 2.80 | |
+  | bxsVRursffK | −2.98 / 0.02 | −1.21 |
+  | cvZr5TUy5C5 | −2.93 / 0.07 | |
+  | mL8ThkuaVTM | −2.58 / 0.02 / 2.82 | 1.43 |
+  | p53SfW6mjZe | −3.00 / 0.00 / 3.40 | −1.15 |
+  | qyAac8rV8Zk | 0.02 / 3.22 | 1.69 |
+  | q3zU7Yy5E5s | 0.04 / 2.64 | |
+  | wcojb4TFT35 | 0.39 / 2.79 | |
+
+  A full transition is a relay: qyAac8rV8Zk ep 0 gained 1.67 m at step 212,
+  then 1.33 m at 283; mL8ThkuaVTM ep 0 went −0.44, −1.40 and walked the rest
+  while "exploring". Any rule that calls a climb failed for not covering a
+  storey would call every climb failed.
+- **Phantom storeys.** 31 times the agent changed storey in its own books; 11
+  of those left it within 0.5 m of the height it started at, in 7 episodes
+  (XB4GS9ShBRE ep 0 twice, 4ok3usBNeis ep 0 three times, in single-level
+  svBbv1Pavdk three 28–30-step "climbs" that gained 0.00 m). Each one throws
+  the storey's map away and re-explores it from an opening scan. The
+  controller logs these as `climb_ok`.
+- The 25 stalls at `paused` 30: turning left and right in place 8, forward
+  blocked 7, wandering 10. bxsVRursffK ep 2 spent 398 steps on 6 attempts.
+- Per attempt, roughly 13% (8 of 60) gain a landing's height.
+- On the stairs themselves (steps with the flight reached, split into runs):
+  the 28 runs that hit `paused` 30 are 1086 steps, 74% of them turns, 42% of
+  those turns undoing the one before, and 85% of the forward actions moving
+  the agent less than 5 cm. The 34 runs that did not stall: 42% turns, 3%
+  reversals, 54% of forwards blocked. A stalled agent is pinned and turning,
+  not walking the wrong way.
+
+**What each addition could act on** (`--storey`, `--diagnose`,
+`--candidates`):
+
+| addition | measured on the baseline | decision |
+|---|---|---|
+| M1 storey belief | the rule at OSG's ratio 1.8 asks 8 of 61 same-floor successes to leave before their first sighting — over the bar of 3. One sweep, as pre-registered: 2.5 → 6, 3.0 → 6, **4.0 → 3**, 5.0 → 3. At 4.0 it asks toward the goal's storey in 4 of the 5 "stair mapped, never climbed" episodes and 9 of the 17 that never got there. `a_f` = 1.5 m² per live frontier (fitted on 20 exhausted storeys); steps needed 50 (a storey-changing climb 37.5 + first sighting to STOP 12) | built, ratio 4.0 |
+| M2a stairs never mapped (4) | RedNet alone had stairs in view in 1 of the 4; the detector in 4, for 1–4 frames | not built: the union mask would help at most 1 |
+| M2b climbs that go nowhere | 10 episodes with 2+ climbs that changed nothing (6 cross-floor); 11 phantom arrivals | built |
+| M3 inspect the object layer's candidates | S84's V0 replay: 343 target tracks, 166 true. `presence.p` is 0.82 for every one (AUC 0.50); `evidence` ranks true above false with AUC 0.71, `best_score` 0.75. At the pre-registered threshold (≤ 1 false place per episode: evidence 0.5) two failed episodes held a true track the baseline never committed to, with 50 steps left; the bar was 3 | not built |
+| M4 room posterior | of the 7 that never had the target in view, 4 are STOPs on a false detection inside 106 steps; in the 3 timeouts the chosen frontier lay toward the target 255/307, 211/418, 88/187 times, with 13–28% of forward steps blocked | not built: not a ranking failure |
+| M5 deadline stop | one failed episode gave up a commit on a true instance; the bar was 2 | not built |
+
+- In the 11 same-floor failures that had the target in view, the 0.8 detector
+  never fired while it was in view in 6. The two near misses
+  (wcojb4TFT35 ep 4 at 0.16 m, 5cdEh9F2hJL ep 3 at 0.30 m) both committed to
+  the true target — S84's subject.
+
+**Things found on the way** (none changed in the reference path):
+- The transcription asks the floor prior under the COCO name
+  (`get_floor_probabilities(self.target_coco, …)`), the json is keyed by HM3D
+  name: sofa, tv_monitor and plant read zeros, as they do in the reference
+  (which prints 0.0%). M1 reads `floor_table(prior, self.target, n)`.
+- Habitat scores on a navmesh recomputed for the agent, not the shipped
+  `.basis.navmesh`; `eval_stop_geometry.py` reproduces it exactly (S84).
+- The object recording's `prior.json` has an empty `scene`, so
+  `+replay.scenes` cannot subset an ObjectNav recording; use a directory of
+  symlinks.
+- `explored_m2` in the trace is not monotone (a storey switch starts a new
+  map).
+
+### S84 — does the ellipsoid's size and centre move where the agent stops? (V0 against A)
+
+**Question.** `ascentnav` stops at the nearest point of ASCENT's own point
+cloud and never reads the ellipsoid, so switching V0 for A in the default arm
+cannot move a stop. To ask whether ellipsoid accuracy matters, the ellipsoid
+has to choose the stop point: OSG's own rule, the standoff point
+`horizontal radius + approach_standoff_m (0.75)` back from the centre along
+the line to the agent (`agent/approach.py:_standoff_goal`). A centre error
+shifts that point; a size error changes how far back it is.
+
+**Setup.** No new navigation run. The baseline's recorded keyframes
+(`outputs/s83_baseline_v0/objrec`, S83) replayed through the object layer
+twice with `+replay.target_log=true`: V0
+(`outputs/s83_baseline_v0/replay_v0`, IDENTICAL to the live layer in all 100
+episodes) and A, `+experiment=objsearch_ellipsoid_a`, the S82 block
+(`outputs/s83_baseline_v0/replay_a`). Then
+`scripts/eval_stop_geometry.py offline` (E1, CPU): for every true instance
+the agent had a target track within 1.5 m of, depart from the step the
+baseline committed to it (or first had it in view), compute each geometry's
+stop point, snap it to the navmesh, and score it by Habitat's rule
+(geodesic to the nearest viewpoint ≤ 0.1 m). The scorer reproduces
+Habitat's own `distance_to_goal` at the baseline's 100 stops to 0.000 m
+(100 of 100 verdicts agree). Output `outputs/s84_stop/stop_offline.json`.
+
+**E0, the ceiling.** 2 baseline failures stopped near the true target
+(wcojb4TFT35 ep 4 at 0.16 m, 5cdEh9F2hJL ep 3 at 0.30 m), both committed to
+it. Every other stopping failure stopped beside something else: an identity
+problem, not a geometry one.
+
+**E1 (138 samples, 70 committed, 68 in view only, 77 episodes):**
+
+| geometry | n | stop point within 0.1 m of a viewpoint |
+|---|---|---|
+| ASCENT's nearest point (what the baseline did) | 70 | 92.9% |
+| A, the track at the departure step | 113 | **92.0%** |
+| A, the track at episode end | 112 | 92.0% |
+| true centre + annotated box | 138 | 84.8% |
+| V0, the track at the departure step | 115 | **81.7%** |
+| V0, the track at episode end | 114 | 85.1% |
+
+- **A against V0, paired (113): 104 against 93, only-A 14, only-V0 3,
+  McNemar p = 0.013**; distance to viewpoint lower for A (Wilcoxon p < 0.001).
+  At episode end the gap narrows (102 against 95, p = 0.14): V0's later
+  observations pull it in, A is right earlier.
+- A against ASCENT's own rule (68): 62 against 65, p = 0.38. A against the
+  true geometry (113): 104 against 105, p = 1.0.
+- Dose-response on the true geometry: centre moved 0.1 m 85.2%, 0.2 m 84.2%,
+  0.3 m 80.9%, 0.5 m 73.3%; radius ×0.5 89.1%, ×1 84.8%, ×2 39.9%. V0's
+  centre error (0.289 m on the test scenes) sits where the curve starts to
+  fall; A's (0.135 m) is on the flat part. Size matters more than centre:
+  an ellipsoid twice too large halves the rate, because the standoff grows
+  with the radius.
+- The true box scores below A because an annotated box includes parts the
+  camera never saw, so its radius is larger; the ×0.5 row agrees.
+
+**E2, the approach walked** (`scripts/eval_stop_geometry.py approach`,
+`outputs/s84_stop/stop_approach.json`): the agent placed at each sample's
+departure pose and driven by ASCENT's point-goal policy to each geometry's
+stop point (≤ 100 steps, STOP on arrival), Habitat scoring the stop.
+Collisions, the policy's own error and a stop point the walk cannot reach are
+now in it; the offline verdict agrees in 104–122 of each geometry's samples.
+
+| geometry | n | Habitat success |
+|---|---|---|
+| ASCENT's nearest point | 70 | 90.0% |
+| A at the departure step | 113 | **89.4%** |
+| true centre + box | 138 | 77.5% |
+| V0 at the departure step | 115 | **76.5%** |
+
+- **A against V0, paired (113): 101 against 87, only-A 18, only-V0 4,
+  McNemar p = 0.004** — wider than offline (p = 0.013).
+- A against ASCENT's rule (68): 57 against 63, only-ASCENT 6, only-A 0,
+  p = 0.031 — walked, A is now measurably *below* the rule the baseline uses.
+- V0 against the true geometry (115): 88 against 100, p = 0.036; A against
+  it (113): 101 against 98, p = 0.58.
+
+E1 and E2 agree on the direction and the ranking: V0 ≈ true box < A ≤
+ASCENT's nearest point.
+
+**The object layer as a candidate source (M3), again with A.** 267 target
+tracks (V0 343), 105 within 1.5 m of a true instance (166): A merges
+duplicates. `evidence` ranks true above false with AUC 0.783 (V0 0.710),
+`n_obs` 0.769 (0.656); `presence.p` is still 0.82 for every track. But no
+failed episode holds a true track the baseline did not commit to with 50
+steps left at any threshold (V0: 2 at τ 0.5): M3 stays unbuilt.
+
+**Reading.** Yes: the ellipsoid's accuracy moves where a stop rule built on
+it stops, offline and walked. S82's A lifts that rule by 11–13 points over
+V0, from below the true annotated box to level with it, and the dose-response
+says why — V0's centre error is where the curve starts to fall, and a radius
+too large costs most of all. But no ellipsoid rule beats ASCENT's
+nearest-point rule (walked, A is 6 samples below it), so the pre-registered
+bar for E3 (an ellipsoid rule ≥ 3 samples better) is not met and no
+full closed-loop run was made. On `ascentnav` the stop geometry's ceiling is
+2 episodes (E0); this matters to the OSG pipeline (`nav_agent`), which does
+stop on its geometry, and is the measured case for A there.
+
+### S85 — the storey belief and the climb judged by its height, live (M1 + M2b), and the landing relay (M2c)
+
+**Question.** S83 found 17 of 35 failures never stood on the goal's storey,
+and built two of its additions: M1 (a storey belief that may ask for the
+staircase, ratio 4.0) and M2b (an arrival on the level it began is a failed
+attempt; two of those ban that direction for 125 steps), plus the guard that
+turns a point-goal STOP on the way to a staircase into FORWARD. Do they get
+the agent onto the goal's storey, and does that become success?
+
+**Pre-registered gate** (21 cross-floor episodes, `eval=scenes20_crossfloor`):
+reached the goal's storey 5 → ≥ 10, beyond the noise floor (S83 rerun: 0
+success flips, ±1 storey). Then 100 episodes: same-floor successes may drop
+by at most 2, same-floor climb-mode share may rise by at most 3 points.
+
+**Flags off is the reference.** Three smoke episodes with every flag off
+matched the earlier smoke action for action, before M1/M2b went live
+(`outputs/_smoke_s83_m1off`) and again after M2c was added
+(`outputs/_smoke_s83_m2coff`).
+
+**M1 + M2b on the 21** (`+experiment=objsearch_storey`,
+`outputs/s85_storey_xfloor`):
+
+| | baseline | M1 + M2b |
+|---|---|---|
+| success | 4 | 6 (+3 / −1, McNemar p = 0.63) |
+| reached the goal's storey | 5 | **10** (5 better, 0 worse, sign p = 0.06) |
+| climb attempts / ending on the goal's storey | 33 / 6 | 55 / 17 |
+| climb-mode steps | 14.3% | 43.9% |
+| SPL | 0.100 | 0.133 |
+
+Gate passed. The wins: bxsVRursffK ep 0 and qyAac8rV8Zk ep 4 (never climbed →
+success), mL8ThkuaVTM ep 2 (climb failed → success); the loss mL8ThkuaVTM
+ep 0 (success → never saw → STOP). The cost is time: three times as many
+steps on the stairs. Six episodes still ended "climb failed", over the bar
+of 3 the plan set for M2c.
+
+**Why climbs fail (baseline traces).** On the stairs, the 28 runs that
+stalled were 74% turns, 42% of them undoing the previous turn, 85% of
+forwards not moving: pinned and turning. And ASCENT treats each landing as a
+storey and decides afresh there, often to go back (mL8ThkuaVTM ep 2: down to
+its landing and back six times); a climb that stalls on a landing
+re-initialises the storey it left (F5), so the agent explores that map from
+the landing and walks back down (bxsVRursffK ep 1, twice).
+
+**M2c, the landing relay** (`agent.search.climb_relay`, `climb_storey_m`
+1.8 = OSG's `floor.new_level_m`; `+experiment=objsearch_relay`). A stall
+≥ 0.5 m from where the attempt began is an arrival; from a landing the next
+flight the same way comes before any frontier and the way back is refused
+until 1.8 m is covered, 125 steps pass, or the way on is banned. Three
+rounds, as the plan allows:
+
+| round | change | success | goal storey | SPL | mean steps | vs M1+M2b |
+|---|---|---|---|---|---|---|
+| 1 `s85_relay_xfloor` | as above | 5 | 10 | 0.156 | 292 | +3 / −4 |
+| 2 `s85_relay2_xfloor` | a dead-end landing is left by its flight, not STOPped on (2 of round 1's losses were `explored_out` STOPs on a landing with no frontier) | 5 | 11 | 0.156 | 324 | +3 / −4 |
+| 3 `s85_relay3_xfloor` | a stall arrival always gets its opening scan, and passive entry waits until the agent has stepped off the flight it stalled on (round 2: qyAac8rV8Zk ep 4 reached its goal storey and slid straight back down) | 6 | 11 | 0.188 | 313 | +3 / −3 |
+
+Against the baseline, round 3 reaches the goal's storey in 11 against 5 (6
+better, 0 worse, sign p = 0.031), but against M1 + M2b it is 11 against 10
+with 6 successes each: the +1 is inside the noise floor. **Not adopted**; the
+flag and preset stay so this can be re-run. The 3-for-3 swaps are the same
+episodes in every round (bxsVRursffK ep 0/1, mL8ThkuaVTM ep 0/2,
+wcojb4TFT35 ep 3, p53SfW6mjZe ep 4): on these scenes which storey an episode
+ends on is decided by small differences early in the climb, and n = 21 can
+not separate two arms that both reach about half the goal storeys.
+
+**100 episodes, M1 + M2b** (`outputs/s85_storey_100`, `scenes20_ep0to4`):
+
+| | baseline | M1 + M2b |
+|---|---|---|
+| success | 65 | **67** (+5 / −3, McNemar p = 0.73) |
+| SPL | 0.366 | 0.371 |
+| same-floor success | 61 / 78 | 60 / 78 |
+| cross-floor success | 4 / 22 | 7 / 22 |
+| reached the goal's storey | 5 | **11** (6 better, 0 worse, sign p = 0.031) |
+| SAW episodes | 76 | 81 |
+| climb-mode steps, all / same-floor | 10.8% / 6.0% | 23.2% / **10.7%** |
+
+- Guardrails: same-floor successes −1 (bar −2, met); same-floor climb-mode
+  share +4.7 points (bar +3, **not met**).
+- One episode, q3zU7Yy5E5s ep 4 (a failure in both runs), is 1.5 of those
+  points; without it in either run the rise is +3.2 (5.6% → 8.7%), still
+  just over the bar. In it: 145 guarded STOPs in a 2-step loop — the walk to a staircase
+  the point-goal policy calls reached, STOP guarded into FORWARD,
+  `_get_close_to_stair` gives up, no frontier left, the last resort walks
+  there again. A defect of the guard, fixed afterwards (once per storey and
+  direction; the second STOP goes through, as in the reference). The run
+  above is the unfixed code; the held-out runs (S86) use the fix.
+- The rest is the storey belief asking on same-floor episodes: 11 belief
+  climbs in 5 same-floor episodes, one of which (cvZr5TUy5C5 ep 0, asked at
+  step 45) turned a success into a timeout.
+- Wins: DYehNKdT76V ep 1, bxsVRursffK ep 0 and ep 2, mL8ThkuaVTM ep 2,
+  qyAac8rV8Zk ep 4. Losses: cvZr5TUy5C5 ep 0, mL8ThkuaVTM ep 0,
+  p53SfW6mjZe ep 2.
+
+**Reading.** The addition does what it was built for — the agent reaches the
+goal's storey in 11 cross-floor episodes instead of 5, the one paired metric
+here with p < 0.05 — and 3 more cross-floor episodes succeed. SR moves +2,
+inside the ±3 of n = 100. Getting there costs twice the climbing; on this
+dev set that cost broke the pre-registered same-floor guardrail, by 1.7
+points, a third of it a guard defect now fixed and the rest the belief asking
+on same-floor episodes. The held-out set decides (S86).
+
+### S86 — held-out: M1 + M2b on episodes 5–9 of the same 20 scenes
+
+**Setup.** `configs/eval/scenes20_ep5to9.yaml` (100 episodes, the same 20 v1
+val scenes, episodes never looked at during S83–S85), run once per arm:
+the baseline (`outputs/s86_heldout_base`) and `+experiment=objsearch_storey`
+with the stair-guard fix from S85 (`outputs/s86_heldout_storey`). Both with
+`eval.behaviour_log=true agent.search.trace=true`.
+
+| | baseline | M1 + M2b |
+|---|---|---|
+| success | 58 | **60** (+4 / −2, McNemar p = 0.69) |
+| SPL | 0.267 | 0.276 |
+| same-floor success | 52 / 78 | 53 / 78 |
+| cross-floor success | 6 / 22 | 7 / 22 |
+| reached the goal's storey | 7 | 9 (3 better, 1 worse, sign p = 0.63) |
+| SAW episodes | 71 | 73 |
+| climb attempts | 61 | 100 |
+| climb-mode steps, all / same-floor | 14.1% / 10.4% | 23.0% / 12.4% |
+
+- Guardrails: same-floor successes +1 (bar −2, met); same-floor climb-mode
+  share +2.0 points (bar +3, met). The guard fired 3 times in 100 episodes
+  (145 in one episode on the dev set before the fix).
+- Wins: DYehNKdT76V ep 9, TEEsavR23oF ep 9 (never saw → STOP → success),
+  qyAac8rV8Zk ep 6, wcojb4TFT35 ep 8 (never climbed → success). Losses:
+  mL8ThkuaVTM ep 8 (success → climb failed), p53SfW6mjZe ep 9 (success →
+  timeout).
+- The storey belief asked to climb 64 times; 11 same-floor episodes saw at
+  least one of those climbs.
+
+**Reading.** The held-out set repeats the dev set's direction and size:
+SR +2 on both (65 → 67, 58 → 60), the goal's storey reached more often
+(+6, +2), one same-floor success either way. Pooled over the 200 episodes:
+123 → 127 successes, goal storey 12 → 20, neither SR difference beyond the
+±3 of n = 100. What the addition reliably does is put the agent on the
+goal's storey more often; it turns few of those into successes, because the
+on-stairs controller still fails most attempts (S85: pinned and turning) and
+climbing costs steps. It is safe to switch on — every guardrail holds on
+held-out — but it is not the large SR gain the cross-floor failure count
+suggested, and the 200-episode evidence for an SR effect is weak. The next
+lever on this axis is the on-stairs steering itself, not when to climb.
+
 ## Planned — not yet run
 
 ### S29 — re-test the approach re-check with BLIP-2 ITM

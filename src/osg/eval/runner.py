@@ -99,6 +99,8 @@ def _algorithm_fingerprint(cfg) -> dict:
     def plain(value):
         if OmegaConf.is_config(value):
             return OmegaConf.to_container(value, resolve=True)
+        if dataclasses.is_dataclass(value) and not isinstance(value, type):
+            return plain(dataclasses.asdict(value))      # a nested group, e.g. agent.search
         if isinstance(value, tuple):
             return [plain(item) for item in value]
         if isinstance(value, list):
@@ -190,6 +192,7 @@ def run_eval(cfg) -> dict:
             # "pointnav_depth_shape" "pointnav_stop_means_blocked"
             # "pointnav_creep_stall_eps" "pointnav_creep_stall_steps"
             # "osg_world_model"
+            # "search" (agent.search.*: the additions to ascentnav, as one dict)
             # "pointnav_stop_radius" "pointnav_weights" "policy" "ranker"
             # "ranker_every_steps" "ranker_topk" "reachable_via_viewpoint"
             # "rednet_stairs" "reselect_every" "room_classifier" "room_erode_iters"

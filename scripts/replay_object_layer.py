@@ -21,6 +21,12 @@ is how scripts/analyze_ellipsoids.py ties a track to ground truth -- plus the
 funnel and per-keyframe update time. `+replay.snapshots=<dir>` additionally
 writes, per scene, a copy of the recorded run's pass-1 snapshot
 (`+replay.snapshot_src`) with its tracks replaced by the replay's last state.
+
+`+replay.target_log=true` additionally writes `<out>/<episode>.targets.jsonl`:
+one line per keyframe that leaves the layer holding a track of the episode's
+target, with each such track's reported centre and size AT THAT KEYFRAME.
+The final state says where a track ended up; a stop point is decided by where
+it was when the agent committed (scripts/eval_stop_geometry.py).
 """
 from __future__ import annotations
 
@@ -34,6 +40,30 @@ from omegaconf import DictConfig
 from osg.core.config import register_configs
 
 register_configs()
+
+
+def _target_rows(layer, want: str) -> list:
+    """The target's tracks as the map reports them now (objects/linking.py)."""
+    from osg.core.labels import normalize_label
+    from osg.objects.linking import reported_geometry
+
+    rows = []
+    for t in layer._tracks.values():
+        if normalize_label(t.label) != want or t.blacklisted:
+            continue
+        g = reported_geometry(t)
+        rows.append({
+            "id": int(t.id),
+            "center": [round(float(v), 4) for v in layer.center_of(t)],
+            "geom_center": [round(float(v), 4) for v in g.center],
+            "axes": [round(float(v), 4) for v in g.axes],
+            "fused": getattr(t, "extent", None) is not None,
+            "n_obs": int(t.n_obs),
+            "p": round(float(t.presence.p), 4),
+            "evidence": round(float(t.evidence), 3),
+            "best_score": round(float(t.best_score), 3),
+        })
+    return rows
 
 
 def _snapshot_source(snapshot: dict, eps) -> str:
@@ -55,6 +85,7 @@ def _snapshot_source(snapshot: dict, eps) -> str:
 
 @hydra.main(config_path="../configs", config_name="config", version_base="1.3")
 def main(cfg: DictConfig) -> None:
+    from osg.core.labels import normalize_label
     from osg.eval import object_recorder as rec_mod
     from osg.eval.object_replay import (
         chain_scene, final_blob, first_difference, read_json, ref_layer_factory, scene_episodes,
@@ -65,6 +96,7 @@ def main(cfg: DictConfig) -> None:
     out = Path(str(rp.get("out")))
     out.mkdir(parents=True, exist_ok=True)
     check = bool(rp.get("check", False))
+    target_log = bool(rp.get("target_log", False))
     want_scenes = [str(s) for s in rp.get("scenes", [])]
 
     scenes = sorted({read_json(d / "prior.json").get("meta", {}).get("scene")
@@ -102,13 +134,22 @@ def main(cfg: DictConfig) -> None:
         all_refs = {}
         for ep in eps:
             parent = parents[ep.name]
+            meta = read_json(ep / "prior.json").get("meta", {})
+            want = normalize_label(str(meta.get("target", "")))
             times = []
+            target_lines = []
             t0 = time.perf_counter()
             last = [t0]
 
             def on_kf(layer, frame, dets, fk):
                 now = time.perf_counter()
                 times.append(now - last[0])   # load + update of this keyframe
+                if target_log:
+                    rows = _target_rows(layer, want)
+                    if rows:
+                        target_lines.append(json.dumps(
+                            {"kf": len(times) - 1, "frame_id": int(frame.frame_id), "tracks": rows}))
+                    now = time.perf_counter()     # the log is not the layer's time
                 last[0] = now
 
             def on_start(layer, parent=parent):
@@ -129,7 +170,8 @@ def main(cfg: DictConfig) -> None:
                 on_keyframe=on_kf,
                 on_start=on_start,
             )
-            meta = read_json(ep / "prior.json").get("meta", {})
+            if target_log:
+                (out / f"{ep.name}.targets.jsonl").write_text("".join(x + "\n" for x in target_lines))
             recorded_state = final_blob(layer)   # what final.json holds: before the save
             blob = recorded_state
             # Pass 1 saved this episode's map: consolidate as

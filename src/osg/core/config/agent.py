@@ -12,6 +12,103 @@ from typing import List, Optional
 
 
 @dataclass
+class AgentSearchConfig:
+    """`agent.search.*`: what `ascentnav` does BEYOND the reference (S83 on).
+
+    Everything here defaults to off, and with everything off the policy is the
+    ASCENT transcription unchanged -- `src/navigation/README.md` lists what
+    each flag adds and `tests/unit/test_ascentnav_*.py` pin the off state.
+    """
+
+    # Logging only: adds to each `step_trace` row the storey's identity (the
+    # floor INDEX shifts when a storey is inserted below), how many storeys
+    # and live frontiers the map holds, the stair flags, the object map's
+    # current goal, and the target boxes D-FINE returned BELOW the 0.8 ingest
+    # bar (the server's own floor is 0.4) with where their depth puts them.
+    # Reads state the step already computed; no extra model call.
+    trace: bool = False
+
+    # --- M1: which storey to search (`navigation/search/storey.py`) ---------
+    # Ask to change storey when another one the agent can reach is this many
+    # times as likely to hold the target as the one it is on, scored each
+    # exploring step as prior x (1 - detect_prob x searched share). ASCENT
+    # changes storey only when a storey runs out of frontiers or its LLM says
+    # so; on outputs/s83_baseline_v0 (100 episodes) 5 cross-floor episodes
+    # mapped a staircase and never started a climb.
+    storey_belief: bool = False
+    # 4.0, not OSG's 1.8 (`exploration.storey_switch_ratio`): replayed on the
+    # baseline traces, 1.8 asks to leave in 8 of the 61 same-floor successes
+    # before the target was first in view (the bar was 3). The one sweep the
+    # plan allowed: 2.5 -> 6, 3.0 -> 6, 4.0 -> 3, 5.0 -> 3; at 4.0 it still
+    # asks toward the goal's storey in 4 of those 5 never-climbed episodes and
+    # in 9 of the 17 that never reached it (docs/history/AB_RESULTS.md S83).
+    storey_switch_ratio: float = 4.0
+    # OSG's own (`exploration.storey_detect_prob`, `storey_anchor_weight`).
+    storey_detect_prob: float = 0.85
+    storey_prior_weight: float = 0.8
+    # What one live frontier still promises, in m^2: fitted on the baseline to
+    # the storeys the run went on to finish (`analyze_objectnav_search.py
+    # --storey` prints it).
+    storey_frontier_area_m2: float = 1.5
+    # Do not ask with fewer steps than a climb plus an approach left: the
+    # median climb that changed storey (37.5 steps) plus the median first
+    # sighting -> STOP of a success (12), same run.
+    storey_min_steps_left: int = 50
+
+    # --- M2b: a climb is judged by the height it gained ----------------------
+    # ASCENT calls a climb done when the agent, having touched the stair
+    # centroid, is off the stair map (`map_controller.py:299-315`). On the
+    # baseline that fired 31 times and 11 of them left the agent within 0.5 m
+    # of the height it started at -- it had turned round on the treads, or the
+    # "staircase" was not one -- after which it re-explored the storey it was
+    # already on from an empty map. On: such an arrival is a failed attempt and
+    # the storey does not change. Reads the pose's height, which the 2D-GPS
+    # reference does not.
+    verify_climb: bool = False
+    # "The same level": the height the analyzer and the dataset's own
+    # same-floor test use. The landings the baseline stood on are 1.1-1.7 m
+    # from a storey and the storeys 2.6-3.4 m apart, so this rejects only the
+    # attempts that went nowhere and leaves ASCENT's landing-to-landing relay.
+    climb_same_level_m: float = 0.5
+    # After this many attempts on one storey in one direction that ended on
+    # the level they began, stop being sent that way for `climb_ban_steps`. 0
+    # is the reference, which retries without limit (F3: bxsVRursffK ep2, 6
+    # attempts and 398 steps). 2 and a quarter of the episode are what
+    # `mf5_osg_on_ascent_map` measured (`max_failed_switches_per_storey`,
+    # `switch_ban_steps` 250 of 1000); the ban expires because a permanent one
+    # left that arm unable to reach the goal's storey (mf5_pass2_v19), and for
+    # the same reason a storey with no frontier left ignores it.
+    climb_fail_cap: int = 0
+    climb_ban_steps: int = 125
+
+    # --- M2c: a storey is climbed through its landings as one intent --------
+    # No single climb on the baseline covered a storey: the 8 that moved the
+    # agent furthest moved it 1.5-1.8 m, onto a landing, which ASCENT then
+    # maps as a storey of its own and decides afresh on. mL8ThkuaVTM ep2
+    # went down to its landing and back up six times; and a climb that
+    # STALLED on a landing (8 of the 60 attempts) re-initialised the storey
+    # it had left, so the agent explored that storey's map from the landing
+    # and walked back down (bxsVRursffK ep1, twice). On: (1) a stall
+    # `climb_same_level_m` or more from where the attempt began is an arrival
+    # on a new storey map; (2) an arrival less than `climb_storey_m` from
+    # where the climb began keeps the climb's direction: the next flight that
+    # way is taken before any frontier, and the way back is refused until
+    # the storey is covered, `climb_ban_steps` pass, or the way on is banned.
+    climb_relay: bool = False
+    # A storey, as opposed to a landing: OSG's `floor.new_level_m`. On the
+    # baseline's 9 multi-level scenes the highest landing is 1.69 m from its
+    # storey and the closest pair of storeys 2.60 m apart (S83's table).
+    climb_storey_m: float = 1.8
+    # The walk to a staircase asks the point-goal policy for an action and
+    # passes its STOP to the simulator (`ascent_policy.py:847`, F8), ending
+    # the episode: 2 of the baseline's 100, both failures. On: step forward
+    # instead, as the climb's own first phase does with the same answer --
+    # once per storey and direction; the second STOP goes through, because
+    # guarding every one looped for 290 steps in outputs/s85_storey_100.
+    stair_stop_guard: bool = False
+
+
+@dataclass
 class AgentConfig:
     max_steps: int = 500
     forward_m: float = 0.25
@@ -255,6 +352,8 @@ class AgentConfig:
     # closed-set COCO and cannot see a cracker box; the scene graph needs the
     # open-vocabulary head.
     osg_world_model_weights: str = "data/weights/yoloe-11s-seg.pt"
+    # Additions to `ascentnav` beyond the reference; all off by default.
+    search: AgentSearchConfig = field(default_factory=AgentSearchConfig)
 
     # Sensor-only PointNav mover (ASCENT/VLFM compatible defaults).
     pointnav_weights: str = "data/weights/pointnav_weights.pth"

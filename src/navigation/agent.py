@@ -68,6 +68,9 @@ log = logging.getLogger(__name__)
 from .mapping.value_map import ValueMap
 from .perception import tag_scene
 from .planner import GO_DOWN, GO_UP, AscentLLMPlanner, KnowledgeGraph
+from .search.storey import FloorSearchBelief, floor_table, storeys_of, unexplored_beyond
+from .search.trace import step_fields as trace_fields
+from .search.trace import weak_points
 from .stairs import (
     StairController,
     carrot_waypoint,
@@ -203,12 +206,34 @@ class AscentNavAgent:
         self.value_prompt = str(getattr(cfg.exploration, "value_prompt",
                                         "Seems like there is a {target} ahead."))
         self.use_max_confidence = bool(getattr(cfg.exploration, "value_use_max_confidence", False))
+        # `agent.search.*`: additions beyond the reference (`navigation/search/`),
+        # each off by default. `trace` only adds columns to the behaviour log.
+        search = getattr(a, "search", None)
+        self._search_trace = bool(getattr(search, "trace", False))
+        self._stair_stop_guard = bool(getattr(search, "stair_stop_guard", False))
+        self._storey_min_left = int(getattr(search, "storey_min_steps_left", 0))
 
         self.stats: dict = {}
+        self._base_y = 0.0                          # the pose's height, read only by `agent.search.*`
+        self._storey_belief: Optional[FloorSearchBelief] = None
+        if bool(getattr(search, "storey_belief", False)):          # M1
+            self._storey_belief = FloorSearchBelief(
+                switch_ratio=float(search.storey_switch_ratio),
+                detect_prob=float(search.storey_detect_prob),
+                prior_weight=float(search.storey_prior_weight),
+                frontier_area_m2=float(search.storey_frontier_area_m2),
+                stats=self.stats,
+            )
         self.stairs = StairController(
             agent_radius=float(a.agent_radius),
             burn_on_disable=bool(getattr(a, "stair_disable_burns_map", False)),
             passive_entry=passive, stats=self.stats,
+            verify_climb=bool(getattr(search, "verify_climb", False)),          # M2b
+            same_level_m=float(getattr(search, "climb_same_level_m", 0.5)),
+            fail_cap=int(getattr(search, "climb_fail_cap", 0)),
+            ban_steps=int(getattr(search, "climb_ban_steps", 0)),
+            relay=bool(getattr(search, "climb_relay", False)),                   # M2c
+            storey_m=float(getattr(search, "climb_storey_m", 1.8)),
         )
         kg, floor_prior = _load_priors(cfg)
         self.planner = AscentLLMPlanner(
@@ -251,9 +276,13 @@ class AscentNavAgent:
                                             target_category.replace("_", " "))
         self.step_count = 0
         self.anchor: Optional[EpisodeAnchor] = None
+        self._stair_guarded: set = set()              # (storey uid, direction) the STOP guard has used
+        self._floors_made = 0
         self._floors = [self._new_floor()]
         self._floor_idx = 0
         self.stairs.reset()
+        if self._storey_belief is not None:
+            self._storey_belief.reset()
         self.planner.reset()
         self.scene_graph = SceneGraph()
         if self.world is not None:
@@ -275,6 +304,7 @@ class AscentNavAgent:
         self.min_distance_xy = float("inf")
         self.cur_frontier: Optional[np.ndarray] = None
         self._last_dets: List[Detection] = []
+        self._weak: list = []
         self._last_rgb = None
         # S76: the best look the agent has had at the target since the current
         # cloud was built -- (score, rgb, bbox). It is dropped whenever the
@@ -314,7 +344,12 @@ class AscentNavAgent:
             size=MAP_SIZE,
         )
         om._downstair_detector = self.downstair_detector
+        self._floors_made += 1
         return {
+            # Which storey this is, in order of discovery. Recorded, never read
+            # by the control flow: the list INDEX shifts when a storey is
+            # inserted below, so a trace cannot use it as an identity.
+            "uid": self._floors_made - 1,
             "obstacle": om,
             # The world height this storey was walked at, as a running sum and
             # count. Recorded, never read by the control flow -- it exists so a
@@ -402,6 +437,7 @@ class AscentNavAgent:
         depth_n = normalise_depth(frame.depth, self.min_depth, self.max_depth)
         depth_map = filter_depth(depth_n.astype(np.float32), blur_type=None)   # A10, `:230`
         robot_xy, heading = self._pose(frame)
+        self._base_y = float(frame.camera_position[1]) - self.camera_height
         tf = xyz_yaw_pitch_roll_to_tf_matrix(
             np.array([robot_xy[0], robot_xy[1], self.camera_height]),
             heading, np.radians(-self._pitch_angle), 0.0)   # `:236-238`
@@ -419,6 +455,10 @@ class AscentNavAgent:
             self._last_dets = dets
             self._last_rgb = frame.rgb
             self._remember_best_view(dets, frame.rgb)
+            if self._search_trace:
+                self._weak = weak_points(
+                    getattr(self.detector, "last_weak", ()), self.target, depth_map, tf,
+                    self.min_depth, self.max_depth, self.fx, self.fy, self.anchor)
             if self.ram is not None or self.room_classifier is not None:   # `:751`
                 tag_scene(frame.rgb, om._floor_num_steps, self.object_map,
                           self.ram, self.room_classifier, stats=self.stats)
@@ -440,6 +480,7 @@ class AscentNavAgent:
             self.object_map.update_explored(tf, self.max_depth, 2 * np.arctan(frame.depth.shape[1] / (2 * self.fx)))
         else:
             self._last_dets = []
+            self._weak = []
 
         # --- RedNet (`:420-431`) and the obstacle map (`map_controller.py:477-539`)
         seg = self._stair_seg(frame)
@@ -476,6 +517,8 @@ class AscentNavAgent:
 
         self._stair_diag(seg, stair_det_mask)
         self._trace(frame, robot_xy, heading, seg, stair_det_mask, robot_px)
+        if self._search_trace:
+            self.behaviour.annotate(**trace_fields(self, goal, self._weak))
 
         # --- dispatch (`ascent_policy.py:447-581`) --------------------------
         st = self.stairs
@@ -608,16 +651,35 @@ class AscentNavAgent:
             om._this_floor_explored = True
             self.stats["no_frontier_steps"] = self.stats.get("no_frontier_steps", 0) + 1
             action = None
-            if not om._explored_up_stair:
-                action = self._navigate_stair_if_unexplored_floor(robot_xy, heading, "up")
-            if action is None and not om._explored_down_stair:
-                action = self._navigate_stair_if_unexplored_floor(robot_xy, heading, "down")
+            # `agent.search.climb_relay`: a landing the relay stopped on can be
+            # a dead end whose only way off is the flight it came up, which
+            # the reference marks explored -- leave by it rather than STOP.
+            relay = self.stairs.relay
+            if not om._explored_up_stair or relay:
+                action = self._navigate_stair_if_unexplored_floor(robot_xy, heading, "up", last_resort=True)
+            if action is None and (not om._explored_down_stair or relay):
+                action = self._navigate_stair_if_unexplored_floor(robot_xy, heading, "down", last_resort=True)
+            if action is not None and relay:
+                self.stats["climb_relay_dead_end"] = self.stats.get("climb_relay_dead_end", 0) + 1
             if action is not None:
                 return action
             self._state = "done"                              # `:725-726`
             self.approach_stop_reason = "explored_out"
             self.stats["explored_out"] = self.stats.get("explored_out", 0) + 1
             return STOP
+
+        relay = self.stairs.intent(self)                      # M2c, beyond the reference
+        if relay:
+            action = self._navigate_stair_if_unexplored_floor(
+                robot_xy, heading, "up" if relay == 1 else "down")
+            if action is not None:
+                self.stats["climb_relay_continues"] = self.stats.get("climb_relay_continues", 0) + 1
+                return action
+
+        if self._storey_belief is not None:                   # M1, beyond the reference
+            action = self._storey_request(robot_xy, heading)
+            if action is not None:
+                return action
 
         best, value = self.planner.get_best_frontier(          # `:735-742`
             robot_xy, om, self.value_map, self.object_map,
@@ -681,10 +743,45 @@ class AscentNavAgent:
         self.stats["stairwell_reinit"] = self.stats.get("stairwell_reinit", 0) + 1
         return self._initialize()
 
-    def _navigate_stair_if_unexplored_floor(self, robot_xy, heading, direction: str) -> Optional[str]:
-        """`ascent_policy.py:813-849`."""
+    def _storey_request(self, robot_xy, heading) -> Optional[str]:
+        """M1 (`search/storey.py`): leave for the storey the belief prefers.
+
+        Asked where the LLM's GO_UP / GO_DOWN is, and answered through the same
+        call, so a request is only ever a climb ASCENT could have started
+        itself: a staircase that way on the map, a storey beyond it not marked
+        explored. None keeps exploring this storey.
+        """
+        om, st = self.obstacle_map, self.stairs
+        storeys = storeys_of(self)
+        enough = self.max_steps - self.step_count >= self._storey_min_left
+        can = {d: (enough and bool(getattr(om, f"_has_{d}_stair"))
+                   and unexplored_beyond(storeys, self._floor_idx, d)
+                   and not st.banned(self, 1 if d == "up" else 2))
+               for d in ("up", "down")}
+        request = self._storey_belief.decide(
+            self.step_count, self._floor_idx, storeys,
+            floor_table(self.planner.floor_prior, self.target, len(storeys)),
+            can_up=can["up"], can_down=can["down"],
+            here_id=self._floors[self._floor_idx]["uid"])
+        if request is None:
+            return None
+        if self._search_trace:
+            self.behaviour.annotate(sb=request)
+        action = self._navigate_stair_if_unexplored_floor(robot_xy, heading, request)
+        if action is not None:
+            self.stats["storey_belief_climbs"] = self.stats.get("storey_belief_climbs", 0) + 1
+            self.stats.setdefault("storey_belief_first_step", self.step_count)
+        return action
+
+    def _navigate_stair_if_unexplored_floor(self, robot_xy, heading, direction: str,
+                                            last_resort: bool = False) -> Optional[str]:
+        """`ascent_policy.py:813-849`. `last_resort` is the caller with no
+        frontier left, which a climb ban (`agent.search.climb_fail_cap`) does
+        not bind -- there is nothing else for it to do."""
         om = self.obstacle_map
         if not getattr(om, f"_has_{direction}_stair"):
+            return None
+        if not last_resort and self.stairs.banned(self, 1 if direction == "up" else 2):
             return None
         if direction == "up":
             floor_range = range(self._floor_idx + 1, len(self._floors))
@@ -698,6 +795,20 @@ class AscentNavAgent:
             return None
         self._state = "climb"
         action = self._pointnav(robot_xy, heading, sf[0], stop_radius=0.0)   # F8
+        key = (self._floors[self._floor_idx]["uid"], direction)
+        if action is None and self._stair_stop_guard and key not in self._stair_guarded:
+            # Once per storey and direction: a staircase the point-goal policy
+            # keeps calling reached is one it cannot walk onto, and guarding
+            # it every time loops -- q3zU7Yy5E5s ep4 (outputs/s85_storey_100)
+            # spent 290 steps on 145 guarded STOPs, the 2-step cycle walk ->
+            # STOP -> FORWARD -> `_get_close_to_stair` gives up -> no
+            # frontier, so the last resort walks there again. The second
+            # STOP goes through, as in the reference.
+            self._stair_guarded.add(key)
+            # `agent.search.stair_stop_guard`: what `_climb_stair`'s first
+            # phase does with the same answer, rather than ending the episode.
+            self.stats["stair_stop_guarded"] = self.stats.get("stair_stop_guarded", 0) + 1
+            return FORWARD
         return STOP if action is None else action            # raw, `:847`
 
     def _look_for_downstair(self, robot_xy, heading) -> str:
@@ -876,6 +987,18 @@ class AscentNavAgent:
                 return self._look(LOOK_DOWN)
             if om._climb_stair_paused_step < 30:
                 return self._climb_stair(depth_n, robot_xy, heading, robot_px)
+            if st.stalled_on_a_landing(self):
+                # `agent.search.climb_relay`: stalled, but not where it began.
+                # That is a landing reached, and the storey to draw is the
+                # one under the agent, not the one it left (F5 below).
+                st.stall_arrival(self, om, robot_px)
+                if self._pitch_angle > 0:
+                    return self._look(LOOK_DOWN)
+                if self._pitch_angle < 0:
+                    return self._look(LOOK_UP)
+                self._state = "explore"
+                self.obstacle_map._done_initializing = True
+                return self._initialize()                      # the arrival's opening scan
             # `:459-514` (F5): copy the flight to the neighbour floor's map,
             # level the camera, re-run `_initialize` on THIS floor.
             if st.climb_stair_flag == 1:
@@ -905,6 +1028,7 @@ class AscentNavAgent:
                 self._done_initializing = False        # the flag `act` dispatches on
                 self._initialize_step = 0
                 action = self._initialize()
+            st.attempt_over(self, st.climb_stair_flag)
             st.update_stair_state(om)
             return action
         # not yet on the stairs (`:516-556`; the `:517-530` block is dead, F4)

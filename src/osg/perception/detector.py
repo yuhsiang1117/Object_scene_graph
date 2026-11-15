@@ -340,6 +340,10 @@ class DFineDetector(Detector):
         self.gdino_conf = float(gdino_conf)
         self._open_vocab: List[str] = []
         self._coco_query: Optional[str] = None
+        # Target-vocabulary boxes the last `detect` REJECTED for scoring under
+        # the ingest bar: (label, score, pixel xyxy). Diagnostic only -- nothing
+        # in the pipeline reads it, and no mask is requested for them.
+        self.last_weak: List[tuple] = []
         self.n_gdino_calls = 0
         self.n_calls = 0
         self.n_errors = 0
@@ -440,6 +444,7 @@ class DFineDetector(Detector):
         return score >= self.class_conf.get(self._normalize(label), self.conf)
 
     def detect(self, rgb: np.ndarray) -> List[Detection]:
+        self.last_weak = []
         img = self._encode(rgb)
         if img is None:
             self.n_errors += 1
@@ -464,6 +469,8 @@ class DFineDetector(Detector):
                 label = COCO_TO_HM3D[coco]
             score = float(logit)
             if not self._admits(label, score):
+                self.last_weak.append(
+                    (label, score, np.asarray(box, float) * np.array([w, h, w, h], float)))
                 continue
             # `to_json` sends NORMALISED xyxy; ASCENT denormalises the same way
             # (`map_controller.py:757`).

@@ -161,6 +161,36 @@ than silent.
 
 `open3d` is absent; its two `cluster_dbscan` calls are `sklearn.cluster.DBSCAN`.
 
+## Beyond the reference (`agent.search.*`)
+
+Everything above is the transcription. `src/navigation/search/` and the
+`agent.search.*` flags (`AgentSearchConfig`, where each value carries its
+measurement) are what this arm does that ASCENT does not. Every flag defaults
+to off; with all of them off the policy is the transcription, action for
+action, and `tests/unit/test_ascentnav_*.py` pin that. `tests/unit/
+test_objsearch_*.py` pin what each flag adds. Why each exists, and what was
+measured and NOT built, is `docs/history/AB_RESULTS.md` S83 onward.
+
+| flag | what it adds | where |
+|---|---|---|
+| `trace` | logging only: storey identity, storey and live-frontier counts, stair flags, the object map's goal, D-FINE's target boxes below the 0.8 ingest bar | `search/trace.py`, `agent.py:_search_trace` |
+| `storey_belief` (+ `storey_switch_ratio`, `storey_detect_prob`, `storey_prior_weight`, `storey_frontier_area_m2`, `storey_min_steps_left`) | each exploring step, a belief over the storeys ASCENT has mapped — prior × (1 − detect × searched share) — may ask for the staircase before the storey runs out of frontiers; the climb itself is ASCENT's (`_navigate_stair_if_unexplored_floor`) | `search/storey.py`, `agent.py:_storey_request` |
+| `verify_climb` (+ `climb_same_level_m`) | an "arrival" (off the stair map after the centroid) on the level the attempt began is a failed attempt: no storey switch, no new map | `stairs.py:attempt_over`, `process_climb_state` |
+| `climb_fail_cap`, `climb_ban_steps` | that many attempts on one storey in one direction that went nowhere stop the belief, the LLM's GO_UP/GO_DOWN and passive entry from sending the agent that way for a while. The ban expires and a storey with no frontier left ignores it; the staircase is NOT burnt, because a burn is permanent and a storey with no stairs and no frontiers STOPs | `stairs.py:banned` |
+| `stair_stop_guard` | a point-goal STOP on the walk to a staircase becomes FORWARD instead of ending the episode (F8), once per storey and direction | `agent.py:_navigate_stair_if_unexplored_floor` |
+| `climb_relay` (+ `climb_storey_m`) | a storey is climbed through its landings as one intent: a climb that stalls `climb_same_level_m` from where it began has arrived (the reference re-initialises the storey it left, F5), and from a landing the next flight the same way comes before any frontier and the way back is refused until `climb_storey_m` is covered. Measured and **not adopted** (S85: three rounds, no difference from `objsearch_storey` beyond noise) | `stairs.py:_relay_arrival`, `stall_arrival`; `agent.py:_explore` |
+
+Two things the additions read that the reference does not: the pose's height
+(`_base_y`, for `verify_climb`), and the floor prior under the target's HM3D
+name (`floor_table`; the transcription, like the reference, asks under the
+COCO name and reads zeros for sofa, tv_monitor and plant).
+
+`configs/experiment/objsearch_storey.yaml` turns on the storey belief, the
+climb verification with a cap of 2, and the guard; `objsearch_relay.yaml` adds
+`climb_relay`. Compare a run against the
+baseline with `python scripts/analyze_objectnav_search.py <baseline> <run>`:
+it classes every episode by where it failed and pairs the two runs.
+
 ## Measuring it
 
 ```
