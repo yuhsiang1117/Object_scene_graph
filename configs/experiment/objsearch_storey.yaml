@@ -1,8 +1,9 @@
 # @package _global_
 #
 # The S71 arm (`ascentnav`) plus the first two additions of S83
-# (docs/history/AB_RESULTS.md), and NOTHING else. Since S86 this is also the
-# default (`agent: s86`); the preset stays so S85/S86 can be re-run by name:
+# (docs/history/AB_RESULTS.md), and NOTHING else. It is `agent: s86`, the
+# default of S86 (S87 added the heading memory); the preset pins that group so
+# S85/S86 can be re-run by name:
 #
 #   M1   a belief over the storeys ASCENT has mapped decides when to leave
 #        one (`navigation/search/storey.py`), instead of waiting for it to run
@@ -20,6 +21,9 @@
 #
 # Compare against outputs/s83_baseline_v0 with
 # scripts/analyze_objectnav_search.py <baseline> <run>.
+defaults:
+  - override /agent: s86
+
 agent:
   search:
     storey_belief: true

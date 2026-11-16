@@ -5716,6 +5716,163 @@ and `floor_schedule_habitat`, the robot presets `stretch3_map` and
 `stretch3_search` (which run `nav_agent`, where the switches are never read),
 and `objsearch_ellipsoid_a`.
 
+### S87 — the on-stairs controller: step by heading, not by a carrot redrawn every view
+
+**Question.** S85/S86 left the climb itself as the lever: the storey belief
+gets the agent to a staircase more often, but most attempts on the flight
+stall ("pinned and turning"). Why do they stall, and can a sensor-only change
+to the on-stairs controller fix it without touching when to climb?
+
+**Diagnosis** (baseline traces `outputs/s83_baseline_v0`; Habitat's navmesh
+used only to score). 45–52% of on-stairs segments stall. Half of the stalled
+steps are in the walk to the stair mask's centroid: the reference leaves that
+phase only within 0.3 m of the centroid or on a point-goal STOP, and the
+centroid was off the walkable surface by > 0.2 m in 53–67% of them while the
+agent already stood on the stair map 0.5–1.0 m from it. On the flight, the
+carrot (`stairs.carrot_waypoint`, 0.8 m toward the farthest depth pixel, a
+median 4.1 m away, beyond the 5 m clip half the time) was walkable in a
+straight line 29% of the time in stalled climbs against 74% in climbs that
+went through, though some walkable heading was in view 92% of the time. HM3D
+runs with `allow_sliding: false`, so a 0.25 m forward that touches an edge is
+refused outright; the point-goal policy then turns away, the carrot is redrawn
+in the new view and comes with it. The same stall rate shows in the pass-1
+prior maps (prior_v2, 73% of segments) and in OSG's own climb
+(`CROSS_ANCHOR_OBSTACLE_MAP.md` v17–v21: 48 ok / 36 failed of 87), so it is
+the flight, not the transcription.
+
+**Three switches** (`AgentSearchConfig`, all default off; flags off matched
+`outputs/_smoke_s83_trace` action for action, `outputs/_smoke_s87_off`):
+
+- `climb_mount_m` — standing on the stair map within this distance of the
+  stair target also starts the climb (once per attempt).
+- `climb_heading_memory` — on the flight, step by one of the twelve headings
+  the agent can face (`navigation/search/climb.py:HeadingMemory`): a forward
+  the simulator refuses closes that heading at that 0.1 m spot; one that
+  gains height the attempt's way keeps the heading; one that loses height
+  closes it at the spot left and the spot reached and turns the agent round;
+  a level one chooses again, nearest the carrot's bearing. The goal heading is
+  held while turning.
+- `climb_carrot_free` — the carrot aims at the farthest direction whose first
+  0.8 m the depth image shows clear of anything above a 38° flight
+  (offline on the recorded stalls: walkable 21% → 35%).
+
+**The probe** (`scripts/probe_stair_climb.py`). Replays a recorded run's
+actions, snapshots the agent and simulator at the start of every climb
+attempt, and lets each arm act from the identical state until the attempt is
+over (cap 200 steps). The reference arm reproduced the recorded outcome in
+64 of 65 dev attempts. An attempt "went its way" when it ended off the flight
+≥ 0.5 m from where it began **in the attempt's own direction**. Round 1 scored
+|Δy| ≥ 0.5 and was wrong: in mL8ThkuaVTM ep 2 the reference walked several
+"down" attempts back UP 0.74 m, onto the storey it came from, and |Δy|
+counted them as successes.
+
+| dev, 65 attempts | round 1 (rescored) went / wrong way | round 2 went / wrong way | round 2 vs ref |
+|---|---|---|---|
+| reference | 23 / 7 | 23 / 7 | — |
+| mount | 22 | 23 / 4 | 0 better, 0 worse |
+| heading | 17 (0 / 6, p = 0.031) | **26 / 0** | 3 better, 0 worse, p = 0.25 |
+| mount + heading | 17 | 26 / 0 | 3 / 0 |
+| mount + heading + free | 20 | 26 / 0 | 3 / 0 |
+
+Round 1's two defects, found with `--steps` on mL8ThkuaVTM ep 2: the mount
+fired at the stair mask's edge and the next step off it was an "arrival"
+(4 steps, |Δy| ≤ 0.18); the heading memory closed a wrong-way heading only in
+the 0.1 m spot it left, so the agent walked the flight back one spot at a
+time, and it chose again after every forward, dropping headings that were
+working for the carrot's bearing into a wall. Round 2: leaving the stair map
+within 0.5 m of the mount height undoes the mount (`climb_unmounted`); a
+forward that climbed keeps its heading; a wrong-way one closes it at both
+spots and turns round.
+
+**No round 3.** Of the heading arm's 33 failed attempts, 20 never rose
+0.15 m, 14 of them in two scenes where the stair map, not the stepping, is
+wrong: in 4ok3usBNeis ep 0 the "down" blob (160 px) lies 2.2 m from the real
+head of the flight and the agent turns in place on it; in DYehNKdT76V ep 1/4
+the agent enters the flight's footprint from underneath, with its upper half
+overhead and the foot 3 m away. Of the rest, in bxsVRursffK ep 1 and
+qyAac8rV8Zk ep 0 the reference walks an "up" attempt 0.5–0.7 m down before
+the heading memory takes over (it turns round and returns to the start level;
+the reference went on down a storey), and four mL8ThkuaVTM attempts climb
+real 0.33–0.47 m flights the 0.5 m bar does not count. None is a heading
+defect. Mount and free carrot added nothing and are **not adopted**; the flags
+stay, default off.
+
+**Live.** `+experiment=objsearch_climb` = the default arm (`agent: s86`) +
+`climb_heading_memory`, nothing else. Pre-registered as for S85: on the 21
+cross-floor episodes, the goal's storey reached no less than the default,
+success at most 1 lower, more climbs ending on the goal's storey; then 100
+episodes with the same-floor guardrails (successes −2 at most, climb-mode
+share +3 points at most).
+
+| | 21 cross-floor: s86 `s87_s86_xfloor` | + heading `s87_climb_xfloor` |
+|---|---|---|
+| success | 6 | 8 (+3 / −1, p = 0.63) |
+| reached the goal's storey | 10 | 12 |
+| climbs ending on the goal's storey | 17 | 19 |
+| episodes whose storey changed in belief only | 4 | 0 |
+| SPL | 0.133 | 0.237 |
+
+Gate passed. The 3-for-1 swaps are S85's usual suspects (bxsVRursffK ep 1,
+mL8ThkuaVTM ep 0, wcojb4TFT35 ep 3; p53SfW6mjZe ep 4).
+
+| 100 episodes | dev: M1+M2b `s85_storey_100` | dev: + heading `s87_climb_100` | held-out: M1+M2b `s86_heldout_storey` | held-out: + heading `s87_heldout_climb` |
+|---|---|---|---|---|
+| success | 67 | **70** (+5 / −2, p = 0.45) | 60 | **63** (+6 / −3, p = 0.51) |
+| SPL | 0.371 | 0.399 | 0.276 | 0.288 |
+| same-floor success (78) | 60 | 61 | 53 | 50 |
+| cross-floor success (22) | 7 | 9 | 7 | **13** |
+| reached the goal's storey | 11 | 13 (3 / 1) | 9 | **16 (7 better, 0 worse, sign p = 0.016)** |
+| storey changed in belief only | 6 | 2 | 9 | 2 |
+| climb attempts | 80 | 71 | 100 | 85 |
+| climb-mode steps, all / same-floor | 23.2% / 10.7% | 18.5% / 6.8% | 23.0% / 12.4% | 21.0% / **16.3%** |
+| mean steps | 204 | 185 | 236 | 217 |
+
+- Against the S83 baseline the dev arm is 65 → 70 (+8 / −3, p = 0.23), goal
+  storey 5 → 13; against the held-out baseline 58 → 63 (+8 / −3, p = 0.23),
+  7 → 16.
+- Dev guardrails met: same-floor successes +1, same-floor climb-mode share
+  −3.9 points. `s85_storey_100` predates the stair-guard fix; without the
+  episode the guard looped in (q3zU7Yy5E5s ep 4) the share still falls
+  8.7% → 5.8% (cvZr5TUy5C5 ep 0: 324 climb steps → 82).
+- **Held-out guardrails not met**: same-floor successes −3 (bar −2) and
+  same-floor climb-mode share +3.9 points (bar +3), 7 same-floor episodes with
+  more climb steps and none with fewer (sign p = 0.016).
+- Which flips the switch caused: it acts only on the flight, so an episode
+  whose two runs first differ at a step neither run was climbing diverged by
+  the LLM, not by the switch. Held-out: all 6 wins and 1 loss (TEEsavR23oF
+  ep 9) first differ on the stairs; the other 2 losses (5cdEh9F2hJL ep 6 at
+  step 14, DYehNKdT76V ep 9 at step 107, both before any climb) do not.
+  Dev: 5 wins, 2 losses on the stairs. Pooled over both splits, 11 wins and 3
+  losses caused on the flight (sign p = 0.057).
+
+**Reading.** The heading memory does what it was built for, on both splits:
+no attempt ends the wrong way on the probe (7 → 0), episodes that believe
+they changed storey without leaving fall from 6 and 9 to 2, and on held-out
+the agent reaches the goal's storey in 16 cross-floor episodes against 9
+(7 / 0, p = 0.016) with cross-floor success 7 → 13. SR moves +3 on each split,
+inside the ±3 of n = 100 (pooled 127 → 133). The cost is on same-floor
+episodes. On held-out the storey belief asked for 34 climbs in 13 same-floor
+episodes against 22 in 11 (dev: 12 in 6 against 11 in 5), while the
+same-floor episodes that ever stood 1.5 m off their start storey went 6 → 5:
+the agent does not leave more often, it is sent to the stairs more often and
+spends longer there. Why the belief asks more is not measured here. Held-out
+same-floor climbing rose 3.9 points and broke the pre-registered guardrail,
+as M1 + M2b's dev run did in S85; of the 3 same-floor losses only one is the
+switch's. It fails the pre-registered rule.
+
+**Adopted by decision** as the default (`configs/agent/s87.yaml` = `agent:
+s86` + `climb_heading_memory`, selected by `configs/config.yaml`), on the
+cross-floor gain on both splits, accepting the held-out same-floor cost.
+`+experiment=objsearch_climb` pins `agent: s87`; `objsearch_storey` and
+`objsearch_relay` now pin `agent: s86`, so S85/S86 compose to what they were
+measured with. The same seven presets as at S86 moved in the fingerprint
+golden, each in that one switch (`osg_unified_pipeline`, `mfv2_dataset`,
+`nav2_habitat`, `floor_schedule_habitat`, `stretch3_map`, `stretch3_search`,
+`objsearch_ellipsoid_a`). The next lever is
+the other half of the trade, the storey belief's asks on same-floor
+episodes, not the stepping. The held-out split has now been read twice
+(S86, S87); a further change judged on it is no longer held-out.
+
 ## Planned — not yet run
 
 ### S29 — re-test the approach re-check with BLIP-2 ITM

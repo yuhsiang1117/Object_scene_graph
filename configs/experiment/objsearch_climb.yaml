@@ -1,0 +1,39 @@
+# @package _global_
+#
+# `objsearch_storey` (the default since S86: M1 + M2b + the stair STOP guard)
+# plus the S87 on-stairs heading memory, and NOTHING else
+# (docs/history/AB_RESULTS.md S87):
+#
+#   climb_heading_memory  on the flight, step by heading instead of chasing a
+#        carrot redrawn in every view: a forward that gained height the way
+#        the climb goes keeps its heading, one that lost it closes that
+#        heading at both spots and turns round, one that was refused closes
+#        it there (`navigation/search/climb.py:HeadingMemory`).
+#
+# On the 65 dev climbs replayed from the same start (scripts/probe_stair_climb.py)
+# it left the flight the climb's own way in 26 against the reference's 23
+# (3 better, 0 worse) and never the other way (reference: 7). The two other
+# S87 switches, `climb_mount_m` and `climb_carrot_free`, added nothing on top
+# of it and are not set.
+#
+# Live: dev 67 -> 70/100, held-out 60 -> 63/100; held-out goal storey 9 -> 16
+# of 22 (7 better, 0 worse). On held-out the same-floor
+# guardrails failed (successes -3, bar -2; climb-mode share +3.9 points,
+# bar +3). Adopted by decision as the default since S87 (`agent: s87`);
+# the preset pins that group so S87 can be re-run by name.
+#
+# Each value is the dataclass default (`AgentSearchConfig`); only the
+# switches are set here.
+#
+#   python scripts/run_eval.py +experiment=objsearch_climb \
+#       eval.behaviour_log=true agent.search.trace=true output_dir=outputs/<name>
+defaults:
+  - override /agent: s87
+
+agent:
+  search:
+    storey_belief: true
+    verify_climb: true
+    climb_fail_cap: 2
+    stair_stop_guard: true
+    climb_heading_memory: true

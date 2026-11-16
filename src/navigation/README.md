@@ -178,6 +178,9 @@ measured and NOT built, is `docs/history/AB_RESULTS.md` S83 onward.
 | `verify_climb` (+ `climb_same_level_m`) | an "arrival" (off the stair map after the centroid) on the level the attempt began is a failed attempt: no storey switch, no new map | `stairs.py:attempt_over`, `process_climb_state` |
 | `climb_fail_cap`, `climb_ban_steps` | that many attempts on one storey in one direction that went nowhere stop the belief, the LLM's GO_UP/GO_DOWN and passive entry from sending the agent that way for a while. The ban expires and a storey with no frontier left ignores it; the staircase is NOT burnt, because a burn is permanent and a storey with no stairs and no frontiers STOPs | `stairs.py:banned` |
 | `stair_stop_guard` | a point-goal STOP on the walk to a staircase becomes FORWARD instead of ending the episode (F8), once per storey and direction | `agent.py:_navigate_stair_if_unexplored_floor` |
+| `climb_mount_m` | standing on the stair map within this distance of the stair target also ends the walk onto the flight (the reference waits for 0.3 m from the stair mask's centroid, which is often not a walkable point). Once per attempt; leaving the stair map within 0.5 m of the height it mounted at undoes the mount instead of counting as an arrival. Not adopted (S87) | `stairs.py:process_climb_state` |
+| `climb_heading_memory` | on the flight, the twelve headings the agent can turn to are tried nearest-the-carrot first; a step the simulator refuses closes that heading at that spot; a step that climbs in the attempt's direction keeps its heading; a step the wrong way in height closes it at both spots and turns the agent round; the chosen heading is held while turning. `+experiment=objsearch_climb` (S87) | `search/climb.py:HeadingMemory`, `agent.py:_climb_stair` |
+| `climb_carrot_free` | the carrot aims at the farthest direction whose first 0.8 m the depth image shows clear, not at the farthest pixel. Not adopted (S87) | `search/climb.py:free_carrot_offset`, `agent.py:_climb_stair` |
 | `climb_relay` (+ `climb_storey_m`) | a storey is climbed through its landings as one intent: a climb that stalls `climb_same_level_m` from where it began has arrived (the reference re-initialises the storey it left, F5), and from a landing the next flight the same way comes before any frontier and the way back is refused until `climb_storey_m` is covered. Measured and **not adopted** (S85: three rounds, no difference from `objsearch_storey` beyond noise) | `stairs.py:_relay_arrival`, `stall_arrival`; `agent.py:_explore` |
 
 Two things the additions read that the reference does not: the pose's height
@@ -185,15 +188,16 @@ Two things the additions read that the reference does not: the pose's height
 name (`floor_table`; the transcription, like the reference, asks under the
 COCO name and reads zeros for sofa, tv_monitor and plant).
 
-**The default since S86.** `configs/agent/s86.yaml`, which `configs/config.yaml`
-selects, turns on `storey_belief`, `verify_climb` (cap 2) and
-`stair_stop_guard`; `+experiment=ascentnav` (`agent: s71`) is the arm without
-them, and every preset measured before S86 keeps `s71`. The dataclass defaults
+**The default since S87.** `configs/agent/s87.yaml`, which `configs/config.yaml`
+selects, is `configs/agent/s86.yaml` (`storey_belief`, `verify_climb` with cap
+2, `stair_stop_guard`; the default of S86) plus `climb_heading_memory`;
+`+experiment=ascentnav` (`agent: s71`) is the arm without any of them, and
+every preset measured before S86 keeps `s71`. The dataclass defaults
 stay off, so the transcription tests are untouched.
 
-`configs/experiment/objsearch_storey.yaml` turns on the storey belief, the
-climb verification with a cap of 2, and the guard; `objsearch_relay.yaml` adds
-`climb_relay`. Compare a run against the
+`configs/experiment/objsearch_storey.yaml` pins `agent: s86`;
+`objsearch_relay.yaml` adds `climb_relay` to it; `objsearch_climb.yaml` pins
+`agent: s87`. Compare a run against the
 baseline with `python scripts/analyze_objectnav_search.py <baseline> <run>`:
 it classes every episode by where it failed and pairs the two runs.
 

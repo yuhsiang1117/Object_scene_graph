@@ -102,7 +102,8 @@ class StairController:
                  passive_entry: bool = True, stats: Optional[dict] = None,
                  verify_climb: bool = False, same_level_m: float = 0.5,
                  fail_cap: int = 0, ban_steps: int = 0,
-                 relay: bool = False, storey_m: float = 1.8) -> None:
+                 relay: bool = False, storey_m: float = 1.8,
+                 mount_m: float = 0.0, heading_memory: bool = False) -> None:
         self.agent_radius = float(agent_radius)
         self.burn_on_disable = bool(burn_on_disable)
         self.passive_entry = bool(passive_entry)
@@ -116,6 +117,13 @@ class StairController:
         # as ONE intent, see `_relay_arrival`.
         self.relay = bool(relay)
         self.storey_m = float(storey_m)
+        # S87, off in the reference: when the walk onto the flight is over
+        # (`process_climb_state`), and how the flight is walked (`HeadingMemory`).
+        self.mount_m = float(mount_m)
+        self.heading_memory = None
+        if heading_memory:
+            from .search.climb import HeadingMemory
+            self.heading_memory = HeadingMemory()
         self.stats = stats if stats is not None else {}
         self.reset()
 
@@ -141,6 +149,8 @@ class StairController:
         self.intent_y0 = 0.0                       # the height that relay left
         self.intent_until = -1                     # the step it lapses at
         self.on_arrival_flight = False             # still standing on the flight a stall arrived by (M2c)
+        self.mounted_y: Optional[float] = None     # the height a `mount_m` mount happened at (S87)
+        self.mount_used = False                    # one mount per attempt
 
     # ---------------------------------------------------------- predicates
 
@@ -266,6 +276,8 @@ class StairController:
         """`_reset_stair_climb_state` (:318-326)."""
         self.reach_stair = False
         self.reach_stair_centroid = False
+        self.mounted_y = None
+        self.mount_used = False
         self.stair_dilate_flag = False
         self.climb_stair_flag = 0
         om._climb_stair_paused_step = 0
@@ -279,6 +291,8 @@ class StairController:
         self.climb_stair_flag = 0
         self.reach_stair = False
         self.reach_stair_centroid = False
+        self.mounted_y = None
+        self.mount_used = False
         self.stair_dilate_flag = False
 
     def disable_stair_and_reset(self, agent, om, disabled_frontier: np.ndarray,
@@ -367,6 +381,17 @@ class StairController:
                     and np.linalg.norm(np.asarray(self.stair_frontier).reshape(-1, 2)[0]
                                        - np.atleast_2d(robot_xy)) <= 0.3):
                 self.reach_stair_centroid = True
+            elif (self.mount_m > 0 and on and not self.mount_used and self.stair_frontier is not None
+                    and np.size(self.stair_frontier)
+                    and np.linalg.norm(np.asarray(self.stair_frontier).reshape(-1, 2)[0]
+                                       - np.atleast_2d(robot_xy)) <= self.mount_m):
+                # `agent.search.climb_mount_m`: on the flight and near its
+                # centroid, which need not be a point anyone can stand on.
+                # Once per attempt; see the un-mount below.
+                self.reach_stair_centroid = True
+                self.mount_used = True
+                self.mounted_y = float(getattr(agent, "_base_y", 0.0))
+                self.stats["climb_mounted"] = self.stats.get("climb_mounted", 0) + 1
         else:
             if not on and om._climb_stair_paused_step >= 30:
                 # :279-297 -- a staircase that stalled for 30 steps and is no
@@ -392,6 +417,16 @@ class StairController:
                     if agent._floor_idx - 1 >= 0:
                         del agent._floors[agent._floor_idx - 1]
                         agent._floor_idx -= 1
+            elif (not on and self.mounted_y is not None
+                    and abs(float(getattr(agent, "_base_y", 0.0)) - self.mounted_y) < self.same_level_m):
+                # S87 round 2: a mount happens at the mask's edge, and the
+                # next step can leave the mask with the height unchanged (dev
+                # probe: 6 attempts "arrived" within 4 steps, |dy| <= 0.18 m).
+                # That is not an arrival: undo the mount and walk on to the
+                # centroid as the reference does.
+                self.reach_stair_centroid = False
+                self.mounted_y = None
+                self.stats["climb_unmounted"] = self.stats.get("climb_unmounted", 0) + 1
             elif not on:
                 # :299-315 -- off the stairs having been on the centroid: arrived.
                 y0 = self.attempt_y0
@@ -531,6 +566,10 @@ class StairController:
         """`_navigate_stair_if_unexplored_floor` :838-841."""
         self.climb_stair_over = False
         self.climb_stair_flag = direction
+        self.mounted_y = None
+        self.mount_used = False
+        if self.heading_memory is not None:
+            self.heading_memory.reset()
         self.stair_frontier = np.asarray(
             om._up_stair_frontiers if direction == 1 else om._down_stair_frontiers)
         self.stats["climb_attempt"] = self.stats.get("climb_attempt", 0) + 1

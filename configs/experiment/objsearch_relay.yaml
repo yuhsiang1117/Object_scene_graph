@@ -17,6 +17,9 @@
 #
 #   python scripts/run_eval.py +experiment=objsearch_relay \
 #       eval.behaviour_log=true agent.search.trace=true output_dir=outputs/<name>
+defaults:
+  - override /agent: s86
+
 agent:
   search:
     storey_belief: true

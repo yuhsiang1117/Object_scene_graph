@@ -106,6 +106,41 @@ class AgentSearchConfig:
     # once per storey and direction; the second STOP goes through, because
     # guarding every one looped for 290 steps in outputs/s85_storey_100.
     stair_stop_guard: bool = False
+    # S87, the on-stairs controller. Of the steps in climbs that stalled
+    # (paused reached 30), 55-68% are before the stair centroid: the reference
+    # only leaves that phase within 0.3 m of the centroid of the stair mask or
+    # on a point-goal STOP, and the centroid was off the walkable surface by
+    # > 0.2 m in 53-67% of them while the agent already stood on the stair map
+    # 0.5-1.0 m from it. > 0: standing on the stair map within this distance
+    # of the target also starts the climb, once per attempt; leaving the stair
+    # map within 0.5 m of the mount height undoes it (S87 round 1: such a
+    # mount "arrived" within 4 steps in 6 dev attempts). 0 is the reference.
+    # Not adopted: 1.0 left the flight its way in 23 of 65 dev climbs, as the
+    # reference did (0 better, 0 worse), and added nothing to the heading
+    # memory (S87 round 2).
+    climb_mount_m: float = 0.0
+    # On the flight, HM3D's simulator refuses any 0.25 m step that touches an
+    # edge (`eval.allow_sliding: false`). In stalled climbs some heading of
+    # the twelve the agent can turn to walked AND changed height 94% of the
+    # time, and the heading it had walked 42% of the time, yet 74% of its
+    # actions were turns. On: the climb chooses among the twelve headings the
+    # one nearest the carrot that has not refused a step at this spot, keeps
+    # that choice until it steps, and remembers refusals for the attempt. A
+    # step that climbs the attempt's way keeps its heading; one the wrong way
+    # turns the agent round (S87 round 1 walked flights back spot by spot).
+    # Round 2, the 65 dev climbs replayed from the same start: left the
+    # flight its way 23 -> 26 (3 better, 0 worse, p = 0.25), the other way
+    # 7 -> 0 (`+experiment=objsearch_climb`). Live, held-out: goal storey
+    # 9 -> 16 of 22, SR 60 -> 63, but the same-floor guardrails failed; on
+    # by decision in the default arm (`configs/agent/s87.yaml`).
+    climb_heading_memory: bool = False
+    # The carrot aims at the farthest pixel in view (a median 4.1 m away in
+    # stalled climbs, beyond the 5 m clip half the time). On: only among the
+    # directions whose first 0.8 m the depth image shows clear of anything
+    # above a 38-degree flight (`navigation/search/climb.py`). Offline on the
+    # recorded stalls: walkable 21% -> 35% (S87). Not adopted: on top of the
+    # heading memory it changed no dev climb's outcome (26 -> 26, round 2).
+    climb_carrot_free: bool = False
 
 
 @dataclass

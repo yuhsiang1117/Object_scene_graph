@@ -211,6 +211,8 @@ class AscentNavAgent:
         search = getattr(a, "search", None)
         self._search_trace = bool(getattr(search, "trace", False))
         self._stair_stop_guard = bool(getattr(search, "stair_stop_guard", False))
+        self._climb_carrot_free = bool(getattr(search, "climb_carrot_free", False))   # S87
+        self._frame = None                          # the frame being acted on, read only by `agent.search.*`
         self._storey_min_left = int(getattr(search, "storey_min_steps_left", 0))
 
         self.stats: dict = {}
@@ -234,6 +236,8 @@ class AscentNavAgent:
             ban_steps=int(getattr(search, "climb_ban_steps", 0)),
             relay=bool(getattr(search, "climb_relay", False)),                   # M2c
             storey_m=float(getattr(search, "climb_storey_m", 1.8)),
+            mount_m=float(getattr(search, "climb_mount_m", 0.0)),               # S87
+            heading_memory=bool(getattr(search, "climb_heading_memory", False)),
         )
         kg, floor_prior = _load_priors(cfg)
         self.planner = AscentLLMPlanner(
@@ -438,6 +442,7 @@ class AscentNavAgent:
         depth_map = filter_depth(depth_n.astype(np.float32), blur_type=None)   # A10, `:230`
         robot_xy, heading = self._pose(frame)
         self._base_y = float(frame.camera_position[1]) - self.camera_height
+        self._frame = frame
         tf = xyz_yaw_pitch_roll_to_tf_matrix(
             np.array([robot_xy[0], robot_xy[1], self.camera_height]),
             heading, np.radians(-self._pitch_angle), 0.0)   # `:236-238`
@@ -1115,6 +1120,17 @@ class AscentNavAgent:
             return self._look(LOOK_UP)
         # phase 3: the carrot (`:1128-1189`) on the RAW depth
         fresh = carrot_waypoint(depth_n, robot_xy, heading, self.hfov, 0.8)
+        if self._climb_carrot_free and self._frame is not None:
+            # `agent.search.climb_carrot_free`: the farthest direction whose
+            # first 0.8 m is clear; the reference's carrot when none is.
+            from .search.climb import free_carrot_offset
+            off = free_carrot_offset(np.asarray(self._frame.depth, dtype=np.float32),
+                                     np.asarray(self._frame.T_wc, dtype=float),
+                                     self.fx, self.fy, self._base_y, self.hfov)
+            if off is not None:
+                ang = heading - off
+                fresh = np.asarray(robot_xy, dtype=float) + 0.8 * np.array([np.cos(ang), np.sin(ang)])
+                self.stats["climb_carrot_free"] = self.stats.get("climb_carrot_free", 0) + 1
         if fresh is None:
             return FORWARD
         end_px = om._up_stair_end if st.climb_stair_flag == 1 else om._down_stair_end
@@ -1124,6 +1140,15 @@ class AscentNavAgent:
         st.carrot_goal_xy = st.last_carrot_xy = carrot
         st.last_carrot_px = om._xy_to_px(np.atleast_2d(carrot))
         om._carrot_goal_px = st.last_carrot_px
+        if st.heading_memory is not None:
+            # `agent.search.climb_heading_memory`: the flight walked heading
+            # by heading toward the carrot, not by the point-goal policy.
+            self._pn_goal = np.asarray(carrot, dtype=float)
+            d = np.asarray(carrot, dtype=float) - np.asarray(robot_xy, dtype=float)
+            action = st.heading_memory.step(robot_xy, heading, self._base_y,
+                                            st.climb_stair_flag, float(np.arctan2(d[1], d[0])))
+            self.stats["climb_heading_steps"] = self.stats.get("climb_heading_steps", 0) + 1
+            return action
         action = self._pointnav(robot_xy, heading, carrot, stop_radius=0.0)
         if action is None:
             self.stats["climb_forced_forward"] = self.stats.get("climb_forced_forward", 0) + 1
