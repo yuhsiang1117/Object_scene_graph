@@ -21,12 +21,16 @@ import numpy as np
 
 
 def tag_scene(rgb: np.ndarray, floor_num_steps: int, object_map, ram, room_classifier,
-              img_b64: Optional[str] = None, stats: Optional[dict] = None) -> None:
+              img_b64: Optional[str] = None, stats: Optional[dict] = None,
+              tags: Optional[List[str]] = None) -> None:
     """`_update_current_step_scene_info`, for one environment."""
     object_map.each_step_objects[floor_num_steps] = []
     object_map.each_step_rooms[floor_num_steps] = []
 
-    tags: List[str] = ram.tags(rgb, img_b64) if ram is not None else []
+    # `tags`: RAM++'s reply when the caller already requested it (on a worker
+    # thread, `agent.speed.parallel_servers`); the same call, made earlier.
+    if tags is None:
+        tags = ram.tags(rgb, img_b64) if ram is not None else []
     object_map.each_step_objects[floor_num_steps] = tags
     for t in tags:
         object_map.this_floor_objects.add(t)

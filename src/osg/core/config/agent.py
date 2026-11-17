@@ -144,6 +144,36 @@ class AgentSearchConfig:
 
 
 @dataclass
+class AgentSpeedConfig:
+    """`agent.speed.*`: how `ascentnav` calls its served models, not what it does.
+
+    Each switch removes model time without changing any action: the profile
+    of one 150-step episode (S88) spent 228 ms a step waiting on the five
+    servers, called one after another, and much of what they returned was
+    never read. With all three on, the 3-episode smoke takes the same actions
+    step for step as with all three off (S88); only diagnostics that described
+    the skipped calls change, as noted per switch.
+    """
+
+    # MobileSAM masks only the detections the agent keeps: the target (and,
+    # without a stair detector, the stair labels the fallback reads). D-FINE
+    # admits all 41 vocabulary classes and every one was masked, but ASCENT
+    # keeps the target alone (`_filter_target`): 5 of 121 MobileSAM calls in
+    # the profiled episode. The others get their box as a mask.
+    sam_target_only: bool = True
+    # GroundingDINO's stair mask is read only when RedNet sees more than 20
+    # stair pixels in the same frame (`obstacle_map.py:527`), which 89.4% of
+    # 40 219 steps did not. Run RedNet first and skip the call then. The
+    # trace's `stair_det_px` and the `stair_mask_frames` stat read 0 on the
+    # skipped frames.
+    lazy_stair_detector: bool = True
+    # Send the BLIP-2, RAM++ and GroundingDINO-stair requests on worker
+    # threads while D-FINE runs, and read each reply where the serial loop
+    # used it, so the step waits for the slowest call instead of their sum.
+    parallel_servers: bool = True
+
+
+@dataclass
 class AgentConfig:
     max_steps: int = 500
     forward_m: float = 0.25
@@ -389,6 +419,8 @@ class AgentConfig:
     osg_world_model_weights: str = "data/weights/yoloe-11s-seg.pt"
     # Additions to `ascentnav` beyond the reference; all off by default.
     search: AgentSearchConfig = field(default_factory=AgentSearchConfig)
+    # How the served models are called; behaviour-identical, on by default.
+    speed: AgentSpeedConfig = field(default_factory=AgentSpeedConfig)
 
     # Sensor-only PointNav mover (ASCENT/VLFM compatible defaults).
     pointnav_weights: str = "data/weights/pointnav_weights.pth"

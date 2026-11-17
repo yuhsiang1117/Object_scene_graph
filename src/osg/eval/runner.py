@@ -193,6 +193,7 @@ def run_eval(cfg) -> dict:
             # "pointnav_creep_stall_eps" "pointnav_creep_stall_steps"
             # "osg_world_model"
             # "search" (agent.search.*: the additions to ascentnav, as one dict)
+            # "speed" (agent.speed.*: how ascentnav calls its servers, behaviour-identical)
             # "pointnav_stop_radius" "pointnav_weights" "policy" "ranker"
             # "ranker_every_steps" "ranker_topk" "reachable_via_viewpoint"
             # "rednet_stairs" "reselect_every" "room_classifier" "room_erode_iters"

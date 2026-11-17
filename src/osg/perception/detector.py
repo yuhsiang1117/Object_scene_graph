@@ -344,6 +344,11 @@ class DFineDetector(Detector):
         # the ingest bar: (label, score, pixel xyxy). Diagnostic only -- nothing
         # in the pipeline reads it, and no mask is requested for them.
         self.last_weak: List[tuple] = []
+        # Labels whose detections get a MobileSAM mask; None = every label.
+        # Set by a caller that discards the rest (`agent.speed.sam_target_only`);
+        # the others are returned with their box as the mask.
+        self._mask_labels: Optional[set] = None
+        self.n_sam_skipped = 0
         self.n_gdino_calls = 0
         self.n_calls = 0
         self.n_errors = 0
@@ -381,6 +386,11 @@ class DFineDetector(Detector):
             [query] if query and query not in nameable and self._coco_query is None
             else [])
 
+    def set_mask_labels(self, labels: Optional[List[str]]) -> None:
+        """Mask only detections with these labels (None: all of them)."""
+        self._mask_labels = (None if labels is None
+                             else {self._normalize(x) for x in labels})
+
     def _post(self, url: str, payload: dict) -> Optional[dict]:
         import json as _json
         import urllib.request
@@ -415,12 +425,18 @@ class DFineDetector(Detector):
         ok, buf = cv2.imencode(".jpg", rgb)
         return base64.b64encode(buf.tobytes()).decode("ascii") if ok else None
 
-    def _mask_for(self, rgb: np.ndarray, box_px, img_b64: str) -> np.ndarray:
+    def _mask_for(self, rgb: np.ndarray, box_px, img_b64: str,
+                  label: Optional[str] = None) -> np.ndarray:
         h, w = rgb.shape[:2]
         x0, y0, x1, y1 = [int(round(float(v))) for v in box_px]
         x0, x1 = max(0, min(x0, w - 1)), max(0, min(x1, w))
         y0, y1 = max(0, min(y0, h - 1)), max(0, min(y1, h))
-        if self.use_sam:
+        use_sam = self.use_sam
+        if (use_sam and label is not None and self._mask_labels is not None
+                and self._normalize(label) not in self._mask_labels):
+            use_sam = False
+            self.n_sam_skipped += 1
+        if use_sam:
             resp = self._post(self.sam_url,
                               {"image": img_b64, "bbox": [x0, y0, x1, y1]})
             if resp is not None and "cropped_mask" in resp:
@@ -476,7 +492,7 @@ class DFineDetector(Detector):
             # (`map_controller.py:757`).
             box_px = np.asarray(box, float) * np.array([w, h, w, h], float)
             det = Detection(label=label, score=score, bbox_xyxy=box_px,
-                            mask=self._mask_for(rgb, box_px, img))
+                            mask=self._mask_for(rgb, box_px, img, label))
             det.crop_from(rgb)
             out.append(det)
         out.extend(self._open_vocab_detections(rgb, img))

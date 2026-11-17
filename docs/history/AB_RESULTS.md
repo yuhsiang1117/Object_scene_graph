@@ -5873,6 +5873,45 @@ the other half of the trade, the storey belief's asks on same-floor
 episodes, not the stepping. The held-out split has now been read twice
 (S86, S87); a further change judged on it is no longer held-out.
 
+### S88 — model calls: fewer and concurrent, same actions
+
+A profile of one S87 episode (XB4GS9ShBRE ep 3, 150 steps, 67 s) spent
+228 ms a step waiting on the five servers, called one after another (51% of
+the episode; the synchronous LLM 18%, CPU mapping 27%). Two of those calls
+returned work nothing reads:
+
+- **MobileSAM on every admitted D-FINE box.** All 41 vocabulary classes were
+  masked; ASCENT keeps the target alone (`_filter_target`). 5 of 121 MobileSAM
+  calls in that episode were the target's.
+- **GroundingDINO stairs on every step.** The obstacle map reads the detector
+  mask only beside more than 20 RedNet stair pixels (`obstacle_map.py:527`),
+  and 89.4% of 40 219 S87 steps had 20 or fewer.
+
+`agent.speed.*` (`osg/core/config/agent.py:AgentSpeedConfig`, all on by
+default):
+
+| switch | what changes |
+|---|---|
+| `sam_target_only` | only the target's boxes (plus the stair labels, when there is no stair detector) go to MobileSAM; the rest carry their box as the mask |
+| `lazy_stair_detector` | RedNet runs first; with no RedNet stairs the GroundingDINO + MobileSAM stair call is skipped |
+| `parallel_servers` | the BLIP-2, RAM++ and stair requests go out on worker threads while D-FINE runs; each reply is read where the serial loop made the call |
+
+**Identity, 3-episode smoke** (`outputs/_smoke_s88_off` all three off vs
+`outputs/_smoke_s88_on` defaults; S87 arm, verification off): all 3 episodes
+take IDENTICAL actions (150 / 242 / 101 steps, success 1 / 0 / 1). Every
+`step_trace` field matches except `stair_det_px` on 10 of 493 steps, and
+every agent stat except `stair_mask_frames`. Both describe the skipped
+stair calls, which `stair_det_skipped` now counts (367 of 493 steps). With
+the switches off, the trace and stats are as before.
+
+**Time**: 209 s → 146 s for the 3 episodes (68.6 → 47.0, 98.7 → 69.9,
+41.8 → 28.9 s; −30%), 0.42 → 0.30 s a step including the synchronous LLM.
+Unit tests: `tests/unit/test_navigation_speed.py` (D-FINE mask labels; a
+stub-model step loop with the switches on and off that must produce the same
+actions, gate cosine, obstacle, stair, value and object maps). The
+fingerprint golden moved for all 149 presets, and with `agent.speed` removed
+every one hashes to its old value.
+
 ## Planned — not yet run
 
 ### S29 — re-test the approach re-check with BLIP-2 ITM

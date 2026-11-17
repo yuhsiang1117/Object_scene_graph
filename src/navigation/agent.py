@@ -52,6 +52,9 @@ from osg.perception.stair_seg import MIN_STAIR_PIXELS
 from osg.planning.escape import ActionHistoryEscape
 
 from .constants import INITIALIZE_TURNS, STAIR_CLASS_ID
+
+# The detector labels the no-stair-detector fallback of `_stair_det_mask` reads.
+STAIR_LABELS = ("stairs", "stair", "staircase", "steps")
 from .depth_filter import filter_depth
 from .geometry import (
     EpisodeAnchor,
@@ -206,6 +209,16 @@ class AscentNavAgent:
         self.value_prompt = str(getattr(cfg.exploration, "value_prompt",
                                         "Seems like there is a {target} ahead."))
         self.use_max_confidence = bool(getattr(cfg.exploration, "value_use_max_confidence", False))
+        # `agent.speed.*`: how the served models are called, not what is done
+        # with their replies (`osg/core/config/agent.py:AgentSpeedConfig`).
+        speed = getattr(a, "speed", None)
+        self._sam_target_only = bool(getattr(speed, "sam_target_only", False))
+        self._lazy_stair_det = bool(getattr(speed, "lazy_stair_detector", False))
+        self._pool = None
+        if bool(getattr(speed, "parallel_servers", False)):
+            from concurrent.futures import ThreadPoolExecutor
+
+            self._pool = ThreadPoolExecutor(max_workers=3, thread_name_prefix="ascentnav-model")
         # `agent.search.*`: additions beyond the reference (`navigation/search/`),
         # each off by default. `trace` only adds columns to the behaviour log.
         search = getattr(a, "search", None)
@@ -296,6 +309,13 @@ class AscentNavAgent:
         self.detector.set_vocabulary(
             [self.target.replace("_", " ")] + list(getattr(self.cfg.detector, "vocabulary", []) or [])
         )
+        if self._sam_target_only and hasattr(self.detector, "set_mask_labels"):
+            # Only what `_filter_target` keeps, plus the stair labels the
+            # fallback in `_stair_det_mask` reads when there is no stair detector.
+            keep = [self.target.replace("_", " ")]
+            if self.stair_detector is None:
+                keep += list(STAIR_LABELS)
+            self.detector.set_mask_labels(keep)
         # `Ascent_Policy._reset` (:189-220) and `Map_Controller.reset` (:133-180)
         self._pitch_angle = 0                       # hand-tracked, degrees, + = up
         self._done_initializing = not bool(self.cfg.agent.initial_scan)
@@ -450,11 +470,30 @@ class AscentNavAgent:
         robot_px = om._xy_to_px(np.atleast_2d(robot_xy))
         zeros = np.zeros(frame.depth.shape[:2], np.uint8)
 
+        # --- served-model requests (`agent.speed.*`) ------------------------
+        # Every reply below depends on this frame alone, so with
+        # `parallel_servers` the requests go out together here and each reply
+        # is read where the serial loop made the call -- same inputs, same
+        # order of use. RedNet runs before the stair detector so that an empty
+        # RedNet frame, whose detector mask the map would not read
+        # (`obstacle_map.py:527`), can skip the call (`lazy_stair_detector`).
+        detecting = om._floor_num_steps != 0
+        value_future = ram_future = stair_future = None
+        if self._pool is not None:
+            if self.image_text is not None:
+                value_future = self._pool.submit(self._value_score, frame.rgb)
+            if detecting and self.ram is not None:
+                ram_future = self._pool.submit(self.ram.tags, frame.rgb)
+        seg = self._stair_seg(frame)
+        if (self._pool is not None and detecting and self.stair_detector is not None
+                and not (self._lazy_stair_det and seg is None)):
+            stair_future = self._pool.submit(self.stair_detector.mask, frame.rgb)
+
         # --- object map (`map_controller.py:723-798`) ----------------------
         img_b64 = None
         stair_det_mask = None
         dets: List[Detection] = []
-        if om._floor_num_steps != 0:                        # `:734-735`, A11
+        if detecting:                                       # `:734-735`, A11
             raw = self.detector.detect(frame.rgb)
             dets = self._filter_target(raw)
             self._last_dets = dets
@@ -466,7 +505,8 @@ class AscentNavAgent:
                     self.min_depth, self.max_depth, self.fx, self.fy, self.anchor)
             if self.ram is not None or self.room_classifier is not None:   # `:751`
                 tag_scene(frame.rgb, om._floor_num_steps, self.object_map,
-                          self.ram, self.room_classifier, stats=self.stats)
+                          self.ram, self.room_classifier, stats=self.stats,
+                          tags=None if ram_future is None else ram_future.result())
             for det in dets:                                # ALL of them, A4 (`:754-768`)
                 self.object_map.update_map(
                     self.target, depth_map, det.mask.astype(np.uint8), tf,
@@ -481,14 +521,15 @@ class AscentNavAgent:
                         self._double_check_goal = True
                         self.stats["gate_latched"] = self.stats.get("gate_latched", 0) + 1
             # the detector half of the stair fusion (`:782-789`)
-            stair_det_mask = self._stair_det_mask(raw, frame.rgb)
+            stair_det_mask = self._stair_det_mask(
+                raw, frame.rgb, future=stair_future,
+                skip=self._lazy_stair_det and seg is None)
             self.object_map.update_explored(tf, self.max_depth, 2 * np.arctan(frame.depth.shape[1] / (2 * self.fx)))
         else:
             self._last_dets = []
             self._weak = []
 
-        # --- RedNet (`:420-431`) and the obstacle map (`map_controller.py:477-539`)
-        seg = self._stair_seg(frame)
+        # --- RedNet (`:420-431`, run above) and the obstacle map (`map_controller.py:477-539`)
         self._last_seg, self._last_stair_mask = seg, stair_det_mask
         self.stairs.pre_update(self, om, robot_xy, robot_px)
         om.update_map(
@@ -515,7 +556,8 @@ class AscentNavAgent:
         om.project_frontiers_to_rgb_hush(frame.rgb)         # `:538`
 
         # --- value map (`map_controller.py:540-562`) -----------------------
-        self._update_value_map(frame, tf, depth_map, robot_xy, heading)
+        self._update_value_map(frame, tf, depth_map, robot_xy, heading,
+                               None if value_future is None else value_future.result())
         # --- `_update_distance_on_object_map` (`:845-866`) ------------------
         self.cur_dis_to_goal = self._cur_dist_to_goal(robot_xy)
         goal = self._get_target_object_location(robot_xy)    # `:380-384, :441`
@@ -555,23 +597,35 @@ class AscentNavAgent:
         target = self.target.lower().replace("_", " ").strip()
         return [d for d in dets if d.label.lower().replace("_", " ").strip() == target]
 
-    def _stair_det_mask(self, raw: List[Detection], rgb) -> Optional[np.ndarray]:
+    def _stair_det_mask(self, raw: List[Detection], rgb, future=None,
+                        skip: bool = False) -> Optional[np.ndarray]:
         """The detector half of ASCENT's stair fusion (`map_controller.py:782-789`).
 
         `ascent`: GroundingDINO `stair` >= 0.60 with MobileSAM masks, ANDed
         with RedNet by the map. `rednet`: the port's union (RedNet alone
         decides), kept as an A/B -- it is what climbed 11 same-floor episodes.
+
+        `future` is the stair detector's reply already requested on a worker
+        thread; `skip` says this frame's RedNet mask has too few stair pixels
+        for the map to read a detector mask at all. See `agent.speed.*`.
         """
         m = None
         if self.stair_detector is not None:
-            m = self.stair_detector.mask(rgb)
+            if future is not None:
+                m = future.result()
+            elif skip:
+                # The map reads this mask only beside > MIN_STAIR_PIXELS RedNet
+                # stair pixels (`obstacle_map.py:527`); this frame has none.
+                self.stats["stair_det_skipped"] = self.stats.get("stair_det_skipped", 0) + 1
+            else:
+                m = self.stair_detector.mask(rgb)
         else:
             # Only without ASCENT's own stair detector. D-FINE has no "stairs"
             # class, so under it this loop never fired; an open-vocabulary
             # target detector swapped in (`mfv2_ascent_yoloe`) does name stairs,
             # and must not change the stair fusion it was not swapped in for.
             for d in raw:
-                if d.label.lower().strip() in ("stairs", "stair", "staircase", "steps"):
+                if d.label.lower().strip() in STAIR_LABELS:
                     m = d.mask.astype(bool) if m is None else (m | d.mask.astype(bool))
         if self.stair_up_mode != "ascent" and self._last_seg is not None:
             rednet = self._last_seg == STAIR_CLASS_ID
@@ -586,14 +640,20 @@ class AscentNavAgent:
             return None
         return np.where(m, STAIR_CLASS_ID, 0).astype(np.uint8)
 
-    def _update_value_map(self, frame, tf, depth_map, robot_xy, heading) -> None:
+    def _value_score(self, rgb) -> float:
+        text = self.value_prompt.replace("{target}", self.target_coco)
+        return float(np.asarray(self.image_text.score(rgb, [text])).reshape(-1)[0])
+
+    def _update_value_map(self, frame, tf, depth_map, robot_xy, heading,
+                          value: Optional[float] = None) -> None:
         """`map_controller.py:540-562`: one BLIP-2 call, painted into the value
-        map and kept as `_blip_cosine` for the gate."""
+        map and kept as `_blip_cosine` for the gate. `value`: that call's
+        reply, when it was already requested (`agent.speed.parallel_servers`)."""
         if self.image_text is None:
             value = 0.0
         else:
-            text = self.value_prompt.replace("{target}", self.target_coco)
-            value = float(np.asarray(self.image_text.score(frame.rgb, [text])).reshape(-1)[0])
+            if value is None:
+                value = self._value_score(frame.rgb)
             self.stats["value_calls"] = self.stats.get("value_calls", 0) + 1
         self.value_map.update_map(np.array([value]), depth_map, tf, self.min_depth, self.max_depth, self.hfov)
         self.value_map.update_agent_traj(robot_xy, heading)
