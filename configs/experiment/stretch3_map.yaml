@@ -27,6 +27,10 @@ defaults:
   - override /eval: hm3d_val_mini      # replaced wholesale below; nothing HM3D is read
   - override /detector: yoloe
   - override /verification: "off"
+  # OSG's nav_agent reads the Places365 room layer and the ranker; the robot
+  # runs used these, and S89 took them out of the ascentnav default only.
+  - override /exploration: s71
+  - override /scene_graph: place365
   - _self_
 
 agent:

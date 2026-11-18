@@ -34,7 +34,7 @@ pytest tests/unit/test_floors.py::test_name -q         # one test
 pytest -m sim                                          # tests/integration; needs Habitat + HM3D
 python tests/unit/test_config_snapshot.py              # REGENERATE the config golden (see below)
 
-python scripts/run_eval.py                             # the default arm (S87 = S71 + storey belief/climb check/stair heading memory), 100 episodes, ~3.5 h
+python scripts/run_eval.py                             # the default arm (S89 = S71 + storey belief/climb check/stair heading memory, no LLM ranker), 100 episodes, ~1.1 h
 python scripts/run_eval.py eval.num_episodes=3         # smoke
 python scripts/run_eval.py +experiment=<preset>        # compose a whole preset
 python scripts/run_eval.py detector=yoloe_small llm=ollama verification=off   # override groups

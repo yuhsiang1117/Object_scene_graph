@@ -1,23 +1,27 @@
 # The default: ASCENT's control flow on ASCENT's served models, sensor-only,
 # plus the storey belief and the climb verification of S83 and the on-stairs
-# heading memory of S87 (`agent: s87`). On `scenes20_ep0to4` 70/100 against
-# 65/100 without them; held-out `scenes20_ep5to9` 63 against 58
-# (docs/history/AB_RESULTS.md S85-S87; `agent: s86` = 67 and 60).
-# Without them it is the S71 arm, `+experiment=ascentnav` (63.0% / 0.36 SPL
-# in S71, 65/100 in S83; native ASCENT on the same 100 episodes: 65.0% / 0.36).
+# heading memory of S87 (`agent: s87`), and since S89 WITHOUT ASCENT's LLM
+# frontier ranker and the two models that only wrote its prompt (RAM++ tags,
+# Places365 rooms: `exploration: s89`, `scene_graph: default`). On
+# `scenes20_ep0to4` 70/100 against 65/100 without the search additions;
+# held-out `scenes20_ep5to9` 62 against 58 (docs/history/AB_RESULTS.md
+# S85-S89; with the LLM ranker, S87: 70 and 63, `+experiment=objsearch_climb`).
+# Without any addition it is the S71 arm, `+experiment=ascentnav` (63.0% /
+# 0.36 SPL in S71, 65/100 in S83; native ASCENT on the same 100 episodes:
+# 65.0% / 0.36).
 #
 #   bash scripts/serve_perception.sh          # the five model servers, once
 #   python scripts/run_eval.py                # this config, on the 100-episode split
 #
-# It needs the servers and a local ollama with qwen2.5:7b; the run refuses to
-# start if any of them is down. Pre-S71 presets pull `legacy_defaults` to get
-# the old base back.
+# It needs the servers (RAM++'s is no longer called) and no LLM; the run
+# refuses to start if a server it calls is down. Pre-S71 presets pull
+# `legacy_defaults` to get the old base back.
 defaults:
   - base_config
   - agent: s87
   - detector: dfine
-  - scene_graph: place365
-  - exploration: s71
+  - scene_graph: default
+  - exploration: s89
   - llm: qwen_local
   - verification: s71
   - eval: scenes20_ep0to4

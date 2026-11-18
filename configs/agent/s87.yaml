@@ -1,4 +1,5 @@
-# The default since S87: `agent: s86` (the S71 arm + the storey belief and the
+# The default agent since S87 (S89 kept it and dropped the LLM ranker in
+# `exploration: s89`): `agent: s86` (the S71 arm + the storey belief and the
 # climb check of S85/S86) plus the on-stairs heading memory
 # (docs/history/AB_RESULTS.md S87):
 #

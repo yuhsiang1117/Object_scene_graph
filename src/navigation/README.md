@@ -195,9 +195,19 @@ selects, is `configs/agent/s86.yaml` (`storey_belief`, `verify_climb` with cap
 every preset measured before S86 keeps `s71`. The dataclass defaults
 stay off, so the transcription tests are untouched.
 
+**No LLM since S89.** `configs/config.yaml` also selects `exploration: s89`
+(`ranker: none`, `ram_tags: false`) and `scene_graph: default` (no Places365).
+The planner gets no LLM, so wherever ASCENT would ask it the value map's top
+frontier is taken -- the reference's own answer to a failed call. RAM++ and
+Places365 only wrote that prompt. Paired against S87: dev 70 -> 70, held-out
+63 -> 62, with half the wall time (`docs/history/AB_RESULTS.md` S89). This is a
+config change, not a code change: the planner is the transcription.
+
 `configs/experiment/objsearch_storey.yaml` pins `agent: s86`;
 `objsearch_relay.yaml` adds `climb_relay` to it; `objsearch_climb.yaml` pins
-`agent: s87`. Compare a run against the
+`agent: s87`; all three pin `exploration: s71` and `scene_graph: place365`
+(the LLM ranker, as they were measured). `objsearch_no_llm.yaml` pins the S89
+default. Compare a run against the
 baseline with `python scripts/analyze_objectnav_search.py <baseline> <run>`:
 it classes every episode by where it failed and pairs the two runs.
 

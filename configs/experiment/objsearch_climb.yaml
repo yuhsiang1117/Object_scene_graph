@@ -29,6 +29,8 @@
 #       eval.behaviour_log=true agent.search.trace=true output_dir=outputs/<name>
 defaults:
   - override /agent: s87
+  - override /exploration: s71        # with the LLM ranker, as measured (S89 removed it)
+  - override /scene_graph: place365
 
 agent:
   search:

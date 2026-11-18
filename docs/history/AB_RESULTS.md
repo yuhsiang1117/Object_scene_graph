@@ -5912,6 +5912,64 @@ actions, gate cosine, obstacle, stair, value and object maps). The
 fingerprint golden moved for all 149 presets, and with `agent.speed` removed
 every one hashes to its old value.
 
+### S89 — the LLM ranker removed, with RAM++ and Places365
+
+`+experiment=objsearch_no_llm` = the default `agent: s87` with
+`exploration.ranker: none`, `exploration.ram_tags: false` and
+`scene_graph.room_classifier: none`. This is not a code change. With no LLM,
+`_chat` answers "-1", ASCENT's failure value, so each multi-frontier decision
+takes the value map's top frontier. The other planner rules are unchanged,
+and RAM++ and Places365 only wrote the prompt. `llm_multi_floor` is off in
+the default, so the LLM never chose storeys. S73 had found the ranker inert
+when asked more often; asking it never had not been measured.
+
+**Pre-registered:** paired against S87, not adopted below 68 on dev, or if
+same-floor or cross-floor successes each fell by more than 2. Only episodes
+where S87's LLM overrode the value ranking (`rank_overrides > 0`) can change.
+If dev passed, held-out would be read under the same rule (its third read).
+
+| | dev S87 | dev no LLM | held-out S87 | held-out no LLM |
+|---|---|---|---|---|
+| run | `s87_climb_100` | `s89_nollm_100` | `s87_heldout_climb` | `s89_heldout_nollm` |
+| success | 70 | 70 (+2/−2) | 63 | 62 (+4/−5) |
+| same / cross floor | 61 / 9 | 62 / 8 | 50 / 13 | 51 / 11 |
+| SPL | 0.399 | 0.394 | 0.288 | 0.290 |
+| SAW episodes | 84 | 82 | 76 | 72 |
+| median first-SAW step | 62.5 | 71 | 104 | 85.5 |
+| climb-mode steps, same-floor % | 6.8 | 5.7 | 16.3 | 13.3 |
+| wall time, 100 episodes | 2.37 h | 1.08 h | 2.89 h | 1.28 h |
+
+Both splits pass; held-out cross-floor −2 sits on the bar. Pooled over 200
+episodes: 133 → 132 (+6/−7), cross-floor 22 → 19, same-floor 111 → 113. Every
+episode that flipped had an S87 override, and every one diverged early (step
+13–60 on held-out) on a different frontier, before any climb. The three
+held-out "success → climb failed" episodes are a different path to the
+stairs, not a different climb. The first-sighting step moves both ways (+8.5
+dev, −18.5 held-out), so the ranker is not finding the target sooner.
+
+**Reproducibility:** 52 of the 53 dev and 42 of the 45 held-out
+no-override episodes take IDENTICAL actions. The dev exception (svBbv1Pavdk
+ep 1) is run-to-run noise. At step 363 both runs detect the target with the
+same score and box, and only the S89 run's object map accepts the cloud. Re-run
+alone (`outputs/_s89_svBb_*`), the no-LLM arm (speed on and off, IDENTICAL to
+each other) and S87 all reject it. S87's re-run also departs from its own
+100-episode run at step 370. Borderline cloud acceptance flips between runs
+in either arm.
+
+**Reading:** the ranker adds nothing measurable (pooled −1 of 200, inside
+noise), and costs half the wall time plus the ollama dependency.
+
+**Adopted** as the default: `configs/config.yaml` selects `exploration: s89`
+(= `s71` + `ranker: none`, `ram_tags: false`) and `scene_graph: default`,
+with `agent: s87` unchanged. `objsearch_no_llm` pins it (its fingerprint is
+unchanged from the measured runs). `objsearch_storey`, `objsearch_relay` and
+`objsearch_climb` now pin `exploration: s71` / `scene_graph: place365`, and so
+do `stretch3_map` / `stretch3_search`: OSG's `nav_agent` reads the room
+layer and the ranker, and the robot runs used both. Five presets that follow
+the ascentnav default moved in the fingerprint golden, each in those three
+keys only: `osg_unified_pipeline`, `mfv2_dataset`, `nav2_habitat`,
+`floor_schedule_habitat`, `objsearch_ellipsoid_a`.
+
 ## Planned — not yet run
 
 ### S29 — re-test the approach re-check with BLIP-2 ITM
