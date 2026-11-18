@@ -5,7 +5,7 @@ component's centers.
 """
 from __future__ import annotations
 
-from typing import Dict, List
+from typing import Dict, Iterator, List, Optional, Tuple
 
 import numpy as np
 
@@ -28,25 +28,71 @@ class _UnionFind:
             self.parent[rb] = ra
 
 
-def relink(tracks: List[ObjectTrack], link_dist_m: float = 1.0) -> None:
-    """Rebuild linked_ids for all tracks (idempotent)."""
-    by_label: Dict[str, List[ObjectTrack]] = {}
+def _last_seen(track: ObjectTrack) -> Optional[int]:
+    return int(track.observations[-1].frame_id) if track.observations else None
+
+
+def _near_pairs(group: List[ObjectTrack], bar: float, rows: int = 256) -> Iterator[Tuple[int, int]]:
+    """(i, j), i < j, in row-major order, of the pairs whose centres are under
+    `bar` apart -- in array ops, a block of rows at a time so a large group
+    never builds the full n x n x 3 difference at once."""
+    centres = np.stack([t.ellipsoid.center for t in group]).astype(float)
+    for start in range(0, len(group), rows):
+        block = centres[start:start + rows]
+        dist = np.linalg.norm(block[:, None, :] - centres[None, :, :], axis=-1)
+        # NaN kept: the scalar test `d >= link_dist_m` is False for NaN, so the
+        # loop this replaces linked such a pair -- keep that, bug or not.
+        for i, j in zip(*np.nonzero((dist < bar) | np.isnan(dist))):
+            if j > start + i:
+                yield start + int(i), int(j)
+
+
+def relink(
+    tracks: List[ObjectTrack],
+    link_dist_m: float = 1.0,
+    max_frame_gap: Optional[int] = None,
+) -> None:
+    """Rebuild linked_ids for all tracks (idempotent).
+
+    `max_frame_gap` requires two tracks to have been observed at about the same
+    TIME before they may be merged. Linking exists to reunite fragments of one
+    object that a single ellipsoid cannot cover -- and those fragments are seen
+    together, in the same frames. An object and its own past are not: when a
+    mug moves half a metre, the stale track and the fresh one sit within
+    link_dist_m of each other, get merged, and object_center then reports the
+    midpoint of where the mug WAS and where it IS -- a place with no mug, which
+    neither observation can ever contradict. Requiring co-observation separates
+    "two halves of a sofa" from "an object and its ghost".
+    """
+    by_label: Dict[Tuple[str, int], List[ObjectTrack]] = {}
     for tr in tracks:
         if not tr.blacklisted:
-            by_label.setdefault(tr.label, []).append(tr)
+            by_label.setdefault(
+                (tr.label, int(getattr(tr, "floor_key", 0))), []
+            ).append(tr)
 
     for tr in tracks:
         tr.linked_ids = set()
 
-    for label, group in by_label.items():
+    for _label_floor, group in by_label.items():
         if len(group) < 2:
             continue
         uf = _UnionFind([t.id for t in group])
-        for i in range(len(group)):
-            for j in range(i + 1, len(group)):
-                d = np.linalg.norm(group[i].ellipsoid.center - group[j].ellipsoid.center)
-                if d < link_dist_m:
-                    uf.union(group[i].id, group[j].id)
+        # The pairwise test in one array op first, then the exact per-pair
+        # norm only where the array says the pair is near the bar: the scalar
+        # loop over every pair was a third of the object layer's time
+        # (cProfile, 00862 s42). The prefilter's margin is far above any
+        # rounding difference between the two norms, so every decision is the
+        # one the scalar loop made.
+        for i, j in _near_pairs(group, link_dist_m + 1e-6):
+            d = np.linalg.norm(group[i].ellipsoid.center - group[j].ellipsoid.center)
+            if d >= link_dist_m:
+                continue
+            if max_frame_gap is not None:
+                fi, fj = _last_seen(group[i]), _last_seen(group[j])
+                if fi is None or fj is None or abs(fi - fj) > max_frame_gap:
+                    continue
+            uf.union(group[i].id, group[j].id)
         roots: Dict[int, List[ObjectTrack]] = {}
         for t in group:
             roots.setdefault(uf.find(t.id), []).append(t)
@@ -58,11 +104,22 @@ def relink(tracks: List[ObjectTrack], link_dist_m: float = 1.0) -> None:
                 m.linked_ids = ids - {m.id}
 
 
+def reported_geometry(track):
+    """The geometry the map reports for a track: the fused box
+    (scene_graph.ellipsoid.fuse_report, `track.extent`) once it has one, else
+    the ellipsoid. Association, presence and refine keep the ellipsoid."""
+    ext = getattr(track, "extent", None)
+    return getattr(track, "ellipsoid", None) if ext is None else ext
+
+
 def object_center(track: ObjectTrack, all_tracks: Dict[int, ObjectTrack]) -> np.ndarray:
-    """True object center = mean of linked-component centers."""
-    centers = [track.ellipsoid.center]
+    """True object center = mean of linked-component (reported) centers."""
+    centers = [reported_geometry(track).center]
     for lid in track.linked_ids:
         other = all_tracks.get(lid)
-        if other is not None and not other.blacklisted:
-            centers.append(other.ellipsoid.center)
+        if (
+            other is not None and not other.blacklisted
+            and getattr(other, "floor_key", 0) == getattr(track, "floor_key", 0)
+        ):
+            centers.append(reported_geometry(other).center)
     return np.mean(np.stack(centers), axis=0)

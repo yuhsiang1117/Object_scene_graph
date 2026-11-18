@@ -1,0 +1,20 @@
+# @package _global_
+#
+# The base every pre-S71 preset was measured on. `config.yaml` now composes to
+# the S71 arm (ASCENT's control flow on ASCENT's served models); a preset that
+# lists this FIRST in its defaults gets the old base back -- YOLOE-11s, NIM,
+# the forced-choice verifier, the text-LLM frontier scorer, the 3-episode
+# smoke split -- and then applies its own overrides on top, exactly as before.
+# Every fingerprint in tests/unit/golden/experiment_fingerprints.json is pinned
+# to that.
+defaults:
+  - override /agent: default
+  - override /detector: yoloe_small
+  - override /scene_graph: default
+  - override /exploration: llm_text
+  - override /llm: nim
+  - override /verification: nim
+  - override /eval: hm3d_val_mini
+
+mapping:
+  multi_floor: false

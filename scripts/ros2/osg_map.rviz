@@ -1,0 +1,161 @@
+# The MAP window of a Stretch 3 run, and nothing else: the map the robot is
+# building (slam_toolbox's /map, latched), the pipeline's own costmap for the
+# storey it is on (/osg/costmap, what the frontiers come from), its scan, where it is (TF), the
+# goal the bridge last handed to Nav2 (/osg/goal), Nav2's plan, and the scene
+# graph as markers (objects coloured by presence belief, the target's gate
+# numbers, the chosen frontier, the status line). The camera is a separate
+# window -- rqt_image_view on /osg/detections, opened by scripts/ros2/rviz.sh --
+# so neither view is crushed by the other. scripts/ros2/osg.rviz is the
+# everything-at-once view this replaced as the default.
+# Window Geometry is size and position only; see the note in osg.rviz for why
+# there is no QMainWindow State string here.
+Panels:
+- Class: rviz_common/Displays
+  Name: Displays
+- Class: rviz_common/Views
+  Name: Views
+Visualization Manager:
+  Class: ''
+  Displays:
+  - Class: rviz_default_plugins/Grid
+    Enabled: true
+    Name: Grid
+    Cell Size: 1
+    Plane Cell Count: 40
+    Reference Frame: <Fixed Frame>
+    Value: true
+  - Class: rviz_default_plugins/Map
+    Enabled: true
+    Name: Map (slam_toolbox)
+    Alpha: 0.9
+    Color Scheme: map
+    Draw Behind: true
+    Topic:
+      Depth: 5
+      Durability Policy: Transient Local
+      History Policy: Keep Last
+      Reliability Policy: Reliable
+      Value: /map
+    Update Topic:
+      Depth: 5
+      Durability Policy: Volatile
+      History Policy: Keep Last
+      Reliability Policy: Reliable
+      Value: /map_updates
+    Value: true
+  - Class: rviz_default_plugins/Map
+    Enabled: true
+    Name: OSG costmap (this storey)
+    Alpha: 0.5
+    Color Scheme: costmap
+    Draw Behind: false
+    Topic:
+      Depth: 1
+      Durability Policy: Transient Local
+      History Policy: Keep Last
+      Reliability Policy: Reliable
+      Value: /osg/costmap
+    Update Topic:
+      Depth: 1
+      Durability Policy: Volatile
+      History Policy: Keep Last
+      Reliability Policy: Reliable
+      Value: /osg/costmap_updates
+    Value: true
+  - Class: rviz_default_plugins/LaserScan
+    Enabled: true
+    Name: Scan
+    Channel Name: intensity
+    Color: 255; 80; 80
+    Color Transformer: FlatColor
+    Position Transformer: XYZ
+    Size (m): 0.05
+    Style: Flat Squares
+    Topic:
+      Depth: 5
+      Durability Policy: Volatile
+      History Policy: Keep Last
+      Reliability Policy: Best Effort
+      Value: /scan
+    Use Fixed Frame: true
+    Value: true
+  - Class: rviz_default_plugins/TF
+    Enabled: true
+    Name: Robot (TF)
+    Frame Timeout: 15
+    Marker Scale: 0.6
+    Show Arrows: false
+    Show Axes: true
+    Show Names: false
+    Update Interval: 0
+    Value: true
+  - Class: rviz_default_plugins/Path
+    Enabled: true
+    Name: Nav2 plan
+    Alpha: 1
+    Color: 25; 255; 0
+    Line Style: Billboards
+    Line Width: 0.04
+    Topic:
+      Depth: 5
+      Durability Policy: Volatile
+      History Policy: Keep Last
+      Reliability Policy: Reliable
+      Value: /plan
+    Value: true
+  - Class: rviz_default_plugins/Pose
+    Enabled: true
+    Name: OSG goal
+    Alpha: 1
+    Axes Length: 1
+    Axes Radius: 0.1
+    Color: 255; 25; 0
+    Head Length: 0.3
+    Head Radius: 0.15
+    Shaft Length: 0.6
+    Shaft Radius: 0.06
+    Shape: Arrow
+    Topic:
+      Depth: 5
+      Durability Policy: Transient Local
+      History Policy: Keep Last
+      Reliability Policy: Reliable
+      Value: /osg/goal
+    Value: true
+  - Class: rviz_default_plugins/MarkerArray
+    Enabled: true
+    Name: OSG scene graph
+    Namespaces: {}
+    Topic:
+      Depth: 1
+      Durability Policy: Volatile
+      History Policy: Keep Last
+      Reliability Policy: Reliable
+      Value: /osg/scene_graph
+    Value: true
+  Enabled: true
+  Global Options:
+    Background Color: 48; 48; 48
+    Fixed Frame: map
+    Frame Rate: 30
+  Name: root
+  Tools:
+  - Class: rviz_default_plugins/MoveCamera
+  - Class: rviz_default_plugins/Select
+  - Class: rviz_default_plugins/FocusCamera
+  - Class: rviz_default_plugins/Measure
+  Value: true
+  Views:
+    Current:
+      Class: rviz_default_plugins/TopDownOrtho
+      Name: Top-down
+      Scale: 70
+      Target Frame: <Fixed Frame>
+      X: 0
+      Y: 0
+    Saved: null
+Window Geometry:
+  Height: 950
+  Width: 1100
+  X: 600
+  Y: 40

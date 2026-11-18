@@ -1,0 +1,34 @@
+# @package _global_
+#
+# The unified pipeline on the five-scene multi-floor dynamic benchmark
+# (outputs/dualmap_multifloor: 00800, 00821, 00862, 00873, 00878; 25 cross-floor
+# relocation episodes). Same agent as dualmap_osg_unified -- only the dataset
+# differs.
+#
+# 00862 REPLACED 00808, and this preset was the last thing to hear about it. The
+# ASCENT baseline (mf5_ascent_crossanchor) lists 00862, the run the paper reports
+# (outputs/mf5_pass2_final) contains 00862, and this file still said 00808 -- so
+# the two arms of the paired comparison defaulted to different episodes. Both
+# scenes are present under the collector's multi-floor root, so nothing failed
+# loudly; the arms were simply not the same benchmark.
+#
+# Build schema-v2 maps with ycb.map_out over the STATIC layout first, then run
+# the moved layouts with ycb.map_in.
+defaults:
+  - ycb_dynamic_multifloor
+  - osg_unified_pipeline
+  - _self_
+
+ycb:
+  # The mount moved: docker/compose.yaml now bind-mounts the whole collector
+  # checkout at /habitat-data-collector, and /datasets stopped existing. Read
+  # the env var compose sets, with the current mount as the fallback, so this
+  # preset resolves on a container built either way (osg/core/paths.py holds
+  # the same two candidates for the dataclass defaults).
+  layout_root: ${oc.env:OSG_YCB_MULTI_FLOOR_ROOT,/habitat-data-collector/outputs/dualmap_multifloor}
+  scenes:
+    - 00800-TEEsavR23oF
+    - 00821-eF36g7L6Z9M
+    - 00862-LT9Jq6dN3Ea
+    - 00873-bxsVRursffK
+    - 00878-XB4GS9ShBRE

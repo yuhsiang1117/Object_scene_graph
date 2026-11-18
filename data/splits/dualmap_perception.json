@@ -1,0 +1,156 @@
+{
+ "reference_run": "outputs/osg_sensor_v2_full",
+ "rules": "failed with bucket perception_wall or perception_close -- target in view, never named. The only trials the proposal stage can fire usefully on.",
+ "counts": {
+  "trials": 21
+ },
+ "trials": [
+  {
+   "trial_id": "00829-QaLdnwvtxbs__cross_anchor__0128-1__scissors",
+   "scene": "00829-QaLdnwvtxbs",
+   "condition": "cross_anchor",
+   "query": "scissors",
+   "rule": "perception"
+  },
+  {
+   "trial_id": "00829-QaLdnwvtxbs__cross_anchor__0128-2__scissors",
+   "scene": "00829-QaLdnwvtxbs",
+   "condition": "cross_anchor",
+   "query": "scissors",
+   "rule": "perception"
+  },
+  {
+   "trial_id": "00829-QaLdnwvtxbs__cross_anchor__0129-1__scissors",
+   "scene": "00829-QaLdnwvtxbs",
+   "condition": "cross_anchor",
+   "query": "scissors",
+   "rule": "perception"
+  },
+  {
+   "trial_id": "00829-QaLdnwvtxbs__cross_anchor__0129-1__soup_can",
+   "scene": "00829-QaLdnwvtxbs",
+   "condition": "cross_anchor",
+   "query": "soup can",
+   "rule": "perception"
+  },
+  {
+   "trial_id": "00829-QaLdnwvtxbs__in_anchor__0116__soup_can",
+   "scene": "00829-QaLdnwvtxbs",
+   "condition": "in_anchor",
+   "query": "soup can",
+   "rule": "perception"
+  },
+  {
+   "trial_id": "00829-QaLdnwvtxbs__in_anchor__0117__cracker_box",
+   "scene": "00829-QaLdnwvtxbs",
+   "condition": "in_anchor",
+   "query": "cracker box",
+   "rule": "perception"
+  },
+  {
+   "trial_id": "00829-QaLdnwvtxbs__in_anchor__0118__cracker_box",
+   "scene": "00829-QaLdnwvtxbs",
+   "condition": "in_anchor",
+   "query": "cracker box",
+   "rule": "perception"
+  },
+  {
+   "trial_id": "00848-ziup5kvtCCR__cross_anchor__0128-1__banana",
+   "scene": "00848-ziup5kvtCCR",
+   "condition": "cross_anchor",
+   "query": "banana",
+   "rule": "perception"
+  },
+  {
+   "trial_id": "00848-ziup5kvtCCR__cross_anchor__0128-1__pitcher",
+   "scene": "00848-ziup5kvtCCR",
+   "condition": "cross_anchor",
+   "query": "pitcher",
+   "rule": "perception"
+  },
+  {
+   "trial_id": "00848-ziup5kvtCCR__cross_anchor__0128-1__scissors",
+   "scene": "00848-ziup5kvtCCR",
+   "condition": "cross_anchor",
+   "query": "scissors",
+   "rule": "perception"
+  },
+  {
+   "trial_id": "00848-ziup5kvtCCR__cross_anchor__0128-2__banana",
+   "scene": "00848-ziup5kvtCCR",
+   "condition": "cross_anchor",
+   "query": "banana",
+   "rule": "perception"
+  },
+  {
+   "trial_id": "00848-ziup5kvtCCR__cross_anchor__0128-2__scissors",
+   "scene": "00848-ziup5kvtCCR",
+   "condition": "cross_anchor",
+   "query": "scissors",
+   "rule": "perception"
+  },
+  {
+   "trial_id": "00848-ziup5kvtCCR__cross_anchor__0129-1__mug",
+   "scene": "00848-ziup5kvtCCR",
+   "condition": "cross_anchor",
+   "query": "mug",
+   "rule": "perception"
+  },
+  {
+   "trial_id": "00848-ziup5kvtCCR__in_anchor__0117__banana",
+   "scene": "00848-ziup5kvtCCR",
+   "condition": "in_anchor",
+   "query": "banana",
+   "rule": "perception"
+  },
+  {
+   "trial_id": "00848-ziup5kvtCCR__in_anchor__0117__scissors",
+   "scene": "00848-ziup5kvtCCR",
+   "condition": "in_anchor",
+   "query": "scissors",
+   "rule": "perception"
+  },
+  {
+   "trial_id": "00848-ziup5kvtCCR__in_anchor__0118__mug",
+   "scene": "00848-ziup5kvtCCR",
+   "condition": "in_anchor",
+   "query": "mug",
+   "rule": "perception"
+  },
+  {
+   "trial_id": "00880-Nfvxx8J5NCo__cross_anchor__0128-1__scissors",
+   "scene": "00880-Nfvxx8J5NCo",
+   "condition": "cross_anchor",
+   "query": "scissors",
+   "rule": "perception"
+  },
+  {
+   "trial_id": "00880-Nfvxx8J5NCo__cross_anchor__0128-2__scissors",
+   "scene": "00880-Nfvxx8J5NCo",
+   "condition": "cross_anchor",
+   "query": "scissors",
+   "rule": "perception"
+  },
+  {
+   "trial_id": "00880-Nfvxx8J5NCo__cross_anchor__0129-1__pitcher",
+   "scene": "00880-Nfvxx8J5NCo",
+   "condition": "cross_anchor",
+   "query": "pitcher",
+   "rule": "perception"
+  },
+  {
+   "trial_id": "00880-Nfvxx8J5NCo__cross_anchor__0129-1__scissors",
+   "scene": "00880-Nfvxx8J5NCo",
+   "condition": "cross_anchor",
+   "query": "scissors",
+   "rule": "perception"
+  },
+  {
+   "trial_id": "00880-Nfvxx8J5NCo__cross_anchor__0129-1__soup_can",
+   "scene": "00880-Nfvxx8J5NCo",
+   "condition": "cross_anchor",
+   "query": "soup can",
+   "rule": "perception"
+  }
+ ]
+}

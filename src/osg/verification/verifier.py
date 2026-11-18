@@ -22,8 +22,13 @@ from typing import List, Optional
 
 import numpy as np
 
+from ..core.labels import normalize_label
 from ..llm.client import ChatClient
 from ..llm.prompts import (
+    ABSENCE_CHOICE_SYSTEM,
+    ABSENCE_CHOICE_USER,
+    ABSENCE_SYSTEM,
+    ABSENCE_USER,
     OBJECTNAV_CATEGORIES,
     VERIFY_CHOICE_SYSTEM,
     VERIFY_CHOICE_USER,
@@ -32,8 +37,20 @@ from ..llm.prompts import (
 )
 
 
-def _norm(s: str) -> str:
-    return str(s).lower().replace("_", " ").strip()
+def note_vlm(verifier, role: str, step: int, track=None, **extra) -> None:
+    """Tell `verifier` what its next call is about, for `call_log`. A no-op for
+    a verifier without one (test stubs, the stop gate's own instance)."""
+    note = getattr(verifier, "note", None)
+    if note is None:
+        return
+    ctx = {"role": str(role), "step": int(step)}
+    if track is not None:
+        ctx["track_id"] = int(getattr(track, "id", -1))
+        ell = getattr(track, "ellipsoid", None)
+        if ell is not None and getattr(ell, "center", None) is not None:
+            ctx["xyz"] = [round(float(v), 3) for v in ell.center]
+    ctx.update(extra)
+    note(**ctx)
 
 
 class VLMVerifier:
@@ -58,6 +75,23 @@ class VLMVerifier:
         # debug_dir, indexed by debug_tag (episode id). Set by the runner.
         self.debug_dir: Optional[str] = None
         self.debug_tag: str = "ep"
+        # One entry per call -- its kind, target and verdict, plus whatever the
+        # caller said it was about (`note`) -- so what the VLM decided can be
+        # scored against ground truth after the run (episodes.jsonl
+        # `vlm_call_log`). Cumulative; the record slices it per episode.
+        self.call_log: List[dict] = []
+        self._context: dict = {}
+
+    def note(self, **context) -> None:
+        """What the NEXT call is about (step, track id, world centre), for
+        `call_log`. Consumed by that call."""
+        self._context = dict(context)
+
+    def _log(self, kind: str, target: str, verdict) -> None:
+        entry = {"kind": kind, "target": normalize_label(target), "verdict": verdict}
+        entry.update(self._context)
+        self._context = {}
+        self.call_log.append(entry)
 
     def _save_debug(self, img: np.ndarray, target: str, prompt: str,
                     response: dict, accepted: bool) -> None:
@@ -69,7 +103,7 @@ class VLMVerifier:
         import cv2
 
         os.makedirs(self.debug_dir, exist_ok=True)
-        stem = f"{self.debug_tag}_call{self.n_calls:03d}_{_norm(target).replace(' ', '')}_{'ACC' if accepted else 'REJ'}"
+        stem = f"{self.debug_tag}_call{self.n_calls:03d}_{normalize_label(target).replace(' ', '')}_{'ACC' if accepted else 'REJ'}"
         cv2.imwrite(os.path.join(self.debug_dir, stem + ".jpg"), img[..., ::-1])  # RGB->BGR
         with open(os.path.join(self.debug_dir, "index.jsonl"), "a") as f:
             f.write(json.dumps({
@@ -107,7 +141,7 @@ class VLMVerifier:
                 categories=", ".join(self._choice_list(target))
             )
         else:
-            system, user = VERIFY_SYSTEM, VERIFY_USER.format(target=_norm(target))
+            system, user = VERIFY_SYSTEM, VERIFY_USER.format(target=normalize_label(target))
         self.n_calls += 1
         try:
             out = self.client.chat(system, user, images=[img], json_response=True)
@@ -115,20 +149,22 @@ class VLMVerifier:
             self.n_errors += 1
             self.last_error = repr(e)[:200]
             self._save_debug(img, target, user, {"_error": self.last_error}, True)
+            self._log("identity", target, None)
             return True
         conf = float(out.get("confidence", 0.0) or 0.0)
         if self.choice_mode:
-            accepted = _norm(out.get("category", "")) == _norm(target) and conf >= self.accept_confidence
+            accepted = normalize_label(out.get("category", "")) == normalize_label(target) and conf >= self.accept_confidence
         else:
             accepted = bool(out.get("is_target", False)) and conf >= self.accept_confidence
         self._save_debug(img, target, user, out, accepted)
+        self._log("identity", target, bool(accepted))
         return accepted
 
     def _choice_list(self, target: str) -> List[str]:
         """Category list shown to the VLM, guaranteed to contain the target."""
         cats = list(self.categories)
-        if not any(_norm(c) == _norm(target) for c in cats):
-            cats.append(_norm(target))
+        if not any(normalize_label(c) == normalize_label(target) for c in cats):
+            cats.append(normalize_label(target))
         return cats
 
     def verify_bbox(self, rgb: Optional[np.ndarray], bbox_xyxy: Optional[np.ndarray],
@@ -139,6 +175,126 @@ class VLMVerifier:
         if rgb is None or bbox_xyxy is None:
             return True
         return self._ask(self._draw_bbox(rgb, bbox_xyxy), target)
+
+    def verify_absence(
+        self,
+        rgb: Optional[np.ndarray],
+        region_bbox_xyxy: Optional[np.ndarray],
+        categories: List[str],
+        max_categories: int = 5,
+    ) -> Optional[dict]:
+        """Which of `categories` are inside the marked region?
+
+        The verifier's mirror image. Confirming what IS there is worth one call;
+        asking what is NOT there is what lets a map correct itself -- a single
+        trusted "no" collapses a belief that would otherwise need several
+        detector misses to shift.
+
+        Returns {category: present} for the categories asked, or None if the
+        call failed -- None means "no information", NOT "absent", because
+        treating a network error as evidence of absence would quietly delete
+        objects.
+
+        `categories` is truncated to `max_categories`: enumerating a long list
+        is where vision-language models are least reliable, and an absence you
+        cannot trust is worse than no absence at all.
+        """
+        if rgb is None or region_bbox_xyxy is None or not categories:
+            return None
+        asked = [str(c) for c in categories[:max_categories]]
+        img = self._draw_bbox(rgb, np.asarray(region_bbox_xyxy, dtype=float))
+        self.n_calls += 1
+        try:
+            reply = self.client.chat(
+                ABSENCE_SYSTEM,
+                ABSENCE_USER.format(categories=", ".join(asked)),
+                images=[img],
+                json_response=True,
+            )
+        except Exception as exc:  # network/model failure is not evidence
+            self.n_errors += 1
+            self.last_error = str(exc)
+            self._log("absence", ",".join(asked), None)
+            return None
+        if not isinstance(reply, dict):
+            self.n_errors += 1
+            self.last_error = f"unexpected absence reply: {reply!r}"
+            self._log("absence", ",".join(asked), None)
+            return None
+        present = reply.get("present") or []
+        if isinstance(present, str):
+            present = [present]
+        seen = {normalize_label(str(c)) for c in present}
+        result = {c: normalize_label(c) in seen for c in asked}
+        self._save_debug(img, ",".join(asked), ABSENCE_USER, reply,
+                         accepted=any(result.values()))
+        self._log("absence", ",".join(asked), [c for c, v in result.items() if v])
+        return result
+
+    @staticmethod
+    def _zoom(rgb: np.ndarray, bbox: np.ndarray, pad: float = 1.6, out_px: int = 320):
+        """Crop around the region and upscale it.
+
+        A 100 px object in a 640x480 frame is most of the reason a VLM answers
+        about the scene instead of the region: measured, the same question on a
+        zoomed crop went from 12/20 to 17/20.
+        """
+        import cv2
+
+        h, w = rgb.shape[:2]
+        cx, cy = (bbox[0] + bbox[2]) / 2.0, (bbox[1] + bbox[3]) / 2.0
+        half = max(bbox[2] - bbox[0], bbox[3] - bbox[1]) * pad / 2.0
+        x1, y1 = int(max(0, cx - half)), int(max(0, cy - half))
+        x2, y2 = int(min(w, cx + half)), int(min(h, cy + half))
+        sub = rgb[y1:y2, x1:x2]
+        if sub.size == 0:
+            return rgb, np.asarray(bbox, dtype=float)
+        scale = max(1.0, float(out_px) / max(sub.shape[:2]))
+        sub = cv2.resize(sub, None, fx=scale, fy=scale, interpolation=cv2.INTER_CUBIC)
+        moved = np.array([(bbox[0] - x1) * scale, (bbox[1] - y1) * scale,
+                          (bbox[2] - x1) * scale, (bbox[3] - y1) * scale], dtype=float)
+        return sub, moved
+
+    def verify_still_there(
+        self, rgb: Optional[np.ndarray], region_bbox_xyxy: Optional[np.ndarray],
+        target: str, zoom: bool = True,
+    ) -> Optional[bool]:
+        """Is `target` still inside the marked region? None = no information.
+
+        The forced-choice form of `verify_absence`, and the one worth using: a
+        model asked "is a bowl present" answers about plausibility, while a model
+        made to choose between "bowl", "bare" and "blocked" answers about the
+        pixels. `blocked` returns None -- an obstructed view is not evidence of
+        absence, and treating it as such deletes objects behind doors.
+        """
+        if rgb is None or region_bbox_xyxy is None:
+            return None
+        bbox = np.asarray(region_bbox_xyxy, dtype=float)
+        img, bbox = self._zoom(rgb, bbox) if zoom else (rgb, bbox)
+        img = self._draw_bbox(img, bbox)
+        self.n_calls += 1
+        try:
+            out = self.client.chat(
+                ABSENCE_CHOICE_SYSTEM,
+                ABSENCE_CHOICE_USER.format(target=normalize_label(target)),
+                images=[img],
+                json_response=True,
+            )
+        except Exception as exc:
+            self.n_errors += 1
+            self.last_error = repr(exc)[:200]
+            self._log("still_there", target, None)
+            return None
+        choice = normalize_label(str(out.get("choice", "")))
+        self._save_debug(img, target, "still_there", out, accepted=choice == normalize_label(target))
+        if normalize_label(target) in choice:
+            self._log("still_there", target, True)
+            return True
+        if "bare" in choice:
+            self._log("still_there", target, False)
+            return False
+        self._log("still_there", target, None)
+        return None  # blocked, or an answer we cannot read
 
     def verify_crop(self, img: Optional[np.ndarray], target: str) -> bool:
         """Verify a pre-cropped image (fallback when no full frame + bbox)."""

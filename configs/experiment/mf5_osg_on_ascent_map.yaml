@@ -1,0 +1,186 @@
+# @package _global_
+#
+# PASS 2 of the cross-anchor experiment: OSG's presence-filter pipeline
+# navigates the MOVED layout over the obstacle map ASCENT's navigation built.
+#
+#   python scripts/run_eval.py +experiment=mf5_osg_on_ascent_map \
+#       'ycb.scenes=[00800-TEEsavR23oF]' \
+#       ycb.obstacle_map_in=outputs/maps_mf5_ascent \
+#       ycb.map_in=outputs/maps_mf5_osg \
+#       output_dir=outputs/mf5_pass2
+#
+# The agent is `mf5_osg_unified` unchanged -- the same presence filter, search
+# posterior, absence sensor and floor stack that arm is measured with. The only
+# additions are the two inputs:
+#
+#   ycb.obstacle_map_in   the per-storey occupancy from pass 1, resampled into
+#                         this run's costmaps (navigation/mapping/map_store.py)
+#   ycb.map_in            the object tracks and their presence beliefs, if a
+#                         scene-graph snapshot exists; OPTIONAL, and without it
+#                         the run maps objects from scratch while still
+#                         planning over the reused occupancy
+#
+# Neither is baked in here. Which snapshot the agent navigates from IS the
+# experiment, and a preset that chose one would hide it -- the same reason
+# `ycb_dynamic_best` leaves `map_in` unset.
+#
+# THE TWO ARMS DO NOT MEAN THE SAME THING BY "OBSTACLE", and a reused map is
+# read by whoever loads it, not by whoever wrote it:
+#
+#   ASCENT   agent.ascent_min/max_obstacle_h   0.61 - 0.88 m
+#   OSG      mapping.obstacle_low_m/high_m     0.15 - 1.50 m
+#
+# ASCENT stamps a narrow waist-height band, so a 0.3 m step or the lip of a
+# 1.2 m counter is FREE in the map pass 1 wrote and OCCUPIED in the one this
+# pass would have built. The loaded map is therefore more permissive than this
+# agent's own, which is why `ycb.obstacle_map_overwrite` defaults to false:
+# loaded cells fill in only what this run has not seen for itself, and its own
+# sensor corrects them under its own band as it goes.
+defaults:
+  - mf5_osg_unified
+  - _self_
+
+ycb:
+  # The moved world. Pass 1 mapped the static one.
+  layout_types: [cross_anchor]
+  layout_indices: [1]
+  skip_incomplete_layouts: true
+  # Score by DualMap's RELEASED rule -- a STOP within 1.0 m of the OBJECT --
+  # not habitat's fallback, which is 0.18 m geodesic to an authored VIEW POINT.
+  #
+  # This is a measurement fix, not a relaxation. Reconstructed from
+  # `approach_diag` on outputs/mf5_pass2_alldown, six episodes scored as
+  # failures had STOPPED between 0.16 and 0.99 m from the target -- 00800/50001
+  # reached 0.29 m of the object and detected it 49 times -- and were rejected
+  # only for missing an 18 cm viewpoint. Against the system this arm is
+  # compared with, the other system's rule has to be the one attempts are spent
+  # against, or the two runs are not answering the same question
+  # (eval/attempts.py says exactly this).
+  score_by_object_distance: true
+  object_success_distance_m: 1.0
+
+agent:
+  # 0.1 m, matching DualMap's released static experiment. The default 0.18 is
+  # habitat's ObjectNav agent; it also sets the costmap inflation, so a wider
+  # radius closes doorways and stair landings this benchmark needs.
+  agent_radius: 0.1
+  # A failed attempt returns the agent to EXPLORE, but `candidates.check` runs
+  # before the EXPLORE branch every step, so on this benchmark the next
+  # same-label track commits within one step and the exploration round never
+  # happens. Measured on 00800 (outputs/mf5_pass2_v2): three attempts, three
+  # same-storey commits, `frontier_select_log` and `search_log_events` EMPTY,
+  # episodes over at 180 and 362 of 500 steps with the goal on the other
+  # storey. 25 steps is one round plus time to act on it -- 5% of the budget,
+  # and a hold rather than a ban.
+  explore_after_failed_attempt_steps: 25
+  # A flight_up must start an UP climb. See the flag's comment: a tie between
+  # two storey heights was being read as "descend".
+  climb_direction_from_flight: true
+  # A pasted ramp cannot know where the landings are; the carrot must not turn
+  # toward the agent's own feet when the ramp says the floor should have
+  # dropped by now (see the flag's comment).
+  # 1.2, not 0.4. The point-goal mover does not converge on a goal a step or
+  # two away -- it circles. Measured with probe_climb_osg.py on 00821's
+  # descent, `ramp` heights (the realistic case), one flight, one climb loop,
+  # only this number changing:
+  #
+  #     0.4   -0.93 m, 300 steps, fell back 0.29   FAILS
+  #     0.8   -3.43 m, 263 steps                   arrives
+  #     1.2   -3.34 m,  63 steps                   arrives
+  #     1.6   -3.31 m,  62 steps                   arrives
+  #
+  # 63 steps against the 60 the same climb takes on TRUE tread heights, so at
+  # this spacing the synthetic ramp costs almost nothing. 1.2 over 1.6 because
+  # a longer reach crosses more of a landing before it commits.
+  climb_carrot_min_ahead_m: 1.2
+  # OFF, and kept in the code as a MEASURED NEGATIVE. The hypothesis was that a
+  # ramped height field lets the nearest in-band cell sit behind the agent, so
+  # the carrot sends it backwards. Filtering to the half-plane toward the far
+  # end changed the 00821 descent by NOTHING -- byte-identical steps, actions
+  # and dy. The carrot trace says why: the in-band cells (13-16 of them) were
+  # already ahead, the agent really does descend 0.13 -> -0.80 m, and what
+  # spins is the MOVER, 249 turns against 50 forwards on a goal only
+  # 0.46-1.14 m away. Aiming the carrot better cannot fix a point-goal policy
+  # oscillating on a close goal.
+  climb_carrot_forward_only: false
+  # The storeys here are 3.0 m apart and `new_level_m` is 1.8; a climb must
+  # close the gap the prior map knows, not a constant (see the flag).
+  climb_to_target_storey_tol_m: 0.3
+  # 200 steps was not enough for a 3.0 m descent: v15 ep1 reached 2.44 m of it
+  # making steady progress and ended on the budget, 0.56 m short. A climb that
+  # is NOT progressing is ended by `_carrot_stalled` long before this.
+  climb_max_steps: 300
+  # Keep the tread the climber is walking to until it is reached, rather than
+  # re-picking the nearest one every step and wiping the point-goal policy's
+  # recurrent state with it (see the key's comment; v16 ep1 spent 300 of its
+  # 500 steps on 2.56 m, and the same climb in isolation takes 50).
+  climb_carrot_hold_m: 0.35
+  # A turn is 30 degrees, so correcting less than 15 overshoots and the next
+  # step corrects back: on the stairs a quarter of the descent's turns and
+  # nearly half of the ascent's immediately reversed the previous one, and
+  # three quarters of the motion was undone (see the keys' comments).
+  # The turn deadband is OFF, and stays in the code as a measured negative:
+  # v19 (suppress everything) walked into the banister, v20 (suppress with a
+  # stuck-yield) cost the ascent its speed -- the cracker box reached the
+  # target storey at step 880 against 161 without it. On a staircase the
+  # mover's turns are mostly NECESSARY, so suppressing them buys nothing.
+  climb_turn_deadband_deg: 0.0
+  climb_turn_stuck_eps_m: 0.05
+  climb_turn_suppress_max: 6
+  # Also OFF, and for a reason worth reading before trying again: v21 differs
+  # from v18 by ONE action -- a single alignment turn at the first climb step
+  # of episode 2 -- and the episode then diverges completely, arriving on the
+  # target storey at step 513 instead of 161. Episode 1, where the alignment
+  # never fired, is byte-identical. Two episodes cannot measure a climb
+  # change: one action's difference swings the outcome by hundreds of steps.
+  # Measure climb changes with `scripts/probe_climb_osg.py`, which starts from
+  # a fixed pose and reports steps and metres, then bring the winner here.
+  climb_align_first_deg: 0.0
+  # Two refusals and the agent searches the storey it is on instead of
+  # spending half the episode trying to leave it.
+  max_failed_switches_per_storey: 2
+  # ...for a quarter of the episode, not for all of it.
+  switch_ban_steps: 250
+  # 1000 steps, not 500. DualMap's own protocol allows 500 KEYFRAMES and this
+  # arm is the multi-floor one: v16 spent 300 steps climbing and reached the
+  # target storey with 46 left, so at 500 the search half of the episode is
+  # never actually exercised. Raised deliberately, and every run from v17 on
+  # is measured at this budget -- runs v2-v16 in the table were at 500.
+  max_steps: 1000
+  # The stair map came across with the paste, so the periodic look-down has
+  # nothing to discover in the middle of a bedroom (see the key's comment).
+  down_look_near_stairs_m: 3.0
+  # Two failed attempts on a storey disprove it: the veto its false positives
+  # carry is lifted and the other storey is requested directly. And a switch
+  # once decided is walked: only a live, close, confident candidate may
+  # pre-empt it. Both measured on 00800 (see the flags' comments).
+  floor_disproved_after_failed_attempts: 2
+  protect_floor_switch: true
+
+verification:
+  # A track far above the storey the agent is standing on needs a second look
+  # before it may take an attempt. Measured on 00800: the toy-airplane episode
+  # spent BOTH early attempts, by step 95, on single-observation tracks whose
+  # centres were at y 5.64 and 5.09 -- 1.9 and 2.5 m above the 3.16 m storey --
+  # while the true object sat at 0.96 on the other storey. Every wrong commit
+  # in v11-v13 was more than 0.8 m up. It holds rather than rejects: a real
+  # object can sit high on a shelf, and at two observations it competes again.
+  commit_max_above_storey_m: 1.0
+  commit_high_min_obs: 2
+
+floor:
+  # The whole point of carrying ASCENT's map over is that it knows where the
+  # stairs are, and until now nothing read that: flights were picked by nearest
+  # foot, which on 00800 meant furniture every time (see the config comment on
+  # the flag). Corroborated flights sort first, and a flight_up is not offered
+  # from the topmost known storey.
+  flights_prefer_stair_mask: true
+  # The pasted ramp spans the real storey gap (3.0 m here); a flight cut at
+  # the 1.8 m constant ends half-way up and the carrot has nothing to follow
+  # past it (see the key's comment; measured on v13).
+  flight_span_from_levels: true
+
+exploration:
+  # Just-arrived storeys have no containers yet; do not let an empty
+  # posterior send the agent back where it came from (see the key's comment).
+  empty_storey_settle_steps: 60

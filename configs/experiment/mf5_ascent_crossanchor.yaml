@@ -1,0 +1,53 @@
+# @package _global_
+#
+# The ASCENT BASELINE on the cross-anchor benchmark: the same 25 episodes OSG
+# runs in `mf5_osg_on_ascent_map`, driven by the transcription of ASCENT's own
+# control flow (`src/navigation/`, fidelity notes in its README) instead of
+# OSG's FSM.
+#
+#   bash scripts/serve_perception.sh          # ASCENT needs all five models
+#   python scripts/run_eval.py +experiment=mf5_ascent_crossanchor \
+#       'ycb.scenes=[00862-LT9Jq6dN3Ea]'
+#
+# This is `mf5_ascentnav_map` -- ASCENT's pass-1 arm -- pointed at the MOVED
+# layout instead of the static one, so the only thing that differs from the OSG
+# arm is the policy. Everything a comparison must hold equal is held equal:
+#
+#   * the episodes            `cross_anchor` layout 1, cross-floor only
+#   * the success rule        a STOP within 1.0 m of the OBJECT (DualMap's
+#                             released rule), not habitat's 0.18 m viewpoint one
+#   * the robot               0.1 m radius, as DualMap's static experiment uses
+#   * the step budget         1000, the same cap the OSG arm is measured at
+#
+# NOT held equal, deliberately: ASCENT builds its own occupancy as it goes and
+# is given no prior map. That IS the arm -- `mf5_osg_on_ascent_map` exists to
+# ask what OSG does with ASCENT's map, and the baseline for it is ASCENT
+# running its own pipeline end to end.
+defaults:
+  - mf5_ascentnav_map
+  - _self_
+
+ycb:
+  # The MOVED world, not the static one pass 1 maps.
+  layout_types: [cross_anchor]
+  layout_indices: [1]
+  # Only the cross-floor relocations, which is what the multi-floor benchmark
+  # is: the same 25 episodes the OSG arm runs.
+  cross_floor_relocations_only: true
+  start_on_prior_floor: true
+  # DualMap's released scoring rule. Without it `attempt_succeeded` falls back
+  # to habitat's viewpoint rule at 0.18 m, which rejected episodes that had
+  # stopped 0.7 m from the target.
+  score_by_object_distance: true
+  object_success_distance_m: 1.0
+  scenes:
+    - 00800-TEEsavR23oF
+    - 00821-eF36g7L6Z9M
+    - 00862-LT9Jq6dN3Ea
+    - 00873-bxsVRursffK
+    - 00878-XB4GS9ShBRE
+
+agent:
+  # Matches the OSG arm's budget and robot, so neither is advantaged.
+  max_steps: 1000
+  agent_radius: 0.1

@@ -1,0 +1,179 @@
+# The deployment: a Jetson AGX Thor beside a Hello Robot Stretch 3.
+#
+#   docker compose -f docker/compose.thor.yaml --env-file docker/.env build
+#   docker compose -f docker/compose.thor.yaml --env-file docker/.env up -d
+#   docker exec -it osg-thor bash
+#
+# A file of its own rather than an override of compose.yaml: nothing here is
+# shared with the x86 development stack. Different base image, different
+# architecture, no Habitat, no HM3D mounts, and two containers where that one
+# has one. See docs/THOR.md.
+#
+# WHAT RUNS WHERE
+#   thor    the pipeline, the perception models, the scene graph, ollama.
+#   bridge  rclpy, and nothing else: it relays frames in and goals out.
+#   robot   NOT HERE. The Stretch runs its own Nav2, its own drivers, and its
+#           own ROS graph; this stack never starts a navigator.
+#
+# Both containers take `network_mode: host`, for two different reasons: the
+# bridge needs the host's network to reach the robot's DDS (discovery is
+# multicast and the default bridge network cannot carry it), and the thor
+# container needs to share the host's loopback so it can reach the bridge's
+# socket at 127.0.0.1:18765. Host networking also takes the host's resolver, so
+# compose service names do not resolve and ollama is addressed by port.
+
+services:
+  ollama:
+    image: ollama/ollama:latest
+    container_name: osg-ollama
+    network_mode: host
+    restart: unless-stopped
+    volumes:
+      - ollama-models:/root/.ollama
+    environment:
+      # Host networking: this is the port the pipeline uses, not a mapping.
+      - OLLAMA_HOST=0.0.0.0:11435
+    runtime: nvidia
+    deploy:
+      resources:
+        reservations:
+          devices:
+            - driver: nvidia
+              count: 1
+              capabilities: [gpu]
+
+  thor:
+    container_name: osg-thor
+    build:
+      context: ..
+      dockerfile: docker/Dockerfile.thor
+      args:
+        # Set these to match the unit. `cat /etc/nv_tegra_release` on the
+        # device gives the L4T release; docs/THOR.md lists the rest. The
+        # default base is an ordinary arm64 NGC image, NOT an l4t-* one --
+        # there is no l4t image for JetPack 7; see docker/Dockerfile.thor.
+        BASE_IMAGE: ${BASE_IMAGE:-nvcr.io/nvidia/pytorch:25.10-py3}
+        CUDA_ARCH: ${CUDA_ARCH:-11.0}
+        # Empty: that base carries torch. Only a JetPack-6 base needs an index.
+        TORCH_INDEX_URL: ${TORCH_INDEX_URL:-}
+        WITH_BLIP2: ${WITH_BLIP2:-1}
+        USER_UID: ${UID:?set UID in docker/.env (id -u)}
+        USER_GID: ${GID:?set GID in docker/.env (id -g)}
+    image: osg-thor:latest
+    runtime: nvidia
+    network_mode: host
+    ipc: host
+    user: "${UID:?}:${GID:?}"
+    group_add: ["27"]
+    stdin_open: true
+    tty: true
+    depends_on: [ollama, bridge]
+    environment:
+      - OLLAMA_HOST=http://localhost:11435
+      - NVIDIA_DRIVER_CAPABILITIES=all
+      - NVIDIA_VISIBLE_DEVICES=all
+      - HOME=/tmp
+      - YOLO_CONFIG_DIR=/tmp/Ultralytics
+      # Where HF-resolved weights land (MobileCLIP-S2 for the region proposer,
+      # BLIP-2 for the value map). The same path serve_perception.sh sets, and
+      # inside the weights-cache volume -- with HOME=/tmp they would otherwise
+      # go to the container's own /tmp and be fetched again on every recreate.
+      - HF_HOME=/workspace/data/weights/hf
+      - UMASK=0002
+      - NVIDIA_API_KEY=${NVIDIA_API_KEY:-}
+    volumes:
+      - ..:/workspace
+      - weights-cache:/workspace/data/weights
+      - ../outputs:/workspace/outputs
+    command: ["bash"]
+
+  bridge:
+    container_name: osg-bridge
+    build:
+      context: ..
+      dockerfile: docker/Dockerfile.bridge
+      # Explicit: the Dockerfile has a second stage (rviz) and Docker would
+      # otherwise build the last one.
+      target: bridge
+      args:
+        USER_UID: ${UID:?}
+        USER_GID: ${GID:?}
+    image: osg-bridge:latest
+    network_mode: host
+    ipc: host
+    user: "${UID:?}:${GID:?}"
+    restart: unless-stopped
+    environment:
+      # Must match the robot's. Anything sharing a domain shares topics.
+      - ROS_DOMAIN_ID=${ROS_DOMAIN_ID:-0}
+      - RMW_IMPLEMENTATION=${RMW_IMPLEMENTATION:-rmw_cyclonedds_cpp}
+      # The robot is another machine on the network.
+      - ROS_LOCALHOST_ONLY=0
+      # DDS pinned to the WIRED robot <-> Thor link. The settings are not
+      # this repo's: docker/cyclonedds-eth.xml is a copy of stretch_main's,
+      # which drives the same Stretch, and the two must stay in sync -- both
+      # ends have to pin the same way or they never discover each other at
+      # all. Mounted at a FIXED absolute path, which is stretch_main's
+      # convention too, so one exported CYCLONEDDS_URI is valid in every image
+      # regardless of where each one mounts its own workspace.
+      - CYCLONEDDS_URI=${CYCLONEDDS_URI:-/etc/cyclonedds-eth.xml}
+      # This machine's wired NIC (`ip -brief addr`). The config names it, so a
+      # wrong or down interface is not silent: Cyclone refuses to start.
+      - CYCLONEDDS_IFACE=${CYCLONEDDS_IFACE:-enP2p1s0}
+      - HOME=/tmp
+      - UMASK=0002
+    volumes:
+      - ..:/workspace
+      - ${CYCLONEDDS_CONFIG:-./cyclonedds-eth.xml}:/etc/cyclonedds-eth.xml:ro
+    # The topics, frames and speeds come from the `ros2` config group; pass the
+    # preset the run will use so both ends agree (scripts/ros2/bridge_args.py).
+    command: ["bash", "scripts/ros2/bridge.sh", "+experiment=stretch3_map"]
+
+  # RViz on the Thor's own screen, on demand -- a window, not a service, so it
+  # is behind a profile and started with `run`, not `up`:
+  #
+  #   docker compose -f docker/compose.thor.yaml --env-file docker/.env run --rm rviz
+  #
+  # The bridge image plus rviz2 (Dockerfile.bridge, target `rviz`), on the
+  # same DDS settings as the bridge so it sees exactly what the bridge sees.
+  # The view is scripts/ros2/osg.rviz: the robot's map, costmaps, plan and
+  # scan, the camera, TF, and the goal the bridge last handed to Nav2.
+  #
+  # X11: the Thor's GNOME session is X11 on :1, owned by uid 1000 -- the same
+  # uid this container runs as, so its GDM cookie authorises us with no
+  # `xhost`. Override DISPLAY/XAUTHORITY in docker/.env for another setup.
+  # Software GL (llvmpipe); the bridge image has no GPU by design.
+  rviz:
+    build:
+      context: ..
+      dockerfile: docker/Dockerfile.bridge
+      target: rviz
+      args:
+        USER_UID: ${UID:?}
+        USER_GID: ${GID:?}
+    image: osg-rviz:latest
+    profiles: ["tools"]
+    network_mode: host
+    ipc: host
+    user: "${UID:?}:${GID:?}"
+    environment:
+      - ROS_DOMAIN_ID=${ROS_DOMAIN_ID:-0}
+      - RMW_IMPLEMENTATION=${RMW_IMPLEMENTATION:-rmw_cyclonedds_cpp}
+      - ROS_LOCALHOST_ONLY=0
+      - CYCLONEDDS_URI=${CYCLONEDDS_URI:-/etc/cyclonedds-eth.xml}
+      - CYCLONEDDS_IFACE=${CYCLONEDDS_IFACE:-enP2p1s0}
+      - HOME=/tmp
+      - DISPLAY=${DISPLAY:-:1}
+      - XAUTHORITY=/tmp/.docker.xauth
+      - QT_X11_NO_MITSHM=1
+      - LIBGL_ALWAYS_SOFTWARE=1
+    volumes:
+      - ..:/workspace
+      - ${CYCLONEDDS_CONFIG:-./cyclonedds-eth.xml}:/etc/cyclonedds-eth.xml:ro
+      - /tmp/.X11-unix:/tmp/.X11-unix
+      - ${XAUTHORITY:-/run/user/${UID:?}/gdm/Xauthority}:/tmp/.docker.xauth:ro
+    command: ["bash", "scripts/ros2/rviz.sh"]
+
+volumes:
+  ollama-models:
+  weights-cache:

@@ -1,0 +1,59 @@
+# @package _global_
+#
+# STAGE 1 IN ONE PASS: ASCENT's navigation walks the static scene once and
+# leaves BOTH maps behind.
+#
+#   python scripts/run_eval.py +experiment=mf5_mapping_both \
+#       'ycb.scenes=[00800-TEEsavR23oF]' \
+#       ycb.obstacle_map_out=outputs/maps_mf5_ascent \
+#       ycb.map_out=outputs/maps_mf5_osg
+#
+# `ascentnav` drives -- ASCENT's control flow on ASCENT's served models -- and
+# `agent.osg_world_model` attaches OSG's world model to the same frames, so the
+# run writes its `ObstacleMap` stack AND the schema-v2 scene graph the presence
+# filter reads back. The world model is fed after each action is chosen and
+# returns nothing, so the transcription's control flow is untouched.
+#
+# Why this beats running the two passes separately, beyond halving the time:
+# measured on 00800, `ascentnav` reaches both storeys inside its 500-step
+# budget, while the `nav_agent` mapping pass needs 1500 steps to reach the
+# second at all and at 500 ends with 213 furniture tracks and NO target
+# objects. The better explorer builds the scene graph.
+#
+# The world model runs its own YOLOE head: ASCENT drives on D-FINE, which is
+# closed-set COCO and cannot see a cracker box, a pitcher or a plate.
+defaults:
+  - mf5_ascentnav_map
+  - _self_
+
+agent:
+  osg_world_model: true
+
+# THE WORLD MODEL NEEDS THE FLOOR GROUP, and inheriting `ascentnav`'s defaults
+# left it without one. `FloorPolicy.observe` only advances `stack.current_id`
+# when `floor.enabled and not floor.estimate_only`; with the shipped defaults
+# (false / true) it stays 0 for the whole episode, and `world_model.py:219`
+# files EVERY track it creates under `floor_key=0` whatever storey it was seen
+# on. Measured on 00800 at 1500 steps: the graph recorded both storey heights
+# (3.16 and 0.16) and put all 402 tracks on the upper one, 184 of them nearer
+# the lower.
+#
+# That is not cosmetic. Pass 2 reads this snapshot with `floor.enabled=true`,
+# and `scene_graph._rebuild_containers` selects tracks BY `floor_key`
+# (`scene_graph.py:214`), so a storey whose tracks are all filed elsewhere
+# rebuilds with nothing on it -- which is section 3b item 4 ("the prior scene
+# graph holds 1 of 8 target objects and no objects at all on the upper storey")
+# and item 4 of section 4 ("the scene graph on a newly reached storey is
+# empty") seen from the writing end rather than the reading end.
+#
+# The values are `mf5_osg_unified`'s, so the prior is built under the same
+# floor semantics it is read under. `src/navigation/agent.py` never touches
+# `cfg.floor` -- ASCENT's transcription carries its own storey stack in
+# `_floors` -- so this changes what the OBSERVER records and nothing about the
+# control flow being transcribed.
+floor:
+  enabled: true
+  estimate_only: false
+  per_floor_costmap: true
+  cross_floor: true
+  stairs: true

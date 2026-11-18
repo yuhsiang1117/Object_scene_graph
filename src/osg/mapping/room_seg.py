@@ -21,6 +21,21 @@ from scipy import ndimage
 from .costmap import Costmap2D
 
 
+class RoomIdCounter:
+    """Monotone room-id source shared by every floor's segmenter."""
+
+    def __init__(self, start: int = 1) -> None:
+        self.value = int(start)
+
+    def take(self) -> int:
+        v = self.value
+        self.value += 1
+        return v
+
+    def bump_past(self, used: int) -> None:
+        self.value = max(self.value, int(used) + 1)
+
+
 class VoronoiRoomSegmenter:
     def __init__(
         self,
@@ -28,13 +43,19 @@ class VoronoiRoomSegmenter:
         door_width_m: float = 1.2,        # kept for construction compat (unused)
         min_room_cells: int = 60,
         erode_iters: int = 12,            # old room_segmentation.py erode_iteration
+        id_counter: Optional["RoomIdCounter"] = None,
     ) -> None:
         self.min_room_radius_m = min_room_radius_m
         self.door_width_m = door_width_m
         self.min_room_cells = min_room_cells
         self.erode_iters = erode_iters
         self._prev_labels: Optional[np.ndarray] = None
-        self._next_room_id = 1
+        # Room ids must be unique across the WHOLE building, not per segmenter:
+        # SceneGraph.rooms is one flat dict and the LLM room-label cache is
+        # keyed by id, so two floors each minting "room 1" would collide. One
+        # segmenter per floor (which is what stops _stabilize_ids matching a
+        # room to the one above it) therefore shares a counter.
+        self._ids = id_counter if id_counter is not None else RoomIdCounter()
 
     def segment(self, costmap: Costmap2D) -> np.ndarray:
         """Returns (H, W) int32 room-id map, 0 = no room."""
@@ -91,8 +112,7 @@ class VoronoiRoomSegmenter:
                     if counts.max() > 0.3 * mask.sum():
                         rid = int(best)
             if rid == 0:
-                rid = self._next_room_id
-                self._next_room_id += 1
+                rid = self._ids.take()
             out[mask] = rid
-        self._next_room_id = max(self._next_room_id, int(out.max()) + 1)
+        self._ids.bump_past(int(out.max()))
         return out

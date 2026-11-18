@@ -1,0 +1,11 @@
+# @package _global_
+#
+# v14, with the dwell actually counting from arrival.
+#
+# v14 was byte-identical to v13 on 00808's yellow bottle: down the flight at
+# 314, back up at 347. The dwell guard read "steps on this floor" as
+# step - first_step, and a storey restored from the prior map has first_step 0,
+# so a 33-step-old arrival looked like 347 steps of searching. FloorStack now
+# records the step of each arrival and the guards use that.
+defaults:
+  - ycb_authored_15_fused_v14

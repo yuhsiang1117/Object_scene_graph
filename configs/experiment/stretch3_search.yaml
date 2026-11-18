@@ -1,0 +1,18 @@
+# @package _global_
+#
+# Run 2 on the Stretch: load the map run 1 built, and go find the thing.
+#
+#   python scripts/run_robot.py +experiment=stretch3_search \
+#          ros2.map_tag=lab ros2.target=cup
+#
+# One field apart from `stretch3_map`, deliberately: the arm that searches has
+# to be the arm that mapped, or the map is a map of a different agent's world.
+# The scene graph is restored believing the object is where it was; it has
+# moved, and the presence filter, the identity channel and absence-as-evidence
+# are the machinery for noticing (docs/ARCHITECTURE.md).
+defaults:
+  - stretch3_map
+  - _self_
+
+ros2:
+  map_mode: search

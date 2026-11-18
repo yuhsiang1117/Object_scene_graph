@@ -1,0 +1,21 @@
+# @package _global_
+#
+# Tight-ring baseline plus the close look BEFORE ABSENCE only
+# (docs/history/SR_PROPOSAL_CLOSE_LOOK.md, arm 2). When the approach arrives silently
+# at a track it never saw live, it looks from the 1.5 m ring before the
+# absence sensor decides, and re-aims if the target shows. Nothing changes for
+# the search. The ground-truth keyframe dump is off: the anatomy tables read
+# the per-episode counters, not the frames.
+#
+#   python scripts/run_eval.py +experiment=dualmap_protocol_osg_look_inanchor \
+#     'dualmap.scenes=[00829-QaLdnwvtxbs]' \
+#     ycb.map_in=outputs/maps_v5/00829-QaLdnwvtxbs \
+#     output_dir=outputs/osg_closelook/inanchor/00829-QaLdnwvtxbs
+defaults:
+  - dualmap_protocol_osg_tightring
+
+agent:
+  close_look_before_absence: true
+
+eval:
+  gt_dump_dir: ""

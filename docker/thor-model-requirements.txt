@@ -1,0 +1,49 @@
+# The five perception servers, on aarch64 / JetPack.
+#
+# NOT docker/ascent-requirements.txt. That file is a `pip freeze` of the x86
+# environment: every version is pinned, including `torch==...+cu118`, which
+# does not exist for this platform at all. Here torch comes from the NGC base
+# image (already present before this file is read, and inherited through
+# --system-site-packages), and everything below is what the five servers
+# import on top of it.
+#
+# Pinned only where a pin is load-bearing:
+#
+#   numpy>=2     the torch in the base image is built against the 2.x ABI --
+#                the reverse of the x86 pin, and for the same reason. A 1.x
+#                numpy under it gives `_ARRAY_API not found`, and lavis and
+#                several servers' deps will pull one in unasked.
+#   transformers ASCENT overrides lavis's `<4.27` pin with 4.37.0 so BLIP-2 and
+#                Qwen2.5 share one environment. Pinned HERE rather than after
+#                lavis, which is where the Dockerfile used to put it: left to
+#                float it now resolves to 5.x, a major release ASCENT's server
+#                code has never seen -- and with WITH_BLIP2=0 nothing pulled it
+#                back down at all.
+#   timm         0.4.12 is what the recorded ASCENT environment runs, and
+#                RAM's and GroundingDINO's backbones are written against it.
+#                A floating timm resolves to 1.x, which still imports (through
+#                its compatibility shims) and is a different model zoo.
+#
+# Everything else floats, because a pin taken from x86 is a pin that has no
+# aarch64 wheel. If a server fails to import on the device, pin it HERE and say
+# in a comment which server and which error -- do not reach for the x86 freeze.
+numpy>=2
+flask
+gunicorn
+pillow
+opencv-python-headless
+timm==0.4.12
+addict
+yapf
+supervision
+pycocotools
+transformers==4.37.0
+tokenizers
+sentencepiece
+ftfy
+regex
+einops
+fairscale
+scipy
+huggingface_hub
+safetensors

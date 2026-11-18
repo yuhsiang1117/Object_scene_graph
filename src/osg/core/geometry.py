@@ -29,6 +29,48 @@ def backproject(
     return pts_c @ T_wc[:3, :3].T + T_wc[:3, 3]
 
 
+def backproject_horizontal(
+    depth: np.ndarray,
+    intrinsics,
+    T_wc: np.ndarray,
+    stride: int = 1,
+    max_depth: float = 10.0,
+    min_up: float = 0.7,
+    up_axis: int = 1,
+) -> np.ndarray:
+    """World points (N, 3) of the depth pixels that lie on a roughly HORIZONTAL
+    surface: the surface normal, from central differences of the back-projected
+    pixel grid, within `arccos(min_up)` of the world's up axis -- 45 degrees by
+    default, because a scanned HM3D flight can be a 30-37 degree ramp.
+
+    A floor, a tread or a table top passes; a wall, a riser face or a railing
+    does not. The normal is taken twice, from the forward and from the backward
+    neighbours, and both must point up: a pixel at a corner -- a tread meeting
+    the next riser, a floor meeting a wall -- has one horizontal side and one
+    vertical, and a central difference across it can look level. Border pixels
+    and pixels with an invalid neighbour are dropped.
+    """
+    h, w = depth.shape
+    vs, us = np.mgrid[0:h:stride, 0:w:stride]
+    d = depth[::stride, ::stride].astype(np.float64)
+    valid = (d > 1e-3) & (d < max_depth)
+    if d.shape[0] < 3 or d.shape[1] < 3:
+        return np.zeros((0, 3))
+    x = (us - intrinsics.cx) / intrinsics.fx * d
+    y = (vs - intrinsics.cy) / intrinsics.fy * d
+    pts = np.stack([x, y, d], axis=-1) @ T_wc[:3, :3].T + T_wc[:3, 3]
+    centre = pts[1:-1, 1:-1]
+    ok = valid[1:-1, 1:-1] & valid[1:-1, 2:] & valid[1:-1, :-2] & valid[2:, 1:-1] & valid[:-2, 1:-1]
+    for across, down in ((pts[1:-1, 2:] - centre, pts[2:, 1:-1] - centre),
+                         (centre - pts[1:-1, :-2], centre - pts[:-2, 1:-1])):
+        normal = np.cross(across, down)
+        length = np.linalg.norm(normal, axis=-1)
+        with np.errstate(invalid="ignore", divide="ignore"):
+            up = np.abs(normal[..., up_axis]) / length
+        ok &= (length > 0) & (up >= float(min_up))
+    return centre[ok]
+
+
 def backproject_pixel(u: float, v: float, d: float, intrinsics, T_wc: np.ndarray) -> np.ndarray:
     p = np.array(
         [(u - intrinsics.cx) / intrinsics.fx * d, (v - intrinsics.cy) / intrinsics.fy * d, d]
@@ -68,6 +110,10 @@ def ellipse_from_mask(mask: np.ndarray) -> Optional[Ellipse2D]:
     so we scale by 4 to recover the boundary ellipse.
     """
     ys, xs = np.nonzero(mask)
+    return _ellipse_from_pixels(ys, xs)
+
+
+def _ellipse_from_pixels(ys: np.ndarray, xs: np.ndarray) -> Optional[Ellipse2D]:
     if xs.size < 8:
         return None
     pts = np.stack([xs, ys], axis=1).astype(np.float64)
@@ -79,16 +125,30 @@ def ellipse_from_mask(mask: np.ndarray) -> Optional[Ellipse2D]:
     return Ellipse2D(mu=mu, cov=cov)
 
 
-def bbox_intersection_area(b1: np.ndarray, b2: np.ndarray) -> float:
-    x1 = max(b1[0], b2[0])
-    y1 = max(b1[1], b2[1])
-    x2 = min(b1[2], b2[2])
-    y2 = min(b1[3], b2[3])
-    return max(0.0, x2 - x1) * max(0.0, y2 - y1)
+def mask_pixels(det) -> Tuple[np.ndarray, np.ndarray]:
+    """`np.nonzero(det.mask)`, scanned once per detection.
+
+    The object layer asks for a detection's pixels up to five times a keyframe
+    -- presence, association, the observation, a new track's ellipsoid -- and
+    each was a full-frame scan: a quarter of the object layer's time. Cached on
+    the detection, keyed on the mask object itself so a replaced mask is
+    scanned afresh (masks are never edited in place), and read-only."""
+    cached = det.__dict__.get("_mask_pixels")
+    if cached is None or cached[0] is not det.mask:
+        ys, xs = np.nonzero(det.mask)
+        ys.flags.writeable = False
+        xs.flags.writeable = False
+        cached = (det.mask, ys, xs, _ellipse_from_pixels(ys, xs))
+        det.__dict__["_mask_pixels"] = cached
+    return cached[1], cached[2]
 
 
-def bbox_area(b: np.ndarray) -> float:
-    return max(0.0, b[2] - b[0]) * max(0.0, b[3] - b[1])
+def det_ellipse(det) -> Optional[Ellipse2D]:
+    """`ellipse_from_mask(det.mask)` from the cached scan (`mask_pixels`): the
+    same numbers, and a fresh object each call, as ellipse_from_mask gives."""
+    mask_pixels(det)
+    e = det.__dict__["_mask_pixels"][3]
+    return None if e is None else Ellipse2D(mu=e.mu.copy(), cov=e.cov.copy())
 
 
 def rotvec_to_matrix(rv: np.ndarray) -> np.ndarray:
@@ -148,10 +208,13 @@ def bresenham(r0: int, c0: int, r1: int, c1: int):
             c0 += sc
 
 
+_EYE2 = np.eye(2)
+
+
 def sqrtm_2x2_spd(M: np.ndarray) -> np.ndarray:
     """Closed-form principal square root of a 2x2 SPD matrix."""
     det = max(M[0, 0] * M[1, 1] - M[0, 1] * M[1, 0], 0.0)
     s = np.sqrt(det)
     tr = M[0, 0] + M[1, 1]
     denom = np.sqrt(max(tr + 2.0 * s, 1e-12))
-    return (M + s * np.eye(2)) / denom
+    return (M + s * _EYE2) / denom

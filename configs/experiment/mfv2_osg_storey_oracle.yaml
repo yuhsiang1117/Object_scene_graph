@@ -1,0 +1,20 @@
+# @package _global_
+#
+# `mfv2_osg_storey` with the staircase itself walked by Habitat's follower
+# (`agent.climb_oracle`, privileged -- see mfv2_osg_climb_oracle). The ceiling
+# for the climb controller under the storey belief: what is left when the
+# decision is the belief's and the stepping is perfect. Never a headline.
+# A descent is pursued to its top (`floor.descent_goal: extrapolated`, see
+# mfv2_osg_descent): with the shipped "lowest_tread" the pursuit drives toward
+# the far end of a descending staircase before the oracle ever takes over.
+#
+#   python scripts/run_eval.py +experiment=mfv2_osg_storey_oracle ...same inputs as mfv2_osg
+defaults:
+  - mfv2_osg_storey
+  - _self_
+
+agent:
+  climb_oracle: true
+
+floor:
+  descent_goal: extrapolated

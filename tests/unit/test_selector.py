@@ -64,3 +64,62 @@ def test_info_gain_prefers_high_unknown_frontier():
     best = select_frontier([f_near, f_far], scores, planner, cm, np.array([0.0, 0.0]),
                            info_gain_weight=5.0, info_gain_radius_m=1.0)
     assert best.id == 2  # far frontier's large unknown area outweighs its distance
+
+
+# ------------------------------------------------- frontier goal placement
+
+
+def test_default_goal_is_an_unknown_frontier_cell():
+    """Historical behaviour, kept as the default so the flag is A/B-able."""
+    from osg.exploration.selector import frontier_goal_xy
+    from osg.mapping.costmap import UNKNOWN, Costmap2D
+    from osg.mapping.frontier import Frontier
+
+    cm = Costmap2D(resolution=0.05, size_m=20.0)
+    cells = np.array([[200, 200], [200, 201], [201, 200]])
+    f = Frontier(id=0, centroid_xy=cm.grid_to_world(np.array([190.0, 190.0])),
+                 cells=cells, size=3)
+    goal = frontier_goal_xy(f, cm)
+    rc = cm.world_to_grid(goal)
+    assert cm.grid[rc[0], rc[1]] == UNKNOWN
+    assert not np.allclose(goal, f.centroid_xy)
+
+
+def test_prefer_free_returns_the_snapped_centroid():
+    """The navmesh cannot be handed unknown space: snap_point maps it to an
+    arbitrary nearby navigable point, so the follower reports
+    arrived-or-unreachable immediately (289 stub-blocks / 100 episodes)."""
+    from osg.exploration.selector import frontier_goal_xy
+    from osg.mapping.costmap import Costmap2D
+    from osg.mapping.frontier import Frontier
+
+    cm = Costmap2D(resolution=0.05, size_m=20.0)
+    f = Frontier(id=0, centroid_xy=cm.grid_to_world(np.array([190.0, 190.0])),
+                 cells=np.array([[200, 200], [200, 201]]), size=2)
+    assert np.allclose(frontier_goal_xy(f, cm, prefer_free=True), f.centroid_xy)
+
+
+def test_extract_snaps_the_centroid_into_free_space():
+    """The property the fix relies on: a surviving frontier's centroid is a FREE
+    cell, so it is a valid navmesh goal."""
+    from osg.mapping.costmap import FREE, Costmap2D
+    from osg.mapping.frontier import FrontierExtractor
+
+    cm = Costmap2D(resolution=0.05, size_m=20.0)
+    cm.grid[100:200, 100:150] = FREE
+    fs = FrontierExtractor(min_cells=1).extract(cm, np.array([0.0, 0.0]))
+    assert fs
+    for f in fs:
+        rc = cm.world_to_grid(f.centroid_xy)
+        assert cm.grid[rc[0], rc[1]] == FREE, "centroid is not in free space"
+
+
+def test_empty_cells_falls_back_to_the_centroid():
+    from osg.exploration.selector import frontier_goal_xy
+    from osg.mapping.costmap import Costmap2D
+    from osg.mapping.frontier import Frontier
+
+    cm = Costmap2D(resolution=0.05, size_m=20.0)
+    f = Frontier(id=0, centroid_xy=np.array([1.0, 2.0]),
+                 cells=np.zeros((0, 2), dtype=int), size=0)
+    assert np.allclose(frontier_goal_xy(f, cm), [1.0, 2.0])

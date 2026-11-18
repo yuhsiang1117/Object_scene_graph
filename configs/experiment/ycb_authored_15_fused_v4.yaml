@@ -1,0 +1,28 @@
+# @package _global_
+#
+# The fused arm, and the question put to the LLM.
+#
+# v1-v3 build a pipeline in which exactly one moment asks "which storey now?":
+# the agent has driven to the pose the stale prior map named, the absence sensor
+# has said the object is gone, and the storey request is finally released. That
+# moment is rare, it is informative, and until now the answer came from a sum of
+# container mass -- in effect "which floor has more furniture".
+#
+# This gives that one question to the text model instead. `FloorDecisionPlanner`
+# and its prompts already existed and had no caller outside their own tests:
+# `decide()` was never invoked, `_floor_goal_dir` was assigned 0 once and never
+# again, and `_floor_direction_boost` had no caller at all, so every preset that
+# claimed `floor_llm: true` measured nothing. See docs/history/FUSED_PIPELINE.md.
+#
+# The call is synchronous, happens at most once per `floor_ask_every` steps, and
+# any failure returns None and leaves the posterior's own answer standing.
+defaults:
+  - ycb_authored_15_fused_v3
+
+exploration:
+  floor_llm: true
+  # ASCENT asks every 60 steps from step 100. Here the trigger is the absence,
+  # so the throttle only prevents a burst when a request is re-raised each
+  # selection round; the floor must still have been searched for a while.
+  floor_ask_every: 40
+  floor_min_steps: 60

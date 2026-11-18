@@ -1,0 +1,17 @@
+# @package _global_
+#
+# `mfv2_osg_mouth_walk` with the staircase the robot has already walked tried
+# BEFORE the flights read off the height layer (`floor.prior_stairs_before_flights`),
+# as Section III-E orders the evidence. 00800 (seed 42, static 50001,
+# mfv2_osg_mouth): the flight's foot was taken 3 m from the true one, beside
+# the treads, and both climbs from it stalled at 0.0 m; pass 1 had arrived on
+# this storey 0.8-1.0 m from that foot, and the navmesh-walked ceiling arm
+# (mfv2_osg_storey_oracle) got up from the same flight goal.
+#
+#   bash scripts/run_mfv2.sh osg_traversed <seed>
+defaults:
+  - mfv2_osg_mouth_walk
+  - _self_
+
+floor:
+  prior_stairs_before_flights: true

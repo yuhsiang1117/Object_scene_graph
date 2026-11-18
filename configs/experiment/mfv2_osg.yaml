@@ -1,0 +1,16 @@
+# @package _global_
+#
+# OSG on Benchmark v2 (`mfv2_dataset`): the multi-floor arm exactly as the paper
+# ran it (`mf5_osg_on_ascent_map`), on the mixed episode set. Nothing about the
+# agent changes -- in particular the rules that assume the object moved to
+# another storey (`floor_disproved_after_failed_attempts`, the switch gate over
+# a pasted, fully-explored map) are kept, because measuring what they do on
+# same-storey episodes is part of the point.
+#
+#   python scripts/run_eval.py +experiment=mfv2_osg \
+#       ycb.obstacle_map_in=outputs/maps_v2_ascent ycb.obstacle_map_union=true \
+#       ycb.map_in=outputs/maps_v2_osg output_dir=outputs/mfv2/osg_s42
+defaults:
+  - mf5_osg_on_ascent_map
+  - mfv2_dataset
+  - _self_

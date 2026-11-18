@@ -1,0 +1,21 @@
+# @package _global_
+#
+# The one stair A/B against `ascentnav`: OSG's looser stair sensing inside the
+# reference's control flow.
+#
+#   stair_up_mode: rednet       RedNet's stair class alone (the union), where
+#                               the reference ANDs it with GroundingDINO
+#   passive_stair_entry: false  the passive trigger only trusts the strict mask
+#   downstair_detector: lip     OSG's "missing floor" lip test instead of the
+#                               reference's mirrored-depth trigger
+#
+# Run it when `ascentnav` loses cross-floor episodes to a staircase it never
+# marked; it is what the S41-S68 arms climbed with.
+
+defaults:
+  - ascentnav
+
+agent:
+  stair_up_mode: rednet
+  passive_stair_entry: false
+  downstair_detector: lip

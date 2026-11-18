@@ -1,0 +1,46 @@
+# The build context is the repo root (docker/compose.yaml sets `context: ..`)
+# so that the Dockerfile can COPY the ASCENT submodule. Without this file that
+# would send 35 GB to the daemon on every build; with it, ~264 MB.
+#
+# Anything the image needs at BUILD time must NOT be listed here. Today that is
+# exactly: relative_work/ascent (minus its weights) and docker/.
+
+# Conda environments live in the image, never in the context.
+.conda-envs/
+
+# Datasets, scene meshes and model weights are mounted or downloaded at run
+# time, never baked in. data/ alone is 12 GB and the ASCENT weights 4.5 GB.
+data/
+relative_work/ascent/pretrained_weights/
+**/*.pth
+**/*.pt
+**/*.pth.tar
+**/*.glb
+**/*.navmesh
+**/*.ply
+mobileclip_blt.ts
+
+# Run artifacts.
+outputs/
+**/debug/vlm_logs/
+**/__pycache__/
+*.py[cod]
+.pytest_cache/
+*.egg-info/
+
+# Git metadata: the build needs the working tree, not the history. This also
+# covers the submodules' own .git directories.
+.git/
+**/.git/
+.gitignore
+.gitmodules
+
+# Secrets. docker/.env holds NVIDIA_API_KEY; nothing in the build reads it, and
+# excluding it keeps it out of the context entirely.
+docker/.env
+.env
+
+# Editor / tooling state.
+.vscode/
+.idea/
+.claude/

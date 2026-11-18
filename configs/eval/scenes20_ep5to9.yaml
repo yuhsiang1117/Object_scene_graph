@@ -1,0 +1,119 @@
+defaults:
+  - base_hm3d
+
+# 20 val scenes x episodes 5-9 = 100 episodes: the HELD-OUT half of the
+# ObjectNav-search work (docs/history/AB_RESULTS.md S83+).
+#
+# GENERATED -- do not hand-edit. Same scenes, same id rule and same order as
+# scenes20_ep0to4 (habitat assigns episode_id = str(i) in file order within
+# each content file); only the index range differs. v1 val has exactly these
+# 20 scenes, so a held-out split can differ in episodes but not in scenes.
+#
+# Every constant of the search additions was measured on scenes20_ep0to4.
+# This split is run ONCE per arm, at the end; do not tune against it.
+split: val
+dataset_version: v1
+episodes_path: data/datasets/objectnav/hm3d/v1/{split}/{split}.json.gz
+num_episodes: -1
+max_scene_repeat_episodes: -1
+episode_ids:
+    - 4ok3usBNeis.basis.glb:5
+    - 4ok3usBNeis.basis.glb:6
+    - 4ok3usBNeis.basis.glb:7
+    - 4ok3usBNeis.basis.glb:8
+    - 4ok3usBNeis.basis.glb:9
+    - 5cdEh9F2hJL.basis.glb:5
+    - 5cdEh9F2hJL.basis.glb:6
+    - 5cdEh9F2hJL.basis.glb:7
+    - 5cdEh9F2hJL.basis.glb:8
+    - 5cdEh9F2hJL.basis.glb:9
+    - 6s7QHgap2fW.basis.glb:5
+    - 6s7QHgap2fW.basis.glb:6
+    - 6s7QHgap2fW.basis.glb:7
+    - 6s7QHgap2fW.basis.glb:8
+    - 6s7QHgap2fW.basis.glb:9
+    - DYehNKdT76V.basis.glb:5
+    - DYehNKdT76V.basis.glb:6
+    - DYehNKdT76V.basis.glb:7
+    - DYehNKdT76V.basis.glb:8
+    - DYehNKdT76V.basis.glb:9
+    - Dd4bFSTQ8gi.basis.glb:5
+    - Dd4bFSTQ8gi.basis.glb:6
+    - Dd4bFSTQ8gi.basis.glb:7
+    - Dd4bFSTQ8gi.basis.glb:8
+    - Dd4bFSTQ8gi.basis.glb:9
+    - Nfvxx8J5NCo.basis.glb:5
+    - Nfvxx8J5NCo.basis.glb:6
+    - Nfvxx8J5NCo.basis.glb:7
+    - Nfvxx8J5NCo.basis.glb:8
+    - Nfvxx8J5NCo.basis.glb:9
+    - QaLdnwvtxbs.basis.glb:5
+    - QaLdnwvtxbs.basis.glb:6
+    - QaLdnwvtxbs.basis.glb:7
+    - QaLdnwvtxbs.basis.glb:8
+    - QaLdnwvtxbs.basis.glb:9
+    - TEEsavR23oF.basis.glb:5
+    - TEEsavR23oF.basis.glb:6
+    - TEEsavR23oF.basis.glb:7
+    - TEEsavR23oF.basis.glb:8
+    - TEEsavR23oF.basis.glb:9
+    - XB4GS9ShBRE.basis.glb:5
+    - XB4GS9ShBRE.basis.glb:6
+    - XB4GS9ShBRE.basis.glb:7
+    - XB4GS9ShBRE.basis.glb:8
+    - XB4GS9ShBRE.basis.glb:9
+    - bxsVRursffK.basis.glb:5
+    - bxsVRursffK.basis.glb:6
+    - bxsVRursffK.basis.glb:7
+    - bxsVRursffK.basis.glb:8
+    - bxsVRursffK.basis.glb:9
+    - cvZr5TUy5C5.basis.glb:5
+    - cvZr5TUy5C5.basis.glb:6
+    - cvZr5TUy5C5.basis.glb:7
+    - cvZr5TUy5C5.basis.glb:8
+    - cvZr5TUy5C5.basis.glb:9
+    - mL8ThkuaVTM.basis.glb:5
+    - mL8ThkuaVTM.basis.glb:6
+    - mL8ThkuaVTM.basis.glb:7
+    - mL8ThkuaVTM.basis.glb:8
+    - mL8ThkuaVTM.basis.glb:9
+    - mv2HUxq3B53.basis.glb:5
+    - mv2HUxq3B53.basis.glb:6
+    - mv2HUxq3B53.basis.glb:7
+    - mv2HUxq3B53.basis.glb:8
+    - mv2HUxq3B53.basis.glb:9
+    - p53SfW6mjZe.basis.glb:5
+    - p53SfW6mjZe.basis.glb:6
+    - p53SfW6mjZe.basis.glb:7
+    - p53SfW6mjZe.basis.glb:8
+    - p53SfW6mjZe.basis.glb:9
+    - q3zU7Yy5E5s.basis.glb:5
+    - q3zU7Yy5E5s.basis.glb:6
+    - q3zU7Yy5E5s.basis.glb:7
+    - q3zU7Yy5E5s.basis.glb:8
+    - q3zU7Yy5E5s.basis.glb:9
+    - qyAac8rV8Zk.basis.glb:5
+    - qyAac8rV8Zk.basis.glb:6
+    - qyAac8rV8Zk.basis.glb:7
+    - qyAac8rV8Zk.basis.glb:8
+    - qyAac8rV8Zk.basis.glb:9
+    - svBbv1Pavdk.basis.glb:5
+    - svBbv1Pavdk.basis.glb:6
+    - svBbv1Pavdk.basis.glb:7
+    - svBbv1Pavdk.basis.glb:8
+    - svBbv1Pavdk.basis.glb:9
+    - wcojb4TFT35.basis.glb:5
+    - wcojb4TFT35.basis.glb:6
+    - wcojb4TFT35.basis.glb:7
+    - wcojb4TFT35.basis.glb:8
+    - wcojb4TFT35.basis.glb:9
+    - ziup5kvtCCR.basis.glb:5
+    - ziup5kvtCCR.basis.glb:6
+    - ziup5kvtCCR.basis.glb:7
+    - ziup5kvtCCR.basis.glb:8
+    - ziup5kvtCCR.basis.glb:9
+    - zt1RVoi7PcG.basis.glb:5
+    - zt1RVoi7PcG.basis.glb:6
+    - zt1RVoi7PcG.basis.glb:7
+    - zt1RVoi7PcG.basis.glb:8
+    - zt1RVoi7PcG.basis.glb:9

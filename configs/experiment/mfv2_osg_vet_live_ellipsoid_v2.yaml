@@ -1,0 +1,32 @@
+# @package _global_
+#
+# The final arm (`mfv2_osg_landing_vet_live`) with the object layer's depth-point
+# ellipsoids as adopted in docs/history/AB_RESULTS.md S78 (variant I6r1):
+# R2M4 (`mfv2_osg_vet_live_ellipsoid`) plus
+#   * extent_pad_m: half a voxel back on every half-extent
+#   * yaw_mode=manhattan: axes from the room's walls (depth normals)
+#   * depth_axis=thickness: one-sided completion by the depth actually seen
+#   * refit_min_views=1: a points refit from the first buffered view
+#   * assoc_2d_reassign: a projection match moved to the same-label track that
+#     holds the detection's points
+#
+# Offline, against instance ground truth on the test scenes (418 objects):
+# IoU 0.114 (V0) / 0.266 (R2M4) -> 0.388, centre error 0.289 / 0.233 -> 0.172 m,
+# extra tracks per object 3.05 / 2.34 -> 2.33, purity 0.928 / 0.917 -> 0.935.
+# Closed loop, seed 42, VLM off (S78): 58 paired episodes, success 35 vs
+# R2M4's 39 and V0's 36 (sign p = 0.29 against R2M4); FP commits 38, the same as
+# R2M4 (V0 53). No navigation gain is claimed. Its prior map is the replay of
+# the pass-1 recording under these overrides:
+#
+#   OSG=outputs/maps_v2_osg_I6r1 bash scripts/run_mfv2.sh osg_vet_live_ellipsoid_v2 <seed>
+defaults:
+  - mfv2_osg_vet_live_ellipsoid
+  - _self_
+
+scene_graph:
+  ellipsoid:
+    extent_pad_m: 0.015
+    yaw_mode: manhattan
+    depth_axis: thickness
+    refit_min_views: 1
+    assoc_2d_reassign: 0.1

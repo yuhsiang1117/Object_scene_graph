@@ -1,0 +1,20 @@
+# @package _global_
+#
+# `mfv2_osg_descent` plus vetting the PRIOR map before each episode
+# (`verification.stop_gate_vet_prior`, see mfv2_osg_gate2_vet): the STOP gate's
+# recogniser judges every pass-1 track carrying the target's label on its saved
+# crop, as one presence reading. Offline over outputs/maps_v2_osg's 90
+# target-labelled tracks it keeps 34 of 38 true and 9 of 52 false.
+#
+# Why on this arm: the storey belief reads those tracks. On seed 42
+# (mfv2_osg_climb) 00821's toy airplane kept the lower storey at P = 0.82-0.90
+# for 650 steps on two pass-1 tracks never seen live, while the object was on
+# the storey the agent started on.
+#
+#   bash scripts/run_mfv2.sh osg_descent_vet <seed>
+defaults:
+  - mfv2_osg_descent
+  - _self_
+
+verification:
+  stop_gate_vet_prior: true

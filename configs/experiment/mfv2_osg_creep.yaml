@@ -1,0 +1,17 @@
+# @package _global_
+#
+# `mfv2_osg_climb` with the approach's last metre walked by a creep that steers
+# (`agent.approach_creep_steer_deg`, planning/creep.py) instead of PointNav's
+# blind forward. Measured on Benchmark v2 seed 42: 2-4 episodes per OSG arm end
+# with a stop 1.0-1.6 m from the object on its storey; 00862's banana pressed
+# ten forwards into the table it sat on and stopped at 1.15 m, 0.37 m from a
+# viewpoint 0.8 m from the object, and 00873's pitcher stopped at 1.10 m in all
+# four arms.
+#
+#   python scripts/run_eval.py +experiment=mfv2_osg_creep ...same inputs as mfv2_osg
+defaults:
+  - mfv2_osg_climb
+  - _self_
+
+agent:
+  approach_creep_steer_deg: 20.0

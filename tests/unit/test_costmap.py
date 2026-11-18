@@ -43,3 +43,30 @@ def test_inflated_dilation():
     inf = cm.inflated(0.3)
     assert inf[rc[0] + 2, rc[1]]  # 0.2 m away is blocked
     assert not inf[rc[0] + 6, rc[1]]  # 0.6 m away is not
+
+
+def test_clear_footprint_frees_the_disc_under_the_robot_and_nothing_else():
+    """The robot is there, so the cells are free: occupied and unknown alike.
+    Measured on the Stretch, obstacle speckle under the base cut the map into
+    98 islands and frontier detection found nothing from the robot's own."""
+    cm = Costmap2D(resolution=0.1, size_m=4.0)
+    cm.grid[:, :] = UNKNOWN
+    rc = cm.world_to_grid(np.array([0.0, 0.0]))
+    cm.grid[rc[0] - 1: rc[0] + 2, rc[1] - 1: rc[1] + 2] = OCCUPIED   # speckle under the base
+    cm.grid[rc[0] + 5, rc[1]] = OCCUPIED                              # a real wall, outside the disc
+
+    changed = cm.clear_footprint(np.array([0.0, 0.0]), radius_m=0.3)
+
+    assert cm.grid[rc[0], rc[1]] == FREE
+    assert (cm.grid[rc[0] - 1: rc[0] + 2, rc[1] - 1: rc[1] + 2] == FREE).all()
+    assert cm.grid[rc[0] + 3, rc[1]] == FREE and cm.grid[rc[0] - 3, rc[1]] == FREE
+    assert cm.grid[rc[0] + 5, rc[1]] == OCCUPIED, "outside the radius is untouched"
+    assert cm.grid[rc[0] + 4, rc[1]] == UNKNOWN
+    assert changed == int((cm.grid == FREE).sum())
+
+
+def test_clear_footprint_with_no_radius_changes_nothing():
+    cm = Costmap2D(resolution=0.1, size_m=4.0)
+    before = cm.grid.copy()
+    assert cm.clear_footprint(np.array([0.0, 0.0]), radius_m=0.0) == 0
+    assert (cm.grid == before).all()

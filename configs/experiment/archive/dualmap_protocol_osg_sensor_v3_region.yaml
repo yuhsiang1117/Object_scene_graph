@@ -1,0 +1,30 @@
+# @package _global_
+#
+# `_sensor_v3` plus the class-agnostic proposal stage.
+#
+# Measured on the dumped keyframes where the object's pixel is known
+# (docs/history/PERCEPTION_GAP.md): a proposal tight enough to BE the object rather than
+# the furniture under it comes from YOLOE on 0% of scissors frames, 20% of
+# cracker box, 25% of soup can, 48% of banana -- and from FastSAM-s on
+# 72/92/100/87%. The boxes YOLOE does put over the object it calls `mirror`,
+# `lamp`, `chair`. It proposes the furniture. That is DualMap's structural
+# advantage, measured on our own frames.
+#
+# The limits are why this is gated and capped, and they are honest:
+#   * appearance ranks the region first for 91% of cracker box frames, 60% soup
+#     can, 39% banana -- and 3% of scissors, whose region scores 0.149 against
+#     its distractors. Thin metal at two metres carries too little signal.
+#   * tau 0.24 is the knee: 40 correct admissions against 7 wrong over 166
+#     frames, 85% precision at 24% recall.
+#   * pad 0.25 with natural phrasing ("a pair of scissors", not "a photo of a
+#     scissors") moved overall rank-1 from 52% to 70%. MobileCLIP-S2 beat
+#     ViT-B/32 at every setting tried.
+#
+# Expected worth is about five trials, not twenty-one: cracker box ~2, soup can
+# ~2, banana ~1, scissors ~0. Read `region_admits` and `region_below_tau` before
+# reading SR.
+
+defaults:
+  - archive/dualmap_protocol_osg_sensor_v3
+region_proposal:
+  enabled: true

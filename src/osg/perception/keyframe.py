@@ -1,6 +1,11 @@
 """Keyframe selection and storage. Detection and scene-graph updates run on
-keyframes only; keyframe JPEGs feed the VLM scorer (improvement B) and the
-target verifier (improvement C).
+keyframes only, which is what keeps the pipeline real-time.
+
+The JPEGs the store writes under `eval.save_viz` are a debug artifact and
+nothing in `src/` reads them back. They were once fed to the frontier scorer
+("improvement B"); that path -- `load_image`, `nearest_facing`,
+`FRONTIER_IMAGE_NOTE` and `exploration.images_per_frontier` -- was never wired
+and has been removed. The verifier crops from the live frame, not from disk.
 """
 from __future__ import annotations
 
@@ -78,29 +83,6 @@ class KeyframeStore:
 
     def refs(self) -> List[KeyframeRef]:
         return list(self._refs)
-
-    def load_image(self, ref: KeyframeRef) -> Optional[np.ndarray]:
-        if ref.path is not None:
-            import imageio.v2 as imageio
-
-            return np.asarray(imageio.imread(ref.path))
-        return self._images.get(ref.frame_id)
-
-    def nearest_facing(self, target_xy: np.ndarray, k: int = 2, plane=(0, 2)) -> List[KeyframeRef]:
-        """Keyframes closest to target (in the ground plane) that face it."""
-        scored = []
-        for ref in self._refs:
-            pos = ref.position[list(plane)]
-            to_target = target_xy - pos
-            dist = np.linalg.norm(to_target)
-            if dist < 1e-3:
-                continue
-            facing = float(np.dot(to_target / dist, ref.view_dir[list(plane)]))
-            if facing < 0.3:  # must roughly look toward the target
-                continue
-            scored.append((dist, ref))
-        scored.sort(key=lambda s: s[0])
-        return [r for _, r in scored[:k]]
 
     def reset(self) -> None:
         self._refs.clear()

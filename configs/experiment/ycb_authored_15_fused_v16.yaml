@@ -1,0 +1,25 @@
+# @package _global_
+#
+# v15, and a climb that does not stop on the half-landing.
+#
+# v15 descends the flight the height layer finds and stays on the floor it
+# reaches -- and on 00808's yellow bottle it reaches y=0.946 with the object at
+# y=0.06: 2.3 m of a 3.2 m storey. The landing is off every known level and
+# roomy enough to walk 2.5 m across, so the estimator's horizontal-run route
+# makes it a storey of its own, which ends the climb one flight short. That is
+# the "a multi-flight landing looks exactly like a new floor" risk
+# docs/history/MULTI_FLOOR.md already names.
+#
+# `floor.no_level_on_flight` refuses to create a NEW level while the agent is
+# standing on staircase cells; arriving on a storey the stack already knows is
+# untouched, so a real arrival still registers. `agent.climb_relink_flights`
+# then re-reads the height layer when the treads run out and picks up the next
+# flight going the same way, so the climb carries on through the landing.
+defaults:
+  - ycb_authored_15_fused_v15
+
+agent:
+  climb_relink_flights: true
+
+floor:
+  no_level_on_flight: true

@@ -10,6 +10,7 @@ requires-python = ">=3.9"
 dependencies = [
     "numpy<2",
     "scipy",
+    "scikit-learn",
     "scikit-image",
     "opencv-python-headless",
     "hydra-core>=1.3",
@@ -22,6 +23,29 @@ dependencies = [
 [project.optional-dependencies]
 dev = ["pytest", "pytest-timeout"]
 models = ["ultralytics==8.3.*"]
+# The region proposer of `osg_unified_pipeline` (on by default there, and the
+# arm every cross-anchor run since v2 was measured with: ~14k proposals and 15
+# admissions an episode). `feature_encoder.py` imports `open_clip` and
+# `mobileclip.modules.common.mobileone`; open_clip pulls the MobileCLIP-S2
+# weights through huggingface_hub and builds its tower with timm.
+#
+# NONE of this was declared until now, and it cost a night: the container was
+# rebuilt, the packages went with it, and pass 2 died in 8 seconds on
+# `ModuleNotFoundError: No module named 'open_clip'` -- after stage 1 had spent
+# three hours building the maps it was going to read. `mobileclip` is not on
+# PyPI; Apple publish it from GitHub only.
+#
+# timm was pinned at 1.0.11, which open_clip_torch 3.3.0 cannot install with
+# (it requires timm>=1.0.17), so this extra did not resolve at all; pip picks
+# 1.0.30 for it today. mobileclip is only imported for one module
+# (`mobileclip.modules.common.mobileone`): install it with --no-deps so its own
+# pins cannot move torch.
+region-proposal = [
+    "open_clip_torch==3.3.0",
+    "timm>=1.0.17",
+    "huggingface_hub==0.25.2",
+    "mobileclip @ git+https://github.com/apple/ml-mobileclip.git",
+]
 
 [tool.setuptools.packages.find]
 where = ["src"]

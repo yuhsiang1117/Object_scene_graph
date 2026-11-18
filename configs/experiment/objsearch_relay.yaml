@@ -1,0 +1,31 @@
+# @package _global_
+#
+# `objsearch_storey` (M1 + M2b + the stair STOP guard) plus M2c, and NOTHING
+# else (docs/history/AB_RESULTS.md S85):
+#
+#   M2c  a storey is climbed through its landings as one intent. A climb that
+#        stalls above (below) the level it began has arrived on a landing,
+#        not failed; and from a landing the next flight the same way is taken
+#        before any frontier, with the way back refused, until the agent
+#        stands a storey (1.8 m) from where the climb began.
+#
+# Measured and NOT adopted: three rounds on the 21 cross-floor episodes left
+# it level with `objsearch_storey` (S85). Kept so the result can be re-run.
+#
+# Each value is the dataclass default (`AgentSearchConfig`); only the
+# switches are set here.
+#
+#   python scripts/run_eval.py +experiment=objsearch_relay \
+#       eval.behaviour_log=true agent.search.trace=true output_dir=outputs/<name>
+defaults:
+  - override /agent: s86
+  - override /exploration: s71        # with the LLM ranker, as measured (S89 removed it)
+  - override /scene_graph: place365
+
+agent:
+  search:
+    storey_belief: true
+    verify_climb: true
+    climb_fail_cap: 2
+    stair_stop_guard: true
+    climb_relay: true

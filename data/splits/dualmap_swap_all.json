@@ -1,0 +1,981 @@
+{
+ "reference_run": "protocol",
+ "rules": [
+  "all"
+ ],
+ "dropped_queries": [],
+ "selected_on": "every dynamic trial of the swapped release (scissors->toy airplane, mug->mustard bottle)",
+ "counts": {
+  "total": 107,
+  "by_scene": {
+   "00829-QaLdnwvtxbs": 36,
+   "00848-ziup5kvtCCR": 36,
+   "00880-Nfvxx8J5NCo": 35
+  }
+ },
+ "trials": [
+  {
+   "trial_id": "00829-QaLdnwvtxbs__in_anchor__0116__soup_can",
+   "scene": "00829-QaLdnwvtxbs",
+   "condition": "in_anchor",
+   "query": "soup can",
+   "rule": "all",
+   "reference_success": 0,
+   "reference_steps": 0
+  },
+  {
+   "trial_id": "00829-QaLdnwvtxbs__in_anchor__0116__bowl",
+   "scene": "00829-QaLdnwvtxbs",
+   "condition": "in_anchor",
+   "query": "bowl",
+   "rule": "all",
+   "reference_success": 0,
+   "reference_steps": 0
+  },
+  {
+   "trial_id": "00829-QaLdnwvtxbs__in_anchor__0116__plate",
+   "scene": "00829-QaLdnwvtxbs",
+   "condition": "in_anchor",
+   "query": "plate",
+   "rule": "all",
+   "reference_success": 0,
+   "reference_steps": 0
+  },
+  {
+   "trial_id": "00829-QaLdnwvtxbs__in_anchor__0116__toy_airplane",
+   "scene": "00829-QaLdnwvtxbs",
+   "condition": "in_anchor",
+   "query": "toy airplane",
+   "rule": "all",
+   "reference_success": 0,
+   "reference_steps": 0
+  },
+  {
+   "trial_id": "00829-QaLdnwvtxbs__in_anchor__0116__cracker_box",
+   "scene": "00829-QaLdnwvtxbs",
+   "condition": "in_anchor",
+   "query": "cracker box",
+   "rule": "all",
+   "reference_success": 0,
+   "reference_steps": 0
+  },
+  {
+   "trial_id": "00829-QaLdnwvtxbs__in_anchor__0116__pitcher",
+   "scene": "00829-QaLdnwvtxbs",
+   "condition": "in_anchor",
+   "query": "pitcher",
+   "rule": "all",
+   "reference_success": 0,
+   "reference_steps": 0
+  },
+  {
+   "trial_id": "00829-QaLdnwvtxbs__in_anchor__0117__soup_can",
+   "scene": "00829-QaLdnwvtxbs",
+   "condition": "in_anchor",
+   "query": "soup can",
+   "rule": "all",
+   "reference_success": 0,
+   "reference_steps": 0
+  },
+  {
+   "trial_id": "00829-QaLdnwvtxbs__in_anchor__0117__bowl",
+   "scene": "00829-QaLdnwvtxbs",
+   "condition": "in_anchor",
+   "query": "bowl",
+   "rule": "all",
+   "reference_success": 0,
+   "reference_steps": 0
+  },
+  {
+   "trial_id": "00829-QaLdnwvtxbs__in_anchor__0117__plate",
+   "scene": "00829-QaLdnwvtxbs",
+   "condition": "in_anchor",
+   "query": "plate",
+   "rule": "all",
+   "reference_success": 0,
+   "reference_steps": 0
+  },
+  {
+   "trial_id": "00829-QaLdnwvtxbs__in_anchor__0117__toy_airplane",
+   "scene": "00829-QaLdnwvtxbs",
+   "condition": "in_anchor",
+   "query": "toy airplane",
+   "rule": "all",
+   "reference_success": 0,
+   "reference_steps": 0
+  },
+  {
+   "trial_id": "00829-QaLdnwvtxbs__in_anchor__0117__cracker_box",
+   "scene": "00829-QaLdnwvtxbs",
+   "condition": "in_anchor",
+   "query": "cracker box",
+   "rule": "all",
+   "reference_success": 0,
+   "reference_steps": 0
+  },
+  {
+   "trial_id": "00829-QaLdnwvtxbs__in_anchor__0117__pitcher",
+   "scene": "00829-QaLdnwvtxbs",
+   "condition": "in_anchor",
+   "query": "pitcher",
+   "rule": "all",
+   "reference_success": 0,
+   "reference_steps": 0
+  },
+  {
+   "trial_id": "00829-QaLdnwvtxbs__in_anchor__0118__soup_can",
+   "scene": "00829-QaLdnwvtxbs",
+   "condition": "in_anchor",
+   "query": "soup can",
+   "rule": "all",
+   "reference_success": 0,
+   "reference_steps": 0
+  },
+  {
+   "trial_id": "00829-QaLdnwvtxbs__in_anchor__0118__bowl",
+   "scene": "00829-QaLdnwvtxbs",
+   "condition": "in_anchor",
+   "query": "bowl",
+   "rule": "all",
+   "reference_success": 0,
+   "reference_steps": 0
+  },
+  {
+   "trial_id": "00829-QaLdnwvtxbs__in_anchor__0118__plate",
+   "scene": "00829-QaLdnwvtxbs",
+   "condition": "in_anchor",
+   "query": "plate",
+   "rule": "all",
+   "reference_success": 0,
+   "reference_steps": 0
+  },
+  {
+   "trial_id": "00829-QaLdnwvtxbs__in_anchor__0118__toy_airplane",
+   "scene": "00829-QaLdnwvtxbs",
+   "condition": "in_anchor",
+   "query": "toy airplane",
+   "rule": "all",
+   "reference_success": 0,
+   "reference_steps": 0
+  },
+  {
+   "trial_id": "00829-QaLdnwvtxbs__in_anchor__0118__cracker_box",
+   "scene": "00829-QaLdnwvtxbs",
+   "condition": "in_anchor",
+   "query": "cracker box",
+   "rule": "all",
+   "reference_success": 0,
+   "reference_steps": 0
+  },
+  {
+   "trial_id": "00829-QaLdnwvtxbs__in_anchor__0118__pitcher",
+   "scene": "00829-QaLdnwvtxbs",
+   "condition": "in_anchor",
+   "query": "pitcher",
+   "rule": "all",
+   "reference_success": 0,
+   "reference_steps": 0
+  },
+  {
+   "trial_id": "00829-QaLdnwvtxbs__cross_anchor__0128-1__soup_can",
+   "scene": "00829-QaLdnwvtxbs",
+   "condition": "cross_anchor",
+   "query": "soup can",
+   "rule": "all",
+   "reference_success": 0,
+   "reference_steps": 0
+  },
+  {
+   "trial_id": "00829-QaLdnwvtxbs__cross_anchor__0128-1__bowl",
+   "scene": "00829-QaLdnwvtxbs",
+   "condition": "cross_anchor",
+   "query": "bowl",
+   "rule": "all",
+   "reference_success": 0,
+   "reference_steps": 0
+  },
+  {
+   "trial_id": "00829-QaLdnwvtxbs__cross_anchor__0128-1__plate",
+   "scene": "00829-QaLdnwvtxbs",
+   "condition": "cross_anchor",
+   "query": "plate",
+   "rule": "all",
+   "reference_success": 0,
+   "reference_steps": 0
+  },
+  {
+   "trial_id": "00829-QaLdnwvtxbs__cross_anchor__0128-1__toy_airplane",
+   "scene": "00829-QaLdnwvtxbs",
+   "condition": "cross_anchor",
+   "query": "toy airplane",
+   "rule": "all",
+   "reference_success": 0,
+   "reference_steps": 0
+  },
+  {
+   "trial_id": "00829-QaLdnwvtxbs__cross_anchor__0128-1__cracker_box",
+   "scene": "00829-QaLdnwvtxbs",
+   "condition": "cross_anchor",
+   "query": "cracker box",
+   "rule": "all",
+   "reference_success": 0,
+   "reference_steps": 0
+  },
+  {
+   "trial_id": "00829-QaLdnwvtxbs__cross_anchor__0128-1__pitcher",
+   "scene": "00829-QaLdnwvtxbs",
+   "condition": "cross_anchor",
+   "query": "pitcher",
+   "rule": "all",
+   "reference_success": 0,
+   "reference_steps": 0
+  },
+  {
+   "trial_id": "00829-QaLdnwvtxbs__cross_anchor__0128-2__soup_can",
+   "scene": "00829-QaLdnwvtxbs",
+   "condition": "cross_anchor",
+   "query": "soup can",
+   "rule": "all",
+   "reference_success": 0,
+   "reference_steps": 0
+  },
+  {
+   "trial_id": "00829-QaLdnwvtxbs__cross_anchor__0128-2__bowl",
+   "scene": "00829-QaLdnwvtxbs",
+   "condition": "cross_anchor",
+   "query": "bowl",
+   "rule": "all",
+   "reference_success": 0,
+   "reference_steps": 0
+  },
+  {
+   "trial_id": "00829-QaLdnwvtxbs__cross_anchor__0128-2__plate",
+   "scene": "00829-QaLdnwvtxbs",
+   "condition": "cross_anchor",
+   "query": "plate",
+   "rule": "all",
+   "reference_success": 0,
+   "reference_steps": 0
+  },
+  {
+   "trial_id": "00829-QaLdnwvtxbs__cross_anchor__0128-2__toy_airplane",
+   "scene": "00829-QaLdnwvtxbs",
+   "condition": "cross_anchor",
+   "query": "toy airplane",
+   "rule": "all",
+   "reference_success": 0,
+   "reference_steps": 0
+  },
+  {
+   "trial_id": "00829-QaLdnwvtxbs__cross_anchor__0128-2__cracker_box",
+   "scene": "00829-QaLdnwvtxbs",
+   "condition": "cross_anchor",
+   "query": "cracker box",
+   "rule": "all",
+   "reference_success": 0,
+   "reference_steps": 0
+  },
+  {
+   "trial_id": "00829-QaLdnwvtxbs__cross_anchor__0128-2__pitcher",
+   "scene": "00829-QaLdnwvtxbs",
+   "condition": "cross_anchor",
+   "query": "pitcher",
+   "rule": "all",
+   "reference_success": 0,
+   "reference_steps": 0
+  },
+  {
+   "trial_id": "00829-QaLdnwvtxbs__cross_anchor__0129-1__soup_can",
+   "scene": "00829-QaLdnwvtxbs",
+   "condition": "cross_anchor",
+   "query": "soup can",
+   "rule": "all",
+   "reference_success": 0,
+   "reference_steps": 0
+  },
+  {
+   "trial_id": "00829-QaLdnwvtxbs__cross_anchor__0129-1__bowl",
+   "scene": "00829-QaLdnwvtxbs",
+   "condition": "cross_anchor",
+   "query": "bowl",
+   "rule": "all",
+   "reference_success": 0,
+   "reference_steps": 0
+  },
+  {
+   "trial_id": "00829-QaLdnwvtxbs__cross_anchor__0129-1__plate",
+   "scene": "00829-QaLdnwvtxbs",
+   "condition": "cross_anchor",
+   "query": "plate",
+   "rule": "all",
+   "reference_success": 0,
+   "reference_steps": 0
+  },
+  {
+   "trial_id": "00829-QaLdnwvtxbs__cross_anchor__0129-1__toy_airplane",
+   "scene": "00829-QaLdnwvtxbs",
+   "condition": "cross_anchor",
+   "query": "toy airplane",
+   "rule": "all",
+   "reference_success": 0,
+   "reference_steps": 0
+  },
+  {
+   "trial_id": "00829-QaLdnwvtxbs__cross_anchor__0129-1__cracker_box",
+   "scene": "00829-QaLdnwvtxbs",
+   "condition": "cross_anchor",
+   "query": "cracker box",
+   "rule": "all",
+   "reference_success": 0,
+   "reference_steps": 0
+  },
+  {
+   "trial_id": "00829-QaLdnwvtxbs__cross_anchor__0129-1__pitcher",
+   "scene": "00829-QaLdnwvtxbs",
+   "condition": "cross_anchor",
+   "query": "pitcher",
+   "rule": "all",
+   "reference_success": 0,
+   "reference_steps": 0
+  },
+  {
+   "trial_id": "00848-ziup5kvtCCR__in_anchor__0116__toy_airplane",
+   "scene": "00848-ziup5kvtCCR",
+   "condition": "in_anchor",
+   "query": "toy airplane",
+   "rule": "all",
+   "reference_success": 0,
+   "reference_steps": 0
+  },
+  {
+   "trial_id": "00848-ziup5kvtCCR__in_anchor__0116__plate",
+   "scene": "00848-ziup5kvtCCR",
+   "condition": "in_anchor",
+   "query": "plate",
+   "rule": "all",
+   "reference_success": 0,
+   "reference_steps": 0
+  },
+  {
+   "trial_id": "00848-ziup5kvtCCR__in_anchor__0116__pitcher",
+   "scene": "00848-ziup5kvtCCR",
+   "condition": "in_anchor",
+   "query": "pitcher",
+   "rule": "all",
+   "reference_success": 0,
+   "reference_steps": 0
+  },
+  {
+   "trial_id": "00848-ziup5kvtCCR__in_anchor__0116__mustard_bottle",
+   "scene": "00848-ziup5kvtCCR",
+   "condition": "in_anchor",
+   "query": "mustard bottle",
+   "rule": "all",
+   "reference_success": 0,
+   "reference_steps": 0
+  },
+  {
+   "trial_id": "00848-ziup5kvtCCR__in_anchor__0116__banana",
+   "scene": "00848-ziup5kvtCCR",
+   "condition": "in_anchor",
+   "query": "banana",
+   "rule": "all",
+   "reference_success": 0,
+   "reference_steps": 0
+  },
+  {
+   "trial_id": "00848-ziup5kvtCCR__in_anchor__0116__cracker_box",
+   "scene": "00848-ziup5kvtCCR",
+   "condition": "in_anchor",
+   "query": "cracker box",
+   "rule": "all",
+   "reference_success": 0,
+   "reference_steps": 0
+  },
+  {
+   "trial_id": "00848-ziup5kvtCCR__in_anchor__0117__toy_airplane",
+   "scene": "00848-ziup5kvtCCR",
+   "condition": "in_anchor",
+   "query": "toy airplane",
+   "rule": "all",
+   "reference_success": 0,
+   "reference_steps": 0
+  },
+  {
+   "trial_id": "00848-ziup5kvtCCR__in_anchor__0117__plate",
+   "scene": "00848-ziup5kvtCCR",
+   "condition": "in_anchor",
+   "query": "plate",
+   "rule": "all",
+   "reference_success": 0,
+   "reference_steps": 0
+  },
+  {
+   "trial_id": "00848-ziup5kvtCCR__in_anchor__0117__pitcher",
+   "scene": "00848-ziup5kvtCCR",
+   "condition": "in_anchor",
+   "query": "pitcher",
+   "rule": "all",
+   "reference_success": 0,
+   "reference_steps": 0
+  },
+  {
+   "trial_id": "00848-ziup5kvtCCR__in_anchor__0117__mustard_bottle",
+   "scene": "00848-ziup5kvtCCR",
+   "condition": "in_anchor",
+   "query": "mustard bottle",
+   "rule": "all",
+   "reference_success": 0,
+   "reference_steps": 0
+  },
+  {
+   "trial_id": "00848-ziup5kvtCCR__in_anchor__0117__banana",
+   "scene": "00848-ziup5kvtCCR",
+   "condition": "in_anchor",
+   "query": "banana",
+   "rule": "all",
+   "reference_success": 0,
+   "reference_steps": 0
+  },
+  {
+   "trial_id": "00848-ziup5kvtCCR__in_anchor__0117__cracker_box",
+   "scene": "00848-ziup5kvtCCR",
+   "condition": "in_anchor",
+   "query": "cracker box",
+   "rule": "all",
+   "reference_success": 0,
+   "reference_steps": 0
+  },
+  {
+   "trial_id": "00848-ziup5kvtCCR__in_anchor__0118__toy_airplane",
+   "scene": "00848-ziup5kvtCCR",
+   "condition": "in_anchor",
+   "query": "toy airplane",
+   "rule": "all",
+   "reference_success": 0,
+   "reference_steps": 0
+  },
+  {
+   "trial_id": "00848-ziup5kvtCCR__in_anchor__0118__plate",
+   "scene": "00848-ziup5kvtCCR",
+   "condition": "in_anchor",
+   "query": "plate",
+   "rule": "all",
+   "reference_success": 0,
+   "reference_steps": 0
+  },
+  {
+   "trial_id": "00848-ziup5kvtCCR__in_anchor__0118__pitcher",
+   "scene": "00848-ziup5kvtCCR",
+   "condition": "in_anchor",
+   "query": "pitcher",
+   "rule": "all",
+   "reference_success": 0,
+   "reference_steps": 0
+  },
+  {
+   "trial_id": "00848-ziup5kvtCCR__in_anchor__0118__mustard_bottle",
+   "scene": "00848-ziup5kvtCCR",
+   "condition": "in_anchor",
+   "query": "mustard bottle",
+   "rule": "all",
+   "reference_success": 0,
+   "reference_steps": 0
+  },
+  {
+   "trial_id": "00848-ziup5kvtCCR__in_anchor__0118__banana",
+   "scene": "00848-ziup5kvtCCR",
+   "condition": "in_anchor",
+   "query": "banana",
+   "rule": "all",
+   "reference_success": 0,
+   "reference_steps": 0
+  },
+  {
+   "trial_id": "00848-ziup5kvtCCR__in_anchor__0118__cracker_box",
+   "scene": "00848-ziup5kvtCCR",
+   "condition": "in_anchor",
+   "query": "cracker box",
+   "rule": "all",
+   "reference_success": 0,
+   "reference_steps": 0
+  },
+  {
+   "trial_id": "00848-ziup5kvtCCR__cross_anchor__0128-1__toy_airplane",
+   "scene": "00848-ziup5kvtCCR",
+   "condition": "cross_anchor",
+   "query": "toy airplane",
+   "rule": "all",
+   "reference_success": 0,
+   "reference_steps": 0
+  },
+  {
+   "trial_id": "00848-ziup5kvtCCR__cross_anchor__0128-1__plate",
+   "scene": "00848-ziup5kvtCCR",
+   "condition": "cross_anchor",
+   "query": "plate",
+   "rule": "all",
+   "reference_success": 0,
+   "reference_steps": 0
+  },
+  {
+   "trial_id": "00848-ziup5kvtCCR__cross_anchor__0128-1__pitcher",
+   "scene": "00848-ziup5kvtCCR",
+   "condition": "cross_anchor",
+   "query": "pitcher",
+   "rule": "all",
+   "reference_success": 0,
+   "reference_steps": 0
+  },
+  {
+   "trial_id": "00848-ziup5kvtCCR__cross_anchor__0128-1__mustard_bottle",
+   "scene": "00848-ziup5kvtCCR",
+   "condition": "cross_anchor",
+   "query": "mustard bottle",
+   "rule": "all",
+   "reference_success": 0,
+   "reference_steps": 0
+  },
+  {
+   "trial_id": "00848-ziup5kvtCCR__cross_anchor__0128-1__banana",
+   "scene": "00848-ziup5kvtCCR",
+   "condition": "cross_anchor",
+   "query": "banana",
+   "rule": "all",
+   "reference_success": 0,
+   "reference_steps": 0
+  },
+  {
+   "trial_id": "00848-ziup5kvtCCR__cross_anchor__0128-1__cracker_box",
+   "scene": "00848-ziup5kvtCCR",
+   "condition": "cross_anchor",
+   "query": "cracker box",
+   "rule": "all",
+   "reference_success": 0,
+   "reference_steps": 0
+  },
+  {
+   "trial_id": "00848-ziup5kvtCCR__cross_anchor__0128-2__toy_airplane",
+   "scene": "00848-ziup5kvtCCR",
+   "condition": "cross_anchor",
+   "query": "toy airplane",
+   "rule": "all",
+   "reference_success": 0,
+   "reference_steps": 0
+  },
+  {
+   "trial_id": "00848-ziup5kvtCCR__cross_anchor__0128-2__plate",
+   "scene": "00848-ziup5kvtCCR",
+   "condition": "cross_anchor",
+   "query": "plate",
+   "rule": "all",
+   "reference_success": 0,
+   "reference_steps": 0
+  },
+  {
+   "trial_id": "00848-ziup5kvtCCR__cross_anchor__0128-2__pitcher",
+   "scene": "00848-ziup5kvtCCR",
+   "condition": "cross_anchor",
+   "query": "pitcher",
+   "rule": "all",
+   "reference_success": 0,
+   "reference_steps": 0
+  },
+  {
+   "trial_id": "00848-ziup5kvtCCR__cross_anchor__0128-2__mustard_bottle",
+   "scene": "00848-ziup5kvtCCR",
+   "condition": "cross_anchor",
+   "query": "mustard bottle",
+   "rule": "all",
+   "reference_success": 0,
+   "reference_steps": 0
+  },
+  {
+   "trial_id": "00848-ziup5kvtCCR__cross_anchor__0128-2__banana",
+   "scene": "00848-ziup5kvtCCR",
+   "condition": "cross_anchor",
+   "query": "banana",
+   "rule": "all",
+   "reference_success": 0,
+   "reference_steps": 0
+  },
+  {
+   "trial_id": "00848-ziup5kvtCCR__cross_anchor__0128-2__cracker_box",
+   "scene": "00848-ziup5kvtCCR",
+   "condition": "cross_anchor",
+   "query": "cracker box",
+   "rule": "all",
+   "reference_success": 0,
+   "reference_steps": 0
+  },
+  {
+   "trial_id": "00848-ziup5kvtCCR__cross_anchor__0129-1__toy_airplane",
+   "scene": "00848-ziup5kvtCCR",
+   "condition": "cross_anchor",
+   "query": "toy airplane",
+   "rule": "all",
+   "reference_success": 0,
+   "reference_steps": 0
+  },
+  {
+   "trial_id": "00848-ziup5kvtCCR__cross_anchor__0129-1__plate",
+   "scene": "00848-ziup5kvtCCR",
+   "condition": "cross_anchor",
+   "query": "plate",
+   "rule": "all",
+   "reference_success": 0,
+   "reference_steps": 0
+  },
+  {
+   "trial_id": "00848-ziup5kvtCCR__cross_anchor__0129-1__pitcher",
+   "scene": "00848-ziup5kvtCCR",
+   "condition": "cross_anchor",
+   "query": "pitcher",
+   "rule": "all",
+   "reference_success": 0,
+   "reference_steps": 0
+  },
+  {
+   "trial_id": "00848-ziup5kvtCCR__cross_anchor__0129-1__mustard_bottle",
+   "scene": "00848-ziup5kvtCCR",
+   "condition": "cross_anchor",
+   "query": "mustard bottle",
+   "rule": "all",
+   "reference_success": 0,
+   "reference_steps": 0
+  },
+  {
+   "trial_id": "00848-ziup5kvtCCR__cross_anchor__0129-1__banana",
+   "scene": "00848-ziup5kvtCCR",
+   "condition": "cross_anchor",
+   "query": "banana",
+   "rule": "all",
+   "reference_success": 0,
+   "reference_steps": 0
+  },
+  {
+   "trial_id": "00848-ziup5kvtCCR__cross_anchor__0129-1__cracker_box",
+   "scene": "00848-ziup5kvtCCR",
+   "condition": "cross_anchor",
+   "query": "cracker box",
+   "rule": "all",
+   "reference_success": 0,
+   "reference_steps": 0
+  },
+  {
+   "trial_id": "00880-Nfvxx8J5NCo__in_anchor__0116__soup_can",
+   "scene": "00880-Nfvxx8J5NCo",
+   "condition": "in_anchor",
+   "query": "soup can",
+   "rule": "all",
+   "reference_success": 0,
+   "reference_steps": 0
+  },
+  {
+   "trial_id": "00880-Nfvxx8J5NCo__in_anchor__0116__bowl",
+   "scene": "00880-Nfvxx8J5NCo",
+   "condition": "in_anchor",
+   "query": "bowl",
+   "rule": "all",
+   "reference_success": 0,
+   "reference_steps": 0
+  },
+  {
+   "trial_id": "00880-Nfvxx8J5NCo__in_anchor__0116__pitcher",
+   "scene": "00880-Nfvxx8J5NCo",
+   "condition": "in_anchor",
+   "query": "pitcher",
+   "rule": "all",
+   "reference_success": 0,
+   "reference_steps": 0
+  },
+  {
+   "trial_id": "00880-Nfvxx8J5NCo__in_anchor__0116__plate",
+   "scene": "00880-Nfvxx8J5NCo",
+   "condition": "in_anchor",
+   "query": "plate",
+   "rule": "all",
+   "reference_success": 0,
+   "reference_steps": 0
+  },
+  {
+   "trial_id": "00880-Nfvxx8J5NCo__in_anchor__0116__cracker_box",
+   "scene": "00880-Nfvxx8J5NCo",
+   "condition": "in_anchor",
+   "query": "cracker box",
+   "rule": "all",
+   "reference_success": 0,
+   "reference_steps": 0
+  },
+  {
+   "trial_id": "00880-Nfvxx8J5NCo__in_anchor__0116__toy_airplane",
+   "scene": "00880-Nfvxx8J5NCo",
+   "condition": "in_anchor",
+   "query": "toy airplane",
+   "rule": "all",
+   "reference_success": 0,
+   "reference_steps": 0
+  },
+  {
+   "trial_id": "00880-Nfvxx8J5NCo__in_anchor__0117__soup_can",
+   "scene": "00880-Nfvxx8J5NCo",
+   "condition": "in_anchor",
+   "query": "soup can",
+   "rule": "all",
+   "reference_success": 0,
+   "reference_steps": 0
+  },
+  {
+   "trial_id": "00880-Nfvxx8J5NCo__in_anchor__0117__bowl",
+   "scene": "00880-Nfvxx8J5NCo",
+   "condition": "in_anchor",
+   "query": "bowl",
+   "rule": "all",
+   "reference_success": 0,
+   "reference_steps": 0
+  },
+  {
+   "trial_id": "00880-Nfvxx8J5NCo__in_anchor__0117__pitcher",
+   "scene": "00880-Nfvxx8J5NCo",
+   "condition": "in_anchor",
+   "query": "pitcher",
+   "rule": "all",
+   "reference_success": 0,
+   "reference_steps": 0
+  },
+  {
+   "trial_id": "00880-Nfvxx8J5NCo__in_anchor__0117__plate",
+   "scene": "00880-Nfvxx8J5NCo",
+   "condition": "in_anchor",
+   "query": "plate",
+   "rule": "all",
+   "reference_success": 0,
+   "reference_steps": 0
+  },
+  {
+   "trial_id": "00880-Nfvxx8J5NCo__in_anchor__0117__cracker_box",
+   "scene": "00880-Nfvxx8J5NCo",
+   "condition": "in_anchor",
+   "query": "cracker box",
+   "rule": "all",
+   "reference_success": 0,
+   "reference_steps": 0
+  },
+  {
+   "trial_id": "00880-Nfvxx8J5NCo__in_anchor__0117__toy_airplane",
+   "scene": "00880-Nfvxx8J5NCo",
+   "condition": "in_anchor",
+   "query": "toy airplane",
+   "rule": "all",
+   "reference_success": 0,
+   "reference_steps": 0
+  },
+  {
+   "trial_id": "00880-Nfvxx8J5NCo__in_anchor__0118__soup_can",
+   "scene": "00880-Nfvxx8J5NCo",
+   "condition": "in_anchor",
+   "query": "soup can",
+   "rule": "all",
+   "reference_success": 0,
+   "reference_steps": 0
+  },
+  {
+   "trial_id": "00880-Nfvxx8J5NCo__in_anchor__0118__bowl",
+   "scene": "00880-Nfvxx8J5NCo",
+   "condition": "in_anchor",
+   "query": "bowl",
+   "rule": "all",
+   "reference_success": 0,
+   "reference_steps": 0
+  },
+  {
+   "trial_id": "00880-Nfvxx8J5NCo__in_anchor__0118__pitcher",
+   "scene": "00880-Nfvxx8J5NCo",
+   "condition": "in_anchor",
+   "query": "pitcher",
+   "rule": "all",
+   "reference_success": 0,
+   "reference_steps": 0
+  },
+  {
+   "trial_id": "00880-Nfvxx8J5NCo__in_anchor__0118__plate",
+   "scene": "00880-Nfvxx8J5NCo",
+   "condition": "in_anchor",
+   "query": "plate",
+   "rule": "all",
+   "reference_success": 0,
+   "reference_steps": 0
+  },
+  {
+   "trial_id": "00880-Nfvxx8J5NCo__in_anchor__0118__cracker_box",
+   "scene": "00880-Nfvxx8J5NCo",
+   "condition": "in_anchor",
+   "query": "cracker box",
+   "rule": "all",
+   "reference_success": 0,
+   "reference_steps": 0
+  },
+  {
+   "trial_id": "00880-Nfvxx8J5NCo__in_anchor__0118__toy_airplane",
+   "scene": "00880-Nfvxx8J5NCo",
+   "condition": "in_anchor",
+   "query": "toy airplane",
+   "rule": "all",
+   "reference_success": 0,
+   "reference_steps": 0
+  },
+  {
+   "trial_id": "00880-Nfvxx8J5NCo__cross_anchor__0128-1__soup_can",
+   "scene": "00880-Nfvxx8J5NCo",
+   "condition": "cross_anchor",
+   "query": "soup can",
+   "rule": "all",
+   "reference_success": 0,
+   "reference_steps": 0
+  },
+  {
+   "trial_id": "00880-Nfvxx8J5NCo__cross_anchor__0128-1__bowl",
+   "scene": "00880-Nfvxx8J5NCo",
+   "condition": "cross_anchor",
+   "query": "bowl",
+   "rule": "all",
+   "reference_success": 0,
+   "reference_steps": 0
+  },
+  {
+   "trial_id": "00880-Nfvxx8J5NCo__cross_anchor__0128-1__pitcher",
+   "scene": "00880-Nfvxx8J5NCo",
+   "condition": "cross_anchor",
+   "query": "pitcher",
+   "rule": "all",
+   "reference_success": 0,
+   "reference_steps": 0
+  },
+  {
+   "trial_id": "00880-Nfvxx8J5NCo__cross_anchor__0128-1__plate",
+   "scene": "00880-Nfvxx8J5NCo",
+   "condition": "cross_anchor",
+   "query": "plate",
+   "rule": "all",
+   "reference_success": 0,
+   "reference_steps": 0
+  },
+  {
+   "trial_id": "00880-Nfvxx8J5NCo__cross_anchor__0128-1__cracker_box",
+   "scene": "00880-Nfvxx8J5NCo",
+   "condition": "cross_anchor",
+   "query": "cracker box",
+   "rule": "all",
+   "reference_success": 0,
+   "reference_steps": 0
+  },
+  {
+   "trial_id": "00880-Nfvxx8J5NCo__cross_anchor__0128-1__toy_airplane",
+   "scene": "00880-Nfvxx8J5NCo",
+   "condition": "cross_anchor",
+   "query": "toy airplane",
+   "rule": "all",
+   "reference_success": 0,
+   "reference_steps": 0
+  },
+  {
+   "trial_id": "00880-Nfvxx8J5NCo__cross_anchor__0128-2__soup_can",
+   "scene": "00880-Nfvxx8J5NCo",
+   "condition": "cross_anchor",
+   "query": "soup can",
+   "rule": "all",
+   "reference_success": 0,
+   "reference_steps": 0
+  },
+  {
+   "trial_id": "00880-Nfvxx8J5NCo__cross_anchor__0128-2__bowl",
+   "scene": "00880-Nfvxx8J5NCo",
+   "condition": "cross_anchor",
+   "query": "bowl",
+   "rule": "all",
+   "reference_success": 0,
+   "reference_steps": 0
+  },
+  {
+   "trial_id": "00880-Nfvxx8J5NCo__cross_anchor__0128-2__pitcher",
+   "scene": "00880-Nfvxx8J5NCo",
+   "condition": "cross_anchor",
+   "query": "pitcher",
+   "rule": "all",
+   "reference_success": 0,
+   "reference_steps": 0
+  },
+  {
+   "trial_id": "00880-Nfvxx8J5NCo__cross_anchor__0128-2__plate",
+   "scene": "00880-Nfvxx8J5NCo",
+   "condition": "cross_anchor",
+   "query": "plate",
+   "rule": "all",
+   "reference_success": 0,
+   "reference_steps": 0
+  },
+  {
+   "trial_id": "00880-Nfvxx8J5NCo__cross_anchor__0128-2__toy_airplane",
+   "scene": "00880-Nfvxx8J5NCo",
+   "condition": "cross_anchor",
+   "query": "toy airplane",
+   "rule": "all",
+   "reference_success": 0,
+   "reference_steps": 0
+  },
+  {
+   "trial_id": "00880-Nfvxx8J5NCo__cross_anchor__0129-1__soup_can",
+   "scene": "00880-Nfvxx8J5NCo",
+   "condition": "cross_anchor",
+   "query": "soup can",
+   "rule": "all",
+   "reference_success": 0,
+   "reference_steps": 0
+  },
+  {
+   "trial_id": "00880-Nfvxx8J5NCo__cross_anchor__0129-1__bowl",
+   "scene": "00880-Nfvxx8J5NCo",
+   "condition": "cross_anchor",
+   "query": "bowl",
+   "rule": "all",
+   "reference_success": 0,
+   "reference_steps": 0
+  },
+  {
+   "trial_id": "00880-Nfvxx8J5NCo__cross_anchor__0129-1__pitcher",
+   "scene": "00880-Nfvxx8J5NCo",
+   "condition": "cross_anchor",
+   "query": "pitcher",
+   "rule": "all",
+   "reference_success": 0,
+   "reference_steps": 0
+  },
+  {
+   "trial_id": "00880-Nfvxx8J5NCo__cross_anchor__0129-1__plate",
+   "scene": "00880-Nfvxx8J5NCo",
+   "condition": "cross_anchor",
+   "query": "plate",
+   "rule": "all",
+   "reference_success": 0,
+   "reference_steps": 0
+  },
+  {
+   "trial_id": "00880-Nfvxx8J5NCo__cross_anchor__0129-1__cracker_box",
+   "scene": "00880-Nfvxx8J5NCo",
+   "condition": "cross_anchor",
+   "query": "cracker box",
+   "rule": "all",
+   "reference_success": 0,
+   "reference_steps": 0
+  },
+  {
+   "trial_id": "00880-Nfvxx8J5NCo__cross_anchor__0129-1__toy_airplane",
+   "scene": "00880-Nfvxx8J5NCo",
+   "condition": "cross_anchor",
+   "query": "toy airplane",
+   "rule": "all",
+   "reference_success": 0,
+   "reference_steps": 0
+  }
+ ]
+}

@@ -1,0 +1,20 @@
+# @package _global_
+#
+# The baseline with one bug fixed, to price that fix on its own.
+#
+# `container_top_h_m` is a band above the floor (0.2-1.4 m) and `top_height`
+# returns an absolute world height. They agree on the ground floor and disagree
+# everywhere else: 00808's upper storey sits at y=2.86, so a table top there
+# measures ~3.6 m and is rejected. Measured on that scene's prior map, floor 1's
+# 367 tracks produce ZERO containers against floor 0's 76.
+#
+# So the container posterior could propose no surface above the ground floor,
+# and `_select_surface`'s per-floor mass -- which is what chooses a storey --
+# had an entry for the ground floor only. An agent standing upstairs computed
+# floor_mass {'0': 48.2} and asked to go down, every round, whatever it was
+# looking for.
+defaults:
+  - ycb_authored_15
+
+scene_graph:
+  containers_floor_relative: true

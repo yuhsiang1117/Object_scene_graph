@@ -1,0 +1,31 @@
+# @package _global_
+#
+# `mfv2_osg_gate` with the gate judging what the approach SAW, not only what
+# the STOP frame holds (agent/stop_gate.py, "v2").
+#
+# Why: on seed 42 the frame-only gate judged 17 of 66 STOPs and changed 3
+# episodes of 45 -- the approach ends where the object has left the view, so
+# "nothing to judge" was the common case. Over both OSG arms' 139 STOPs
+# (outputs/mfv2/osg{,_gate}_s42), by what the agent had committed to and how
+# near its last sighting of the approach was:
+#
+#     on a false positive    79 STOPs, 0 scored -- 37 last seen <= 1.5 m,
+#                            28 at 1.5-3 m, 9 beyond 3 m, 5 never
+#     on the true object     42 STOPs, 38 scored -- 39 last seen <= 1.5 m
+#     on the stale prior     18 STOPs, 2 scored
+#
+# So: a STOP with nothing in frame is judged on the approach's most confident
+# sighting within 1.5 m (the range the recogniser was chosen at), and a STOP
+# with no such sighting at all is released without an attempt. The second
+# rule costs the 3 true-target STOPs last seen at 1.5-3 m unless a later
+# approach gets closer; the stale-anchor STOP is exempt.
+#
+#   python scripts/run_eval.py +experiment=mfv2_osg_gate2 ...same inputs as mfv2_osg
+defaults:
+  - mfv2_osg_gate
+  - _self_
+
+verification:
+  stop_gate_view: approach
+  stop_gate_close_m: 1.5
+  stop_gate_unseen: reject

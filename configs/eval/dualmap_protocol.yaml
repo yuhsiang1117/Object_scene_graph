@@ -1,0 +1,14 @@
+defaults:
+  - base_hm3d
+
+# The released DualMap HM3D benchmark, driven by our stack and scored by
+# DualMap's own rule (osg/eval/dualmap_release.py).  Episodes come from the
+# release, not from the HM3D ObjectNav dataset, so `episodes_path` is unused.
+mode: dualmap_protocol
+split: val
+num_episodes: -1
+max_scene_repeat_episodes: -1
+# DualMap's protocol: a query may be answered within three navigation attempts.
+attempts: 3
+save_viz: false
+debug_frames: false

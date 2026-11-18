@@ -1,0 +1,5 @@
+# Places365 room labels for the LLM prompt (in-process; same weights as ASCENT).
+defaults:
+  - base_default
+
+room_classifier: place365

@@ -1,0 +1,20 @@
+# @package _global_
+#
+# The fused arm, plus the fallback the counters asked for.
+#
+# `ycb_authored_15_fused` orders the two mechanisms: test the stale anchor, then
+# choose a storey. That fixes WHEN the storey question is asked. It does not fix
+# what happens when the answer cannot be acted on -- and usually it cannot:
+# measured on outputs/osg_authored_15, 405 cross-floor requests produced 12
+# directed switch attempts, because `try_switch` needs a portal already visible
+# in the current costmap and 97% of the time there is none.
+#
+# While such a request stands, `_select_surface` returns None every round, so the
+# container posterior is off on the floor the agent is actually standing on. The
+# request is a wish about another storey; this stops it also being a veto on
+# searching this one.
+defaults:
+  - ycb_authored_15_fused
+
+exploration:
+  search_surface_when_floor_unreachable: true

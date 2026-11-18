@@ -1,0 +1,23 @@
+# @package _global_
+#
+# 6 GB laptop profile (RTX 4050).
+#
+# A profile ONLY trades compute for quality -- never a task or simulator
+# setting (see profile/report.yaml). Results from this profile are directly
+# comparable to the report profile in protocol, but not in perception quality;
+# say which profile produced a number when quoting it.
+#
+# VRAM note: perception/detector.py deletes YOLOE's MobileCLIP text encoder
+# after set_vocabulary precisely because this card OOMs otherwise. S4 adds a
+# ~350 MB CLIP image encoder on top, which is why verification runs on the
+# hosted NIM endpoint here rather than a resident local VLM.
+#
+#   python scripts/run_eval.py +experiment=ascent_matched +profile=laptop
+defaults:
+  - override /detector: yoloe_small    # 11s @ 512px
+  - override /verification: nim        # hosted VLM, no local VRAM
+
+# Additional per-stage knobs are appended here as those stages land:
+#   S4  exploration.value_stride: 3      (CLIP value map every 3rd step)
+#   S5  scene_graph.target_every_step: false
+#   S6  scene_graph.cloud_stride: 8

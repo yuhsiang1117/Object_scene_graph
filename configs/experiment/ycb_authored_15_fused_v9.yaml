@@ -1,0 +1,29 @@
+# @package _global_
+#
+# v8, and the agent can climb.
+#
+# The cross-floor half is lost in the climb: over 12 genuine storey changes the
+# sensor-only arms score 0 and reach the object's floor twice, while restoring
+# habitat's navmesh -- the thing `portals.py` says "handles the climb" and
+# commit 866ab0e removed -- climbs 00821's 3.6 m storey in one attempt where
+# base needed 55 and rose 0.17 m. Until now `State.CLIMB` was never entered:
+# the carrot, the on-stairs test and the exit rule were all on NavAgent and
+# nothing assigned the state, so the sensor-only agent had no way up at all.
+#
+# Two flags. `agent.climb_enabled` turns a pursuit that reaches the stairs into
+# a climb: steer at the farthest depth ray (ASCENT's carrot), tilt down first on
+# a descent, and end on a committed new storey, on the step budget, or on a
+# stall with no height gained -- the last of which is handed to the portal
+# failure memory so the same foot of the same wall is not tried again.
+#
+# `floor.climb_targets: stairs_first` aims the pursuit at a `stairs` track the
+# detector has actually seen on this storey before any portal: on 00821 the
+# portal the agent chased sat about 10 m from the flight the navmesh uses.
+defaults:
+  - ycb_authored_15_fused_v8
+
+agent:
+  climb_enabled: true
+
+floor:
+  climb_targets: stairs_first

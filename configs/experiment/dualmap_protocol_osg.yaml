@@ -1,0 +1,52 @@
+# @package _global_
+#
+# Our stack on DualMap's released HM3D benchmark, scored by DualMap's rule.
+#
+# The algorithm is `ycb_dynamic_best` unchanged -- the configuration calibrated
+# on the authored dynamic benchmark -- because the question is how the system we
+# have compares, not how well it can be tuned to someone else's trial list. What
+# this preset changes is only the benchmark: which trials run, where each one
+# starts, and what counts as an answer.
+#
+# Per scene, because the prior map is per scene:
+#
+#   python scripts/run_eval.py +experiment=dualmap_protocol_osg \
+#     'dualmap.scenes=[00829-QaLdnwvtxbs]' \
+#     dualmap.reference_run=outputs/dualmap_official_bench/seed12 \
+#     ycb.map_in=outputs/maps_v5/00829-QaLdnwvtxbs \
+#     output_dir=outputs/osg_dualmap_protocol/00829-QaLdnwvtxbs
+defaults:
+  - ycb_dynamic_best
+  - override /eval: dualmap_protocol
+
+eval:
+  mode: dualmap_protocol
+  attempts: 3
+  rgb_width: 1280
+  rgb_height: 960
+  save_viz: false
+  debug_frames: false
+
+dualmap:
+  # The measured DualMap run that supplies each trial's start pose. Both
+  # systems then answer the same query from the same place in the same world.
+  reference_run: outputs/dualmap_official_bench/seed12
+  scenes: ["*"]
+  conditions: [static, in_anchor, cross_anchor]
+  start_yaw_seed: 12
+
+agent:
+  # The mover has to be able to say "I am there".
+  #
+  # `_follow_to` passes this as the driver's stop radius, and the default is
+  # 0.0 -- an arrival test that can never fire. With `pointnav_approach_creep_m`
+  # at 1.0 m the approach then force-forwards inside a metre for ever and ends
+  # only on the deadline: measured here on four 00829 in-anchor trials, every
+  # approach ran the full `navmesh_approach_steps` and three of four burned the
+  # 500-step budget having reached the object.
+  #
+  # 0.3 m rather than the navmesh follower's 0.1: at a 0.25 m step a tighter
+  # radius is not reliably reachable. This is upstream's own S40 finding
+  # (`+experiment=ascent_sensor_arrival`), where the navmesh arm produced 46
+  # `path_consumed` terminations out of 100 and the pointnav arm produced 0.
+  pointnav_arrival_m: 0.3

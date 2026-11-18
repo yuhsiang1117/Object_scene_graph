@@ -1,0 +1,15 @@
+# The default since S89: the S71 exploration (ASCENT's planner over the BLIP-2
+# value map) WITHOUT its LLM frontier ranker and without RAM++, whose tags
+# only fed that ranker's prompt. With no LLM the planner takes the value map's
+# top frontier wherever ASCENT would have asked; every other planner rule is
+# unchanged. Places365, the prompt's other input, is off through
+# `scene_graph: default`.
+#
+# Measured against `exploration: s71` (docs/history/AB_RESULTS.md S89): dev
+# 70 -> 70/100, held-out 63 -> 62/100, pooled 133 -> 132 of 200; the
+# 100-episode wall time 2.37 -> 1.08 h, and no ollama call.
+defaults:
+  - s71
+
+ranker: none
+ram_tags: false

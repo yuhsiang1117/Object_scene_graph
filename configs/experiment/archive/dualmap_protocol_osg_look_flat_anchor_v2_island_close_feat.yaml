@@ -1,0 +1,19 @@
+# @package _global_
+#
+# On top of the working arm: DualMap's local inquiry.
+#
+# On reaching a searched surface with no candidate, rank the live tracks near it
+# by cosine between the query text and their accumulated CLIP image feature, and
+# commit to the best -- argmax, no threshold, exactly `sorted_candidates[0]` in
+# DualMap's find_best_candidate_with_inquiry. Its mug is 20/21 over three seeds
+# on a detector that never names the mug; ours calls the same blob `towel`.
+#
+# The pick is a proposal, not a verdict: reachability, the VLM, the identity
+# channel, the absence sensor and the attempt protocol judge it as they judge any
+# candidate. Measurements behind the defaults: docs/history/FEATURE_MEMORY_PROBE.md.
+defaults:
+  - /experiment/dualmap_protocol_osg_look_flat_anchor_v2_island_close
+feature_memory:
+  enabled: true
+  backbone: mobileclip_s2
+  local_pick_on_arrival: true

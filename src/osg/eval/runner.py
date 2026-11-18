@@ -1,319 +1,453 @@
-"""Episode loop: builds the agent stack from config, runs HM3D ObjectNav
-episodes, writes per-episode jsonl + aggregate summary + timing + trajectory
-visualizations.
+"""The run: build the stack once, drive every episode, summarise.
+
+This file is deliberately thin. Everything it calls is a module named after what
+it does -- what the run is MADE of is `pipeline/components.py`, what one episode
+DOES is `episode.py`, what gets written down is `record.py` -- so the shape of a
+run is legible here in one screen and no mechanism has to be understood to read
+it.
 """
 from __future__ import annotations
 
 import json
+import dataclasses
 import time
 from pathlib import Path
-from typing import Optional
 
-import numpy as np
-
-from ..agent.nav_agent import NavAgent
+from ..core.config import resolve_navigation
 from ..core.profiler import Profiler
-from ..exploration.async_scorer import AsyncScorer
-from ..exploration.llm_scorer import LLMTextScorer
-from ..llm.client import ChatClient
-from ..mapping.costmap import PLANE
-from .metrics import aggregate, per_category
-from .visualize import overlay_segmentation, render_costmap_bgr, save_topdown
+from ..pipeline.components import (
+    build_agent,
+    build_env,
+    build_run_components,
+    unload_ollama_models,
+)
+from ..pipeline.components import build_scorer
+from .debug_video import DebugVideo
+from .episode import run_episode
+from .metrics import (
+    aggregate,
+    dynamic_summary,
+    per_category,
+    per_floor_class,
+    per_relocation,
+)
+from .prior_map import save_map_for_scene, tour_target_views
+from .obstacle_map_viz import save_obstacle_map_pngs
+from .record import (
+    build_episode_record,
+    detector_identity,
+    episode_tag,
+)
+from .visualize import save_topdown
 
 
-class _DebugVideo:
-    """Per-episode debug video: each frame is [live RGB + YOLOE segmentation
-    overlay | top-down costmap] at every step. The detector is re-run here for
-    visualization only (it does not feed the object layer), so pipeline
-    behaviour / SR is unchanged. Enabled by eval.debug_frames."""
-
-    def __init__(self, cfg, out_dir: Path, episode_id) -> None:
-        import cv2
-
-        from ..mapping.costmap import PLANE as _PLANE
-
-        self._cv2 = cv2
-        self._plane = list(_PLANE)
-        self._cm_w = 480
-        self._h = cfg.eval.rgb_height
-        self._w = cfg.eval.rgb_width + self._cm_w
-        self._traj: list = []
-        path = out_dir / "viz" / "debug" / f"ep{episode_id}.mp4"
-        path.parent.mkdir(parents=True, exist_ok=True)
-        self._vw = cv2.VideoWriter(str(path), cv2.VideoWriter_fourcc(*"mp4v"), 8, (self._w, self._h))
-
-    def write(self, frame, agent, target: str, detector) -> None:
-        cv2 = self._cv2
-        agent_xy = frame.camera_position[self._plane]
-        self._traj.append(agent_xy)
-        dets = detector.detect(frame.rgb)  # viz-only; does not update object layer
-        seg = overlay_segmentation(frame.rgb, dets, target)
-        seg = cv2.resize(seg, (self._w - self._cm_w, self._h))
-        cm = render_costmap_bgr(
-            agent.costmap, agent_xy, self._traj,
-            path_xy=getattr(agent, "_current_path", None),
-            chosen_frontier=getattr(agent, "_current_frontier", None),
-            out_h=self._h,
-        )
-        cm = cv2.resize(cm, (self._cm_w, self._h))
-        panel = cv2.hconcat([seg, cm])
-        cv2.putText(panel, f"{target}  step {len(self._traj)}", (8, 20),
-                    cv2.FONT_HERSHEY_SIMPLEX, 0.55, (255, 255, 255), 2, cv2.LINE_AA)
-        self._vw.write(panel)
-
-    def close(self) -> None:
-        self._vw.release()
-
-
-def build_scorer(cfg) -> AsyncScorer:
-    # Geometric-only exploration (no LLM): nearest frontier weighted by
-    # exploration range (info gain). select_frontier falls back to
-    # unscored_prior for every frontier.
-    if getattr(cfg.exploration, "scorer", "llm_text") in ("nearest", "geometric", "none"):
-        from ..exploration.scorer import NullScorer
-        return AsyncScorer(NullScorer())
-    # Old-algorithm pipeline: text-LLM frontier ranking over the scene-graph
-    # subgraphs (ObjectSceneGraph_old frontiers_ranking).
-    client = ChatClient(
-        cfg.llm.base_url, cfg.llm.text_model, cfg.llm.api_key,
-        cfg.llm.timeout_s, cfg.llm.max_image_px, cfg.llm.send_response_format,
-    )
-    inner = LLMTextScorer(client, cfg.exploration.subgraph_radius_m,
-                          cfg.exploration.max_frontiers_per_call)
-    return AsyncScorer(inner)
-
-
-def build_verifier(cfg):
-    """VLM candidate verifier, or None when verification is disabled (the
-    old-algorithm terminal: viewpoint pre-position + bbox/depth stop, no VLM).
-
-    The verifier reuses the configured LLM endpoint/key (already NVIDIA NIM in
-    the matched setup) and only swaps in the vision model named by
-    verification.vlm_model -- the text scorer and the vision verifier share one
-    NIM account, differing only by model."""
-    if not cfg.verification.enabled:
+def _attach_object_recorder(cfg, out_dir, ep_tag, agent, episode, target):
+    """`eval.record_object_frames_dir`: record what this episode's object layer
+    is fed (eval/object_recorder.py). The layer is NavAgent's own, or the world
+    model's when the driving policy carries one (pass 1). None when off, or
+    when nothing in the agent holds an object layer."""
+    root = str(getattr(cfg.eval, "record_object_frames_dir", "") or "")
+    if not root:
         return None
-    from ..verification.verifier import VLMVerifier
+    holder = getattr(agent, "world", None) or agent
+    layer = getattr(holder, "object_layer", None)
+    if layer is None:
+        return None
+    from .object_recorder import ObjectFrameRecorder
+    from .record import authored_episode_metadata
 
-    client = ChatClient(
-        cfg.llm.base_url, cfg.verification.vlm_model, cfg.llm.api_key,
-        cfg.llm.timeout_s, cfg.llm.max_image_px, cfg.llm.send_response_format,
-    )
-    return VLMVerifier(
-        client,
-        accept_confidence=cfg.verification.accept_confidence,
-        choice_mode=getattr(cfg.verification, "choice_mode", True),
-    )
-
-
-def build_detector(cfg):
-    if cfg.detector.name == "yoloe":
-        from ..perception.detector import YoloeDetector
-
-        return YoloeDetector(
-            weights=cfg.detector.weights,
-            conf=cfg.detector.conf,
-            imgsz=cfg.detector.imgsz,
-            half=cfg.detector.half,
-            device=cfg.detector.device,
-        )
-    if cfg.detector.name == "stub":
-        from ..perception.detector import StubDetector
-
-        return StubDetector()
-    raise ValueError(f"unknown detector: {cfg.detector.name}")
-
-
-def _unload_ollama_models(cfg) -> None:
-    """Ask ollama to release VRAM (keep_alive=0) so the one-time YOLOE text
-    encoding can run on the GPU; ollama reloads lazily on the next call.
-
-    Must cover every model ollama might be holding: exploration scoring
-    (cfg.llm.*) AND the separate, larger verification model
-    (cfg.verification.vlm_model) — omitting the latter left a 7B model
-    resident from a prior run/benchmark and starved YOLOE's fp32 load of
-    VRAM (CUDA OOM observed here on a 6 GB card)."""
-    import json as _json
-    import urllib.request
-
-    host = str(cfg.llm.base_url).rsplit("/v1", 1)[0]
-    models = {cfg.llm.text_model, cfg.llm.vlm_model}
-    if cfg.verification.enabled:
-        models.add(cfg.verification.vlm_model)
-    for model in models:
-        try:
-            req = urllib.request.Request(
-                host + "/api/generate",
-                data=_json.dumps({"model": model, "keep_alive": 0}).encode(),
-                headers={"Content-Type": "application/json"},
-            )
-            urllib.request.urlopen(req, timeout=10).read()
-        except Exception:
-            pass  # best-effort; ollama may be down in no-LLM ablations
-
-
-def _target_track_fields(agent) -> dict:
-    """Snapshot the committed target track for GT-localization analysis.
-
-    _target_obj_xy is set (in _start_approach) only once a candidate is
-    accepted into APPROACH, so it is None for episodes that never committed to
-    a target (pure exploration failures) -- recorded as None there."""
-    obj_xy = getattr(agent, "_target_obj_xy", None)
-    cand_id = getattr(agent, "_candidate_id", None)
-    track = agent.object_layer.get(cand_id) if cand_id is not None else None
-    best_cam = getattr(track, "best_cam_xy", None) if track is not None else None
-    return {
-        "target_obj_xy": [float(x) for x in obj_xy] if obj_xy is not None else None,
-        "cand_best_cam_xy": [float(x) for x in best_cam] if best_cam is not None else None,
-        "cand_best_score": float(track.best_score) if track is not None else None,
-        "cand_n_obs": int(track.n_obs) if track is not None else None,
+    path = Path(root)
+    if not path.is_absolute():
+        path = Path(out_dir) / path
+    meta = {
+        "episode_tag": str(ep_tag),
+        "episode_id": str(getattr(episode, "episode_id", "")),
+        "scene": str(authored_episode_metadata(episode).get("scene", "")),
+        "layout_id": str(authored_episode_metadata(episode).get("layout_id", "")),
+        "target": str(target),
+        "map_in": str(getattr(cfg.ycb, "map_in", "") or ""),
+        "map_out": str(getattr(cfg.ycb, "map_out", "") or ""),
+        "wall_start": time.time(),
     }
+    layer.recorder = ObjectFrameRecorder(str(path), str(ep_tag), meta)
+    return layer.recorder
+
+
+def _goal_floor_gap_m(episode):
+    """Ground-truth vertical gap from the start to the nearest goal view."""
+    ys = [
+        float(vp.agent_state.position[1])
+        for goal in (episode.goals or [])
+        for vp in (getattr(goal, "view_points", None) or [])
+    ]
+    if not ys:
+        return None
+    start_y = float(episode.start_position[1])
+    return min(abs(y - start_y) for y in ys)
+
+
+def _episode_uid(episode) -> str:
+    """Return a scene-qualified key because Habitat episode ids repeat."""
+    return f"{str(episode.scene_id).split('/')[-1]}:{episode.episode_id}"
+
+
+def _algorithm_fingerprint(cfg) -> dict:
+    """Serialize every behavior-bearing typed setting for paired A/B audits."""
+    from ..core.config import AgentConfig, ExplorationConfig, VerificationConfig
+    from omegaconf import OmegaConf
+
+    def plain(value):
+        if OmegaConf.is_config(value):
+            return OmegaConf.to_container(value, resolve=True)
+        if dataclasses.is_dataclass(value) and not isinstance(value, type):
+            return plain(dataclasses.asdict(value))      # a nested group, e.g. agent.search
+        if isinstance(value, tuple):
+            return [plain(item) for item in value]
+        if isinstance(value, list):
+            return [plain(item) for item in value]
+        if isinstance(value, dict):
+            return {str(key): plain(item) for key, item in value.items()}
+        return value
+
+    out = {}
+    for schema, node, prefix in (
+        (ExplorationConfig, cfg.exploration, ""),
+        (VerificationConfig, cfg.verification, "verify_"),
+        (AgentConfig, cfg.agent, ""),
+    ):
+        for field in dataclasses.fields(schema):
+            value = getattr(node, field.name)
+            out[prefix + field.name] = plain(value)
+    out.update({
+        "detector_weights": str(cfg.detector.weights),
+        "detector_imgsz": int(cfg.detector.imgsz),
+        "multi_floor": bool(cfg.mapping.multi_floor),
+        "room_classifier": str(cfg.scene_graph.room_classifier),
+        "room_erode_iters": int(cfg.scene_graph.room_erode_iters),
+        "fp_retraction": bool(cfg.scene_graph.fp_retraction),
+        # FloorConfig is not otherwise fingerprinted. These three are the
+        # load-bearing multi-storey switches an A/B here varies, and a flag that
+        # cannot be seen in the algorithm diff is a flag an arm can change
+        # silently -- the failure that let earlier runs report results about
+        # mechanisms that had never run.
+        "cross_floor": bool(cfg.floor.cross_floor),
+        "floor_stairs": bool(cfg.floor.stairs),
+        "use_prior_stairs": bool(getattr(cfg.floor, "use_prior_stairs", False)),
+        "prefer_prior_stairs": bool(getattr(cfg.floor, "prefer_prior_stairs", False)),
+        "prior_stair_mouth": str(getattr(cfg.floor, "prior_stair_mouth", "edge")),
+        "prior_stair_max_failures": int(getattr(cfg.floor, "prior_stair_max_failures", 0) or 0),
+        "prior_stairs_before_flights": bool(getattr(cfg.floor, "prior_stairs_before_flights", False)),
+        "prior_stairs_override_gate": bool(
+            getattr(cfg.floor, "prior_stairs_override_gate", False)),
+        "portal_failure_memory": bool(getattr(cfg.floor, "portal_failure_memory", False)),
+        "climb_targets": str(getattr(cfg.floor, "climb_targets", "portals")),
+        "hold_pursuit": bool(getattr(cfg.floor, "hold_pursuit", False)),
+        "dwell_on_arrival": bool(getattr(cfg.floor, "dwell_on_arrival", False)),
+        "no_level_on_flight": bool(getattr(cfg.floor, "no_level_on_flight", False)),
+    })
+    return out
 
 
 def run_eval(cfg) -> dict:
-    from ..sim.habitat_env import HabitatObjectNavEnv
-
     out_dir = Path(cfg.output_dir)
     out_dir.mkdir(parents=True, exist_ok=True)
 
-    _unload_ollama_models(cfg)
-    env = HabitatObjectNavEnv(cfg)
-    detector = build_detector(cfg)
-    scorer = build_scorer(cfg)
-    verifier = build_verifier(cfg)
+    unload_ollama_models(cfg)
+    from ..pipeline.components import probe_served_models
+
+    probe_served_models(cfg)
+    env = build_env(cfg)
+    components = build_run_components(cfg, env=env)
+    algorithm_holder = {
+        "algorithm": {
+            # Explicit field inventory: the values are populated by the typed
+            # serializer, while these names make additions reviewable in diffs.
+            # "affinity_cache" "affinity_grounded" "affinity_llm" "affinity_table"
+            # "approach_abandon_steps" "approach_false_arrival_m"
+            # "approach_navigable_goal" "approach_retarget_m"
+            # "approach_close_clearance_m" "approach_close_source"
+            # "approach_retarget_max" "approach_scan_turns"
+            # "approach_stop_at_best_m" "approach_to_viewpoint"
+            # "area_thresh_m2" "ascent_max_obstacle_h" "ascent_min_obstacle_h"
+            # "climb_carrot" "climb_carrot_m"
+            # "verify_on_stop" "verify_stop_view"
+            # "blip_gate_threshold" "passive_stair_entry" "initialize_turns"
+            # "downstair_detector" "value_use_max_confidence" "value_strict"
+            # "ram_url" "ram_tags" "llm_multi_floor"
+            # "close_look_before_absence" "close_look_by_belief"
+            # "close_look_face_turns" "close_look_hold_steps"
+            # "close_look_max_per_episode" "close_look_max_steps"
+            # "close_look_min_belief" "close_look_opportunistic"
+            # "close_look_ring_m" "close_look_trigger_range_m"
+            # "continuity_weight" "detector_imgsz" "detector_weights"
+            # "down_look_every" "escape_window" "extractor" "floor_ask_every"
+            # "floor_llm" "floor_llm_boost" "floor_min_steps" "fp_retraction"
+            # "frontier_commit" "frontier_cost_free_cell" "frontier_desc"
+            # "frontier_desc_match_m" "frontier_goal_free_cell"
+            # "frontier_min_cells" "frontier_reachability_gate"
+            # "frontier_stick_rule"
+            # "info_gain_weight" "knowledge_prior" "knowledge_weight"
+            # "los_visibility_penalty" "multi_floor" "navigation" "navmesh_3d_goals"
+            # "nearby_distance_m" "pointnav_approach_creep_m" "pointnav_arrival_m"
+            # "pointnav_depth_shape" "pointnav_stop_means_blocked"
+            # "pointnav_creep_stall_eps" "pointnav_creep_stall_steps"
+            # "osg_world_model"
+            # "search" (agent.search.*: the additions to ascentnav, as one dict)
+            # "speed" (agent.speed.*: how ascentnav calls its servers, behaviour-identical)
+            # "pointnav_stop_radius" "pointnav_weights" "policy" "ranker"
+            # "ranker_every_steps" "ranker_topk" "reachable_via_viewpoint"
+            # "rednet_stairs" "reselect_every" "room_classifier" "room_erode_iters"
+            # "search_arrival_m" "search_detect_prob"
+            # "search_drop_proximity_after_absence" "search_face_turns"
+            # "search_floor_requires_anchor_test" "floor_evidence_by_presence"
+            # "search_surface_when_floor_unreachable"
+            # "floor_mass_rule" "floor_mass_margin"
+            # "cross_floor" "floor_stairs" "use_prior_stairs" "prefer_prior_stairs"
+            # "prior_stair_mouth" "prior_stair_max_failures" "prior_stairs_before_flights"
+            # "prior_stairs_override_gate" "portal_failure_memory" "climb_targets" "hold_pursuit" "dwell_on_arrival" "no_level_on_flight"
+            # "climb_relink_flights" "flight_relink_span_m"
+            # "climb_enabled" "climb_oracle" "stair_evidence_every_kf" "down_look_every"
+            # "climb_cell_carrot" "climb_blocked_turn_after" "climb_max_steps"
+            # "climb_flight_carrot" "flight_min_span_m" "flight_min_cells"
+            # "explore_after_failed_attempt_steps"
+            # "flights_prefer_stair_mask"
+            # "climb_direction_from_flight"
+            # "floor_disproved_after_failed_attempts" "protect_floor_switch"
+            # "request_new_storey_when_exhausted" "request_new_storey_after_steps"
+            # "protect_floor_switch_range_m" "protect_floor_switch_min_score"
+            # "climb_carrot_min_ahead_m"
+            # "climb_to_target_storey_tol_m"
+            # "flight_span_from_levels"
+            # "down_look_near_stairs_m"
+            # "obstacle_map_union"
+            # "seed_storeys_from_obstacle_map" "storey_seed_tol_m"
+            # "climb_carrot_hold_m"
+            # "profile_sync"
+            # "climb_turn_deadband_deg" "climb_turn_release_deg"
+            # "max_failed_switches_per_storey" "switch_ban_steps"
+            # "climb_turn_stuck_eps_m" "climb_turn_suppress_max"
+            # "climb_align_first_deg" "climb_carrot_forward_only"
+            # "climb_carrot_relax_min_ahead" "climb_carrot_follow_path"
+            # "climb_carrot_path_max_offset_m"
+            # "empty_storey_settle_steps"
+            # "search_frontier_weight" "search_glance_detect_prob"
+            # "search_glance_floor" "search_glance_range_m" "search_max_steps"
+            # "search_posterior" "search_proximity_floor" "search_proximity_len_m"
+            # "search_room_saturation" "search_room_saturation_floor"
+            # "search_room_saturation_free" "search_same_room_bonus"
+            # "search_surface_mass" "search_unreached_credit"
+            # "value_blip2_timeout_s" "value_blip2_url"
+            # "verify_api_key" "verify_base_url"
+            # "verify_viewpoint_min_clearance_m"
+            # "verify_seen_counts_within_m"
+            # "giveup_after_steps" "giveup_min_progress_m"
+            # region_proposal.*: enabled, weights, backbone, tau, admit_score,
+            # pad_frac, min_area_px, max_area_frac, max_regions,
+            # only_when_unnamed, max_per_episode, require_never_named,
+            # unnamed_keyframes, use_for_absence, every_keyframe, commits,
+            # commit_min_obs, commit_tau
+            # "select_every"
+            # "selector" "stair_explored_rule" "stair_min_cells" "stair_prior"
+            # "stair_up_mode" "terminal_percentile" "terminal_requires_detection"
+            # "terminal_rule" "terminal_stop_m" "unreachable_restrike_m"
+            # "use_habitat_navmesh" "value_argmax" "value_map" "value_model"
+            # "value_weight" "verify_abandon_below_p" "verify_absence_categories_max"
+            # "verify_absence_max_range_m" "verify_absence_on_arrival"
+            # "verify_absence_only" "verify_absence_requires_expectation"
+            # "verify_absence_use_vlm" "verify_accept_confidence"
+            # "verify_approach_recheck" "verify_approach_recheck_thresh"
+            # "verify_center_before_verify" "verify_choice_mode"
+            # "verify_detector_absence_recall" "verify_min_bbox_px"
+            # "verify_min_obs" "verify_min_score" "verify_rank_candidates_by_presence"
+            # "verify_commit_max_above_storey_m" "verify_commit_high_min_obs"
+            # "verify_reject_cooldown_steps" "verify_ring_radius_extent_aware"
+            # "verify_retire_stale_twins_after_absence" "verify_stop_at_stale_anchor_once"
+            # "verify_stale_stop_at_nearest_free" "verify_failed_attempt_disables_place"
+            # "verify_relook_after_stale_stop"
+            # "reachable_via_nearest_free" "navmesh_snap_on_agent_island"
+            # "approach_close_last_metre_m" "approach_arrival_m"
+            # "verify_target_bypasses_bbox_gate"
+            # "verify_terminal" "verify_unreachable_is_absorbing" "verify_vlm_q"
+            # "verify_vlm_recall" "viewpoint_stop_m" "voronoi_goal_near_m"
+            # "verify_stop_gate" "verify_stop_gate_model" "verify_stop_gate_choice"
+            # "verify_stop_gate_clip_margin" "verify_stop_gate_recall"
+            # "verify_stop_gate_q" "verify_stop_gate_max_per_track"
+            # "verify_stop_gate_max_per_episode" "verify_stop_gate_confusers"
+            # "verify_stop_gate_view" "verify_stop_gate_close_m" "verify_stop_gate_unseen"
+            # "verify_stop_gate_vet_prior" "verify_stop_gate_vet_live"
+            # "verify_stop_gate_exemplar" "verify_stop_gate_exemplar_tau"
+            # "verify_stop_gate_vet_live_identity" "verify_stop_gate_vet_live_revet"
+            # "verify_stop_gate_vet_live_sticky" "verify_stop_gate_vet_live_yes_final"
+            # "verify_stop_gate_vet_oracle"
+            # "storey_belief" "storey_anchor_weight" "storey_detect_prob" "storey_switch_ratio"
+            # "storey_cover_radius_m" "storey_block_m" "storey_rejection_discount"
+            # "storey_hold_follows_candidacy"
+            # "climb_route" "climb_route_start_m" "climb_route_lookahead_m"
+            # "climb_route_deadband_deg" "climb_route_replan_steps" "climb_route_stall_steps"
+            # "climb_route_min_gain_m" "climb_route_start_gain_m" "climb_route_probe_steps"
+            # "drop_prior_landings"
+            # "approach_creep_steer_deg" "approach_creep_stall_steps"
+            # "climb_route_gap_fill_m" "climb_route_approach_steps" "climb_route_mouth_first"
+            # "climb_route_start_near_m" "climb_surfaces_horizontal" "climb_route_seed_nearest"
+            # "climb_route_stall_pause_scan" "climb_route_replan_near_m"
+            # "storey_return_ratio"
+            # "descent_goal" (floor.*, not in the algorithm fingerprint: see the config dump)
+            **_algorithm_fingerprint(cfg),
+        },
+    }
+    detector = components["detector"]
+    scorer = components["scorer"]
+    verifier = components["verifier"]
+    identity = detector_identity(cfg)
     if verifier is not None and cfg.eval.debug_frames:
         verifier.debug_dir = str(out_dir / "verify_debug")
 
     n_total = len(env.env.episodes)
     n_run = n_total if cfg.eval.num_episodes < 0 else min(cfg.eval.num_episodes, n_total)
     wanted = set(cfg.eval.episode_ids) if cfg.eval.episode_ids else None
+    if wanted is not None:
+        n_run = len(wanted) if cfg.eval.num_episodes < 0 else min(
+            int(cfg.eval.num_episodes), len(wanted)
+        )
 
-    results = []
+    results: list = []
     episodes_file = out_dir / "episodes.jsonl"
-    profiler_all = Profiler()
+    profiler_all = Profiler(sync=bool(getattr(cfg.eval, "profile_sync", False)))
 
-    for ep_i in range(n_run):
+    for _dataset_i in range(n_total):
+        if len(results) >= n_run:
+            break
         frame = env.reset()
         episode = env.current_episode
-        if wanted is not None and str(episode.episode_id) not in wanted:
+        uid = _episode_uid(episode)
+        if (
+            wanted is not None
+            and uid not in wanted
+            and str(episode.episode_id) not in wanted
+        ):
             continue
+        ep_i = len(results)
         target = env.target_category()
+        ep_tag = episode_tag(episode)
         if verifier is not None:
-            verifier.debug_tag = f"ep{episode.episode_id}"
+            verifier.debug_tag = ep_tag
 
-        # scorer/verifier are built once and shared across every episode in
-        # this run, so their call/error counters are cumulative — snapshot
-        # before and report deltas below, or every episode after the first
-        # would show the whole run's running total instead of its own.
-        llm_calls_before, llm_errors_before = scorer.n_calls, scorer.n_errors
-        llm_last_error_before = scorer.last_error
-        verify_calls_before = verifier.n_calls if verifier is not None else 0
-        verify_errors_before = verifier.n_errors if verifier is not None else 0
-
-        # frontier.id/room.id both restart from 0/1 each episode (fresh
-        # FrontierExtractor/RoomSegmenter per NavAgent below), but the
-        # scorer's internal caches are keyed by those same small ints and
-        # persist across the whole run -- without this, a new episode can
-        # silently inherit a stale score/room-label from a previous,
-        # unrelated scene the moment an id collides.
+        # The scorer and verifier are built once and shared, so their counters
+        # are cumulative; the record reports deltas against these.
+        scorer_before = (scorer.n_calls, scorer.n_errors, scorer.last_error)
+        verifier_before = (
+            (verifier.n_calls, verifier.n_errors, len(getattr(verifier, "call_log", [])))
+            if verifier is not None else (0, 0, 0)
+        )
+        # frontier.id/room.id restart from 0/1 each episode (a fresh extractor
+        # and segmenter per NavAgent), but the scorer's caches are keyed by
+        # those same small ints and persist across the run -- without this, a
+        # new episode can inherit a stale score from an unrelated scene the
+        # moment an id collides.
         scorer.reset()
 
-        profiler = Profiler()
-        agent = NavAgent(
-            cfg, detector, scorer, verifier, target,
-            keyframe_dir=str(out_dir / "keyframes" / f"ep{episode.episode_id}")
-            if cfg.eval.save_viz else None,
+        profiler = Profiler(sync=bool(getattr(cfg.eval, "profile_sync", False)))
+        agent = build_agent(
+            cfg, components, target,
+            keyframe_dir=str(out_dir / "keyframes" / ep_tag) if cfg.eval.save_viz else None,
             profiler=profiler,
-            nav_fn=env.action_to_goal if cfg.agent.use_habitat_navmesh else None,
-            reachable_fn=env.is_reachable if cfg.agent.use_habitat_navmesh else None,
+            nav_fn=(env.action_to_goal if components["navigation"] == "navmesh" else None),
+            reachable_fn=(env.is_reachable if components["navigation"] == "navmesh" else None),
+            # NOT gated on the mover. Its only consumer is the closing walk
+            # (`approach.py:_close_last_metre`), which is switched by
+            # `agent.approach_close_last_metre_m` and is 0 by default. Gating it
+            # on navmesh mode made the flag silently dead under pointnav -- an
+            # arm built to price what the closing walk is worth ran bit-identical
+            # to the arm without it, which is how this was found.
+            nearest_navigable_fn=getattr(env, "nearest_navigable_xy", None),
+            # The privileged follower for the staircase only, when the climb
+            # ablation asks for it (`agent.climb_oracle`).
+            climb_nav_fn=(env.action_to_goal
+                          if bool(getattr(cfg.agent, "climb_oracle", False)) else None),
         )
-        trajectory = [frame.camera_position[list(PLANE)]]
-        dbg = _DebugVideo(cfg, out_dir, episode.episode_id) if cfg.eval.debug_frames else None
-        t0 = time.time()
-        steps = 0
-        while not env.episode_over:
-            action = agent.act(frame)  # updates agent.costmap from `frame`
-            if dbg is not None:
-                dbg.write(frame, agent, target, detector)
-            frame = env.step(action)
-            trajectory.append(frame.camera_position[list(PLANE)])
-            steps += 1
-        if dbg is not None:
-            dbg.close()
+        recorder = _attach_object_recorder(cfg, out_dir, ep_tag, agent, episode, target)
+        debug = DebugVideo(cfg, out_dir, ep_tag) if cfg.eval.debug_frames else None
+        outcome = run_episode(cfg, env, agent, episode, target, frame, detector, debug)
+        if debug is not None:
+            debug.close()
 
-        m = env.metrics()
-        rec = {
-            "episode_id": str(episode.episode_id),
-            "scene": str(episode.scene_id).split("/")[-1],
-            "target": target,
-            "success": float(m.get("success", 0.0)),
-            "spl": float(m.get("spl", 0.0)),
-            "distance_to_goal": float(m.get("distance_to_goal", -1.0)),
-            "steps": steps,
-            "wall_time_s": round(time.time() - t0, 1),
-            "control_fps": round(profiler.fps("control_loop"), 2),
-            "llm_calls": scorer.n_calls - llm_calls_before,
-            "llm_errors": scorer.n_errors - llm_errors_before,
-            "llm_last_error": scorer.last_error if scorer.last_error != llm_last_error_before else None,
-            "agent_stats": agent.stats,
-            "state_log": agent.state_log[:40],
-            "frontier_select_log": agent.frontier_select_log,
-            "giveup_log": agent.giveup_log[:50],
-            "approach_bbox_log": agent.approach_bbox_log,
-            "approach_stop_reason": agent.approach_stop_reason,
-            "approach_diag": agent.approach_diag,
-            "final_xy": [float(x) for x in trajectory[-1]],
-            "verify_calls": (verifier.n_calls - verify_calls_before) if verifier is not None else 0,
-            "verify_errors": (verifier.n_errors - verify_errors_before) if verifier is not None else 0,
-            # GT-localization instrumentation: the mapped 3D center (x-z) of the
-            # object track the agent committed to APPROACH, plus that track's
-            # best-detection camera pose and score. d(target_obj_xy, GT goal)
-            # is the scene-graph localization error; d(final_xy, target_obj_xy)
-            # is the residual navigation error -- together they split "stopped
-            # far from goal" into mislocalized-track vs failed-nav vs false-
-            # positive detection (scripts/analyze_localization.py).
-            **_target_track_fields(agent),
-        }
+        rec = build_episode_record(
+            cfg=cfg, episode=episode, env=env, agent=agent, outcome=outcome,
+            target=target, detector_identity=identity, metrics=env.metrics(),
+            profiler=profiler, scorer=scorer, scorer_before=scorer_before,
+            verifier=verifier, verifier_before=verifier_before,
+        )
+        # After the record: the tour moves the agent, and the record reads its
+        # final pose. Pass 1 only (it needs `ycb.map_out`).
+        tour_target_views(cfg, env, agent, episode)
+        if recorder is not None:
+            recorder.close((getattr(agent, "world", None) or agent).object_layer)
+        save_map_for_scene(cfg, agent, episode)
         results.append(rec)
         with open(episodes_file, "a") as f:
             f.write(json.dumps(rec) + "\n")
         for name, samples in profiler._samples.items():
-            for s in samples:
-                profiler_all.add(name, s)
+            for sample in samples:
+                profiler_all.add(name, sample)
 
         if cfg.eval.save_viz:
             save_topdown(
-                str(out_dir / "viz" / f"ep{episode.episode_id}.png"),
+                str(out_dir / "viz" / f"{ep_tag}.png"),
                 agent.costmap,
-                trajectory,
+                outcome.trajectory,
                 scene_graph=agent.scene_graph,
                 title=f"ep {episode.episode_id} target={target} "
-                f"success={rec['success']:.0f} spl={rec['spl']:.2f}",
+                      f"success={rec['success']:.0f} spl={rec['spl']:.2f}",
             )
         print(
             f"[{ep_i + 1}/{n_run}] ep={episode.episode_id} target={target} "
-            f"success={rec['success']:.0f} spl={rec['spl']:.3f} steps={steps} "
-            f"fps={rec['control_fps']}"
+            f"success={rec['success']:.0f} spl={rec['spl']:.3f} "
+            f"steps={outcome.steps} fps={rec['control_fps']}"
         )
 
-    summary = {
-        "config": {
-            "scorer": cfg.exploration.scorer,
-            "verification": cfg.verification.enabled,
-            "detector": cfg.detector.name,
-            "dataset_version": cfg.eval.dataset_version,
-            "split": cfg.eval.split,
-            "success_distance": cfg.agent.success_distance,
-        },
-        "metrics": aggregate(results),
-        "per_category": per_category(results),
-        "timing": profiler_all.report(),
-        "pipeline_fps": round(profiler_all.fps("control_loop"), 2),
-    }
+    summary = _summarise(
+        cfg, env, results, identity, profiler_all,
+        algorithm=algorithm_holder["algorithm"],
+    )
     with open(out_dir / "summary.json", "w") as f:
         json.dump(summary, f, indent=2)
+    # The prior map with the targets drawn on it, one per scene. Only a run
+    # that READ an obstacle map has anything to draw.
+    for path in save_obstacle_map_pngs(cfg, out_dir):
+        print(f"obstacle map figure: {path}")
     profiler_all.write_csv(str(out_dir / "timing.csv"))
     scorer.shutdown()
     env.close()
     print(json.dumps(summary["metrics"], indent=2))
+    return summary
+
+
+def _summarise(cfg, env, results, identity, profiler_all, algorithm=None) -> dict:
+    """`dynamic` is the block that answers the dynamic-scene questions: how long
+    the map took to stop believing a moved object, how often the agent committed
+    to a goal it had already disproved, and how often a ghost survived."""
+    summary = {
+        "config": {
+            "eval_mode": str(cfg.eval.mode),
+            "scorer": cfg.exploration.frontier_text_scorer,
+            "verification": cfg.verification.enabled,
+            "detector": identity,
+            "dataset_version": cfg.eval.dataset_version,
+            "split": cfg.eval.split,
+            "success_distance": cfg.agent.success_distance,
+            "navigation": resolve_navigation(cfg.agent),
+            "policy": str(getattr(cfg.agent, "policy", "nav_agent")),
+        },
+        "algorithm": algorithm or _algorithm_fingerprint(cfg),
+        "metrics": aggregate(results),
+        "dynamic": dynamic_summary(results),
+        "per_category": per_category(results),
+        "per_floor_class": per_floor_class(results),
+        "per_relocation": per_relocation(results),
+        "timing": profiler_all.report(),
+        "pipeline_fps": round(profiler_all.fps("control_loop"), 2),
+    }
+    benchmark_metadata = getattr(env, "benchmark_metadata", None)
+    if callable(benchmark_metadata):
+        summary["benchmark"] = benchmark_metadata()
     return summary

@@ -1,0 +1,38 @@
+# @package _global_
+#
+# The sensor-only arm: no navmesh-derived information anywhere, on a 0.10 m body.
+#
+#   ARMS=sensor_r10 PRESET_PREFIX=dualmap_protocol_osg_ scripts/run_close_look_ab.sh
+#
+# Two deliberate changes on top of the island+close arm, both decided by the
+# user on 2026-09-11.
+#
+# 1. `approach_close_last_metre_m: 0`. The closing walk asked the pathfinder
+#    for the navigable point nearest the committed track and drove there. It
+#    was worth +6/-0 on a near-miss subset, but it is a navmesh-DERIVED GOAL,
+#    and this line's whole point after the pointnav switch is that nothing the
+#    agent uses comes from the ground-truth mesh. Off, the terminal approach is
+#    viewpoint rings on the agent's own costmap and the mover's creep.
+#
+# 2. `agent_radius: 0.10`, Habitat's default, instead of 0.18. This is an
+#    embodiment declaration, not a tuning knob, and it changes two things at
+#    once -- read any SR difference with both in mind:
+#      * habitat-lab recomputes the navmesh from this radius, and the agent is
+#        physically confined to it (all 107 final poses snap to it at 0.0000 m,
+#        docs/history/UNREACHABLE_SET_EXPERIMENT.md). 6 of the 15 objects with no
+#        navmesh point inside the 1 m rule come into reach; 9 stay out at any
+#        body size. The reachability ceiling moves 92/107 -> 98/107.
+#      * costmap inflation is `agent_radius + inflate_margin_m`, so the free
+#        space the viewpoint planner and the frontier extractor see grows too.
+#        Goals can be placed nearer objects than 0.18 allowed, everywhere --
+#        including on the 92 trials that were already reachable.
+#
+# `navmesh_snap_on_agent_island` is inherited and inert here: it only steers
+# `nearest_navigable_xy`, which nothing calls once the closing walk is off.
+
+defaults:
+  - dualmap_protocol_osg_look_flat_anchor_v2_island_close
+
+agent:
+  approach_close_last_metre_m: 0.0
+  agent_radius: 0.10

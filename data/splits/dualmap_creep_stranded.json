@@ -1,0 +1,317 @@
+{
+ "reference_run": "outputs/osg_sensor_r10",
+ "rules": "approach_diag.min_dist_to_goal_m in (0.30, 1.00] -- stranded in the pointnav creep band",
+ "counts": {
+  "trials": 44
+ },
+ "trials": [
+  {
+   "trial_id": "00829-QaLdnwvtxbs__cross_anchor__0128-1__bowl",
+   "scene": "00829-QaLdnwvtxbs",
+   "condition": "cross_anchor",
+   "query": "bowl",
+   "rule": "creep_stranded"
+  },
+  {
+   "trial_id": "00829-QaLdnwvtxbs__cross_anchor__0128-1__plate",
+   "scene": "00829-QaLdnwvtxbs",
+   "condition": "cross_anchor",
+   "query": "plate",
+   "rule": "creep_stranded"
+  },
+  {
+   "trial_id": "00829-QaLdnwvtxbs__cross_anchor__0128-1__scissors",
+   "scene": "00829-QaLdnwvtxbs",
+   "condition": "cross_anchor",
+   "query": "scissors",
+   "rule": "creep_stranded"
+  },
+  {
+   "trial_id": "00829-QaLdnwvtxbs__cross_anchor__0128-1__soup_can",
+   "scene": "00829-QaLdnwvtxbs",
+   "condition": "cross_anchor",
+   "query": "soup can",
+   "rule": "creep_stranded"
+  },
+  {
+   "trial_id": "00829-QaLdnwvtxbs__cross_anchor__0128-2__bowl",
+   "scene": "00829-QaLdnwvtxbs",
+   "condition": "cross_anchor",
+   "query": "bowl",
+   "rule": "creep_stranded"
+  },
+  {
+   "trial_id": "00829-QaLdnwvtxbs__cross_anchor__0128-2__pitcher",
+   "scene": "00829-QaLdnwvtxbs",
+   "condition": "cross_anchor",
+   "query": "pitcher",
+   "rule": "creep_stranded"
+  },
+  {
+   "trial_id": "00829-QaLdnwvtxbs__cross_anchor__0128-2__plate",
+   "scene": "00829-QaLdnwvtxbs",
+   "condition": "cross_anchor",
+   "query": "plate",
+   "rule": "creep_stranded"
+  },
+  {
+   "trial_id": "00829-QaLdnwvtxbs__cross_anchor__0128-2__scissors",
+   "scene": "00829-QaLdnwvtxbs",
+   "condition": "cross_anchor",
+   "query": "scissors",
+   "rule": "creep_stranded"
+  },
+  {
+   "trial_id": "00829-QaLdnwvtxbs__cross_anchor__0128-2__soup_can",
+   "scene": "00829-QaLdnwvtxbs",
+   "condition": "cross_anchor",
+   "query": "soup can",
+   "rule": "creep_stranded"
+  },
+  {
+   "trial_id": "00829-QaLdnwvtxbs__cross_anchor__0129-1__bowl",
+   "scene": "00829-QaLdnwvtxbs",
+   "condition": "cross_anchor",
+   "query": "bowl",
+   "rule": "creep_stranded"
+  },
+  {
+   "trial_id": "00829-QaLdnwvtxbs__cross_anchor__0129-1__cracker_box",
+   "scene": "00829-QaLdnwvtxbs",
+   "condition": "cross_anchor",
+   "query": "cracker box",
+   "rule": "creep_stranded"
+  },
+  {
+   "trial_id": "00829-QaLdnwvtxbs__cross_anchor__0129-1__pitcher",
+   "scene": "00829-QaLdnwvtxbs",
+   "condition": "cross_anchor",
+   "query": "pitcher",
+   "rule": "creep_stranded"
+  },
+  {
+   "trial_id": "00829-QaLdnwvtxbs__cross_anchor__0129-1__scissors",
+   "scene": "00829-QaLdnwvtxbs",
+   "condition": "cross_anchor",
+   "query": "scissors",
+   "rule": "creep_stranded"
+  },
+  {
+   "trial_id": "00829-QaLdnwvtxbs__cross_anchor__0129-1__soup_can",
+   "scene": "00829-QaLdnwvtxbs",
+   "condition": "cross_anchor",
+   "query": "soup can",
+   "rule": "creep_stranded"
+  },
+  {
+   "trial_id": "00829-QaLdnwvtxbs__in_anchor__0116__bowl",
+   "scene": "00829-QaLdnwvtxbs",
+   "condition": "in_anchor",
+   "query": "bowl",
+   "rule": "creep_stranded"
+  },
+  {
+   "trial_id": "00829-QaLdnwvtxbs__in_anchor__0116__cracker_box",
+   "scene": "00829-QaLdnwvtxbs",
+   "condition": "in_anchor",
+   "query": "cracker box",
+   "rule": "creep_stranded"
+  },
+  {
+   "trial_id": "00829-QaLdnwvtxbs__in_anchor__0116__scissors",
+   "scene": "00829-QaLdnwvtxbs",
+   "condition": "in_anchor",
+   "query": "scissors",
+   "rule": "creep_stranded"
+  },
+  {
+   "trial_id": "00829-QaLdnwvtxbs__in_anchor__0116__soup_can",
+   "scene": "00829-QaLdnwvtxbs",
+   "condition": "in_anchor",
+   "query": "soup can",
+   "rule": "creep_stranded"
+  },
+  {
+   "trial_id": "00829-QaLdnwvtxbs__in_anchor__0117__cracker_box",
+   "scene": "00829-QaLdnwvtxbs",
+   "condition": "in_anchor",
+   "query": "cracker box",
+   "rule": "creep_stranded"
+  },
+  {
+   "trial_id": "00829-QaLdnwvtxbs__in_anchor__0117__plate",
+   "scene": "00829-QaLdnwvtxbs",
+   "condition": "in_anchor",
+   "query": "plate",
+   "rule": "creep_stranded"
+  },
+  {
+   "trial_id": "00829-QaLdnwvtxbs__in_anchor__0117__scissors",
+   "scene": "00829-QaLdnwvtxbs",
+   "condition": "in_anchor",
+   "query": "scissors",
+   "rule": "creep_stranded"
+  },
+  {
+   "trial_id": "00829-QaLdnwvtxbs__in_anchor__0117__soup_can",
+   "scene": "00829-QaLdnwvtxbs",
+   "condition": "in_anchor",
+   "query": "soup can",
+   "rule": "creep_stranded"
+  },
+  {
+   "trial_id": "00829-QaLdnwvtxbs__in_anchor__0118__bowl",
+   "scene": "00829-QaLdnwvtxbs",
+   "condition": "in_anchor",
+   "query": "bowl",
+   "rule": "creep_stranded"
+  },
+  {
+   "trial_id": "00829-QaLdnwvtxbs__in_anchor__0118__cracker_box",
+   "scene": "00829-QaLdnwvtxbs",
+   "condition": "in_anchor",
+   "query": "cracker box",
+   "rule": "creep_stranded"
+  },
+  {
+   "trial_id": "00829-QaLdnwvtxbs__in_anchor__0118__pitcher",
+   "scene": "00829-QaLdnwvtxbs",
+   "condition": "in_anchor",
+   "query": "pitcher",
+   "rule": "creep_stranded"
+  },
+  {
+   "trial_id": "00829-QaLdnwvtxbs__in_anchor__0118__scissors",
+   "scene": "00829-QaLdnwvtxbs",
+   "condition": "in_anchor",
+   "query": "scissors",
+   "rule": "creep_stranded"
+  },
+  {
+   "trial_id": "00829-QaLdnwvtxbs__in_anchor__0118__soup_can",
+   "scene": "00829-QaLdnwvtxbs",
+   "condition": "in_anchor",
+   "query": "soup can",
+   "rule": "creep_stranded"
+  },
+  {
+   "trial_id": "00848-ziup5kvtCCR__cross_anchor__0128-1__cracker_box",
+   "scene": "00848-ziup5kvtCCR",
+   "condition": "cross_anchor",
+   "query": "cracker box",
+   "rule": "creep_stranded"
+  },
+  {
+   "trial_id": "00848-ziup5kvtCCR__cross_anchor__0128-1__pitcher",
+   "scene": "00848-ziup5kvtCCR",
+   "condition": "cross_anchor",
+   "query": "pitcher",
+   "rule": "creep_stranded"
+  },
+  {
+   "trial_id": "00848-ziup5kvtCCR__cross_anchor__0128-2__mug",
+   "scene": "00848-ziup5kvtCCR",
+   "condition": "cross_anchor",
+   "query": "mug",
+   "rule": "creep_stranded"
+  },
+  {
+   "trial_id": "00848-ziup5kvtCCR__cross_anchor__0129-1__pitcher",
+   "scene": "00848-ziup5kvtCCR",
+   "condition": "cross_anchor",
+   "query": "pitcher",
+   "rule": "creep_stranded"
+  },
+  {
+   "trial_id": "00848-ziup5kvtCCR__cross_anchor__0129-1__plate",
+   "scene": "00848-ziup5kvtCCR",
+   "condition": "cross_anchor",
+   "query": "plate",
+   "rule": "creep_stranded"
+  },
+  {
+   "trial_id": "00848-ziup5kvtCCR__in_anchor__0117__cracker_box",
+   "scene": "00848-ziup5kvtCCR",
+   "condition": "in_anchor",
+   "query": "cracker box",
+   "rule": "creep_stranded"
+  },
+  {
+   "trial_id": "00848-ziup5kvtCCR__in_anchor__0118__plate",
+   "scene": "00848-ziup5kvtCCR",
+   "condition": "in_anchor",
+   "query": "plate",
+   "rule": "creep_stranded"
+  },
+  {
+   "trial_id": "00880-Nfvxx8J5NCo__cross_anchor__0128-1__bowl",
+   "scene": "00880-Nfvxx8J5NCo",
+   "condition": "cross_anchor",
+   "query": "bowl",
+   "rule": "creep_stranded"
+  },
+  {
+   "trial_id": "00880-Nfvxx8J5NCo__cross_anchor__0128-1__pitcher",
+   "scene": "00880-Nfvxx8J5NCo",
+   "condition": "cross_anchor",
+   "query": "pitcher",
+   "rule": "creep_stranded"
+  },
+  {
+   "trial_id": "00880-Nfvxx8J5NCo__cross_anchor__0128-1__plate",
+   "scene": "00880-Nfvxx8J5NCo",
+   "condition": "cross_anchor",
+   "query": "plate",
+   "rule": "creep_stranded"
+  },
+  {
+   "trial_id": "00880-Nfvxx8J5NCo__cross_anchor__0128-2__plate",
+   "scene": "00880-Nfvxx8J5NCo",
+   "condition": "cross_anchor",
+   "query": "plate",
+   "rule": "creep_stranded"
+  },
+  {
+   "trial_id": "00880-Nfvxx8J5NCo__cross_anchor__0128-2__soup_can",
+   "scene": "00880-Nfvxx8J5NCo",
+   "condition": "cross_anchor",
+   "query": "soup can",
+   "rule": "creep_stranded"
+  },
+  {
+   "trial_id": "00880-Nfvxx8J5NCo__cross_anchor__0129-1__bowl",
+   "scene": "00880-Nfvxx8J5NCo",
+   "condition": "cross_anchor",
+   "query": "bowl",
+   "rule": "creep_stranded"
+  },
+  {
+   "trial_id": "00880-Nfvxx8J5NCo__cross_anchor__0129-1__plate",
+   "scene": "00880-Nfvxx8J5NCo",
+   "condition": "cross_anchor",
+   "query": "plate",
+   "rule": "creep_stranded"
+  },
+  {
+   "trial_id": "00880-Nfvxx8J5NCo__cross_anchor__0129-1__soup_can",
+   "scene": "00880-Nfvxx8J5NCo",
+   "condition": "cross_anchor",
+   "query": "soup can",
+   "rule": "creep_stranded"
+  },
+  {
+   "trial_id": "00880-Nfvxx8J5NCo__in_anchor__0118__bowl",
+   "scene": "00880-Nfvxx8J5NCo",
+   "condition": "in_anchor",
+   "query": "bowl",
+   "rule": "creep_stranded"
+  },
+  {
+   "trial_id": "00880-Nfvxx8J5NCo__in_anchor__0118__soup_can",
+   "scene": "00880-Nfvxx8J5NCo",
+   "condition": "in_anchor",
+   "query": "soup can",
+   "rule": "creep_stranded"
+  }
+ ]
+}

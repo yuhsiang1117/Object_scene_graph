@@ -1,0 +1,286 @@
+{
+ "reference_run": null,
+ "rules": [
+  "all dynamic trials"
+ ],
+ "counts": {
+  "total": 54,
+  "by_scene": {
+   "00829-QaLdnwvtxbs": 18,
+   "00848-ziup5kvtCCR": 18,
+   "00880-Nfvxx8J5NCo": 18
+  }
+ },
+ "trials": [
+  {
+   "trial_id": "00829-QaLdnwvtxbs__in_anchor__0116__bowl",
+   "scene": "00829-QaLdnwvtxbs",
+   "condition": "in_anchor"
+  },
+  {
+   "trial_id": "00829-QaLdnwvtxbs__in_anchor__0116__cracker_box",
+   "scene": "00829-QaLdnwvtxbs",
+   "condition": "in_anchor"
+  },
+  {
+   "trial_id": "00829-QaLdnwvtxbs__in_anchor__0116__pitcher",
+   "scene": "00829-QaLdnwvtxbs",
+   "condition": "in_anchor"
+  },
+  {
+   "trial_id": "00829-QaLdnwvtxbs__in_anchor__0116__plate",
+   "scene": "00829-QaLdnwvtxbs",
+   "condition": "in_anchor"
+  },
+  {
+   "trial_id": "00829-QaLdnwvtxbs__in_anchor__0116__scissors",
+   "scene": "00829-QaLdnwvtxbs",
+   "condition": "in_anchor"
+  },
+  {
+   "trial_id": "00829-QaLdnwvtxbs__in_anchor__0116__soup_can",
+   "scene": "00829-QaLdnwvtxbs",
+   "condition": "in_anchor"
+  },
+  {
+   "trial_id": "00829-QaLdnwvtxbs__in_anchor__0117__bowl",
+   "scene": "00829-QaLdnwvtxbs",
+   "condition": "in_anchor"
+  },
+  {
+   "trial_id": "00829-QaLdnwvtxbs__in_anchor__0117__cracker_box",
+   "scene": "00829-QaLdnwvtxbs",
+   "condition": "in_anchor"
+  },
+  {
+   "trial_id": "00829-QaLdnwvtxbs__in_anchor__0117__pitcher",
+   "scene": "00829-QaLdnwvtxbs",
+   "condition": "in_anchor"
+  },
+  {
+   "trial_id": "00829-QaLdnwvtxbs__in_anchor__0117__plate",
+   "scene": "00829-QaLdnwvtxbs",
+   "condition": "in_anchor"
+  },
+  {
+   "trial_id": "00829-QaLdnwvtxbs__in_anchor__0117__scissors",
+   "scene": "00829-QaLdnwvtxbs",
+   "condition": "in_anchor"
+  },
+  {
+   "trial_id": "00829-QaLdnwvtxbs__in_anchor__0117__soup_can",
+   "scene": "00829-QaLdnwvtxbs",
+   "condition": "in_anchor"
+  },
+  {
+   "trial_id": "00829-QaLdnwvtxbs__in_anchor__0118__bowl",
+   "scene": "00829-QaLdnwvtxbs",
+   "condition": "in_anchor"
+  },
+  {
+   "trial_id": "00829-QaLdnwvtxbs__in_anchor__0118__cracker_box",
+   "scene": "00829-QaLdnwvtxbs",
+   "condition": "in_anchor"
+  },
+  {
+   "trial_id": "00829-QaLdnwvtxbs__in_anchor__0118__pitcher",
+   "scene": "00829-QaLdnwvtxbs",
+   "condition": "in_anchor"
+  },
+  {
+   "trial_id": "00829-QaLdnwvtxbs__in_anchor__0118__plate",
+   "scene": "00829-QaLdnwvtxbs",
+   "condition": "in_anchor"
+  },
+  {
+   "trial_id": "00829-QaLdnwvtxbs__in_anchor__0118__scissors",
+   "scene": "00829-QaLdnwvtxbs",
+   "condition": "in_anchor"
+  },
+  {
+   "trial_id": "00829-QaLdnwvtxbs__in_anchor__0118__soup_can",
+   "scene": "00829-QaLdnwvtxbs",
+   "condition": "in_anchor"
+  },
+  {
+   "trial_id": "00848-ziup5kvtCCR__in_anchor__0116__banana",
+   "scene": "00848-ziup5kvtCCR",
+   "condition": "in_anchor"
+  },
+  {
+   "trial_id": "00848-ziup5kvtCCR__in_anchor__0116__cracker_box",
+   "scene": "00848-ziup5kvtCCR",
+   "condition": "in_anchor"
+  },
+  {
+   "trial_id": "00848-ziup5kvtCCR__in_anchor__0116__mug",
+   "scene": "00848-ziup5kvtCCR",
+   "condition": "in_anchor"
+  },
+  {
+   "trial_id": "00848-ziup5kvtCCR__in_anchor__0116__pitcher",
+   "scene": "00848-ziup5kvtCCR",
+   "condition": "in_anchor"
+  },
+  {
+   "trial_id": "00848-ziup5kvtCCR__in_anchor__0116__plate",
+   "scene": "00848-ziup5kvtCCR",
+   "condition": "in_anchor"
+  },
+  {
+   "trial_id": "00848-ziup5kvtCCR__in_anchor__0116__scissors",
+   "scene": "00848-ziup5kvtCCR",
+   "condition": "in_anchor"
+  },
+  {
+   "trial_id": "00848-ziup5kvtCCR__in_anchor__0117__banana",
+   "scene": "00848-ziup5kvtCCR",
+   "condition": "in_anchor"
+  },
+  {
+   "trial_id": "00848-ziup5kvtCCR__in_anchor__0117__cracker_box",
+   "scene": "00848-ziup5kvtCCR",
+   "condition": "in_anchor"
+  },
+  {
+   "trial_id": "00848-ziup5kvtCCR__in_anchor__0117__mug",
+   "scene": "00848-ziup5kvtCCR",
+   "condition": "in_anchor"
+  },
+  {
+   "trial_id": "00848-ziup5kvtCCR__in_anchor__0117__pitcher",
+   "scene": "00848-ziup5kvtCCR",
+   "condition": "in_anchor"
+  },
+  {
+   "trial_id": "00848-ziup5kvtCCR__in_anchor__0117__plate",
+   "scene": "00848-ziup5kvtCCR",
+   "condition": "in_anchor"
+  },
+  {
+   "trial_id": "00848-ziup5kvtCCR__in_anchor__0117__scissors",
+   "scene": "00848-ziup5kvtCCR",
+   "condition": "in_anchor"
+  },
+  {
+   "trial_id": "00848-ziup5kvtCCR__in_anchor__0118__banana",
+   "scene": "00848-ziup5kvtCCR",
+   "condition": "in_anchor"
+  },
+  {
+   "trial_id": "00848-ziup5kvtCCR__in_anchor__0118__cracker_box",
+   "scene": "00848-ziup5kvtCCR",
+   "condition": "in_anchor"
+  },
+  {
+   "trial_id": "00848-ziup5kvtCCR__in_anchor__0118__mug",
+   "scene": "00848-ziup5kvtCCR",
+   "condition": "in_anchor"
+  },
+  {
+   "trial_id": "00848-ziup5kvtCCR__in_anchor__0118__pitcher",
+   "scene": "00848-ziup5kvtCCR",
+   "condition": "in_anchor"
+  },
+  {
+   "trial_id": "00848-ziup5kvtCCR__in_anchor__0118__plate",
+   "scene": "00848-ziup5kvtCCR",
+   "condition": "in_anchor"
+  },
+  {
+   "trial_id": "00848-ziup5kvtCCR__in_anchor__0118__scissors",
+   "scene": "00848-ziup5kvtCCR",
+   "condition": "in_anchor"
+  },
+  {
+   "trial_id": "00880-Nfvxx8J5NCo__in_anchor__0116__bowl",
+   "scene": "00880-Nfvxx8J5NCo",
+   "condition": "in_anchor"
+  },
+  {
+   "trial_id": "00880-Nfvxx8J5NCo__in_anchor__0116__cracker_box",
+   "scene": "00880-Nfvxx8J5NCo",
+   "condition": "in_anchor"
+  },
+  {
+   "trial_id": "00880-Nfvxx8J5NCo__in_anchor__0116__pitcher",
+   "scene": "00880-Nfvxx8J5NCo",
+   "condition": "in_anchor"
+  },
+  {
+   "trial_id": "00880-Nfvxx8J5NCo__in_anchor__0116__plate",
+   "scene": "00880-Nfvxx8J5NCo",
+   "condition": "in_anchor"
+  },
+  {
+   "trial_id": "00880-Nfvxx8J5NCo__in_anchor__0116__scissors",
+   "scene": "00880-Nfvxx8J5NCo",
+   "condition": "in_anchor"
+  },
+  {
+   "trial_id": "00880-Nfvxx8J5NCo__in_anchor__0116__soup_can",
+   "scene": "00880-Nfvxx8J5NCo",
+   "condition": "in_anchor"
+  },
+  {
+   "trial_id": "00880-Nfvxx8J5NCo__in_anchor__0117__bowl",
+   "scene": "00880-Nfvxx8J5NCo",
+   "condition": "in_anchor"
+  },
+  {
+   "trial_id": "00880-Nfvxx8J5NCo__in_anchor__0117__cracker_box",
+   "scene": "00880-Nfvxx8J5NCo",
+   "condition": "in_anchor"
+  },
+  {
+   "trial_id": "00880-Nfvxx8J5NCo__in_anchor__0117__pitcher",
+   "scene": "00880-Nfvxx8J5NCo",
+   "condition": "in_anchor"
+  },
+  {
+   "trial_id": "00880-Nfvxx8J5NCo__in_anchor__0117__plate",
+   "scene": "00880-Nfvxx8J5NCo",
+   "condition": "in_anchor"
+  },
+  {
+   "trial_id": "00880-Nfvxx8J5NCo__in_anchor__0117__scissors",
+   "scene": "00880-Nfvxx8J5NCo",
+   "condition": "in_anchor"
+  },
+  {
+   "trial_id": "00880-Nfvxx8J5NCo__in_anchor__0117__soup_can",
+   "scene": "00880-Nfvxx8J5NCo",
+   "condition": "in_anchor"
+  },
+  {
+   "trial_id": "00880-Nfvxx8J5NCo__in_anchor__0118__bowl",
+   "scene": "00880-Nfvxx8J5NCo",
+   "condition": "in_anchor"
+  },
+  {
+   "trial_id": "00880-Nfvxx8J5NCo__in_anchor__0118__cracker_box",
+   "scene": "00880-Nfvxx8J5NCo",
+   "condition": "in_anchor"
+  },
+  {
+   "trial_id": "00880-Nfvxx8J5NCo__in_anchor__0118__pitcher",
+   "scene": "00880-Nfvxx8J5NCo",
+   "condition": "in_anchor"
+  },
+  {
+   "trial_id": "00880-Nfvxx8J5NCo__in_anchor__0118__plate",
+   "scene": "00880-Nfvxx8J5NCo",
+   "condition": "in_anchor"
+  },
+  {
+   "trial_id": "00880-Nfvxx8J5NCo__in_anchor__0118__scissors",
+   "scene": "00880-Nfvxx8J5NCo",
+   "condition": "in_anchor"
+  },
+  {
+   "trial_id": "00880-Nfvxx8J5NCo__in_anchor__0118__soup_can",
+   "scene": "00880-Nfvxx8J5NCo",
+   "condition": "in_anchor"
+  }
+ ]
+}

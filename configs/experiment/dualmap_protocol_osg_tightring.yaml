@@ -1,0 +1,59 @@
+# @package _global_
+#
+# `dualmap_protocol_osg` with the terminal approach aimed at the object rather
+# than at an HM3D viewpoint, plus the ground-truth keyframe dump.
+#
+# WHY. The baseline preset inherits `verification.ring_radii_m = [0.8, 1.2, 1.5,
+# 2.0]`, which was calibrated against HM3D ObjectNav -- a benchmark that scores
+# the distance to a sampled goal VIEWPOINT, so standing on the innermost ring is
+# a success by construction. DualMap's rule scores the distance to the OBJECT at
+# 1 m, and that ladder has no slack in it. Measured over the 15 released-
+# benchmark trials that committed to the right object and still failed
+# (`outputs/osg_dualmap_protocol/DYNAMIC_FAILURES.md`):
+#
+#   localisation error, committed track centre vs truth   median 0.07 m
+#   distance from the PLACED GOAL to the true object       median 0.82 m
+#   the agent's own shortfall from that goal               median 0.37 m
+#   final distance                                         median 1.27 m
+#
+# So the track is on the object and the goal is nearly good enough; the episode
+# is lost on the last third of a metre. Two changes, and only these two:
+#
+#   1. Three tighter rings below 0.8 m. The planner returns the NEAREST ring
+#      with a standable, visible sample, so 0.35, 0.5 and 0.65 are tried first
+#      and the old ladder is still there underneath when they are blocked --
+#      which for a tabletop object they often will be, since the blocker is the
+#      table, not the object. The ladder is sized against the measured 0.37 m
+#      shortfall and the measured YCB track extent (median semi-axis 0.11-0.13 m
+#      across the three prior maps): 0.35 + 0.12 + 0.37 = 0.84 m, inside the
+#      rule, where 0.5 + 0.12 + 0.37 = 0.99 m only just is.
+#   2. `ring_radius_extent_aware`, which measures those rings from the object's
+#      estimated surface instead of its centre. This buys almost nothing on YCB
+#      objects (a few centimetres of semi-axis) and is not where the trials come
+#      from; it is what makes a 0.5 m ring safe on a couch or a counter, whose
+#      track centre sits a metre inside the furniture. Without it, shrinking the
+#      ladder would put every sample in an occupied cell, `approach_viewpoint`
+#      would return None, and the fallback goal that scored 0.100 against 0.516
+#      would take over.
+#
+# `gt_dump_dir` rides along: it writes one JPEG plus a raw PNG per keyframe in
+# which the target was genuinely visible, which is what the offline detector
+# bake-off needs. It is runner-side instrumentation and never reaches the agent,
+# so it cannot affect the SR measured here.
+#
+#   python scripts/run_eval.py +experiment=dualmap_protocol_osg_tightring \
+#     'dualmap.scenes=[00829-QaLdnwvtxbs]' \
+#     ycb.map_in=outputs/maps_v5/00829-QaLdnwvtxbs \
+#     output_dir=outputs/osg_dualmap_tightring/00829-QaLdnwvtxbs
+defaults:
+  - dualmap_protocol_osg
+
+verification:
+  ring_radii_m: [0.35, 0.5, 0.65, 0.8, 1.2, 1.5, 2.0]
+  ring_radius_extent_aware: true
+
+eval:
+  # Per-keyframe evidence for the frames where the object was in view. Tens of
+  # files per episode, not hundreds: the instrument fires only on in-view
+  # keyframes.
+  gt_dump_dir: outputs/osg_dualmap_tightring/gt_dump

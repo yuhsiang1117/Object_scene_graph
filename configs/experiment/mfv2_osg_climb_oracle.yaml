@@ -1,0 +1,17 @@
+# @package _global_
+#
+# AN ABLATION: `mfv2_osg` with the staircase walked by Habitat's navmesh
+# follower (`agent.climb_oracle`). The decision to change storey, the choice of
+# flight and the walk to its mouth stay the arm's own; only the climb is
+# privileged. What it measures is how much of the multi-floor gap is the climb
+# itself -- on seed 42 about 15 of 25 cross-storey episodes chose to climb and
+# never rose more than ~0.3 m -- and so what is left for the storey DECISION.
+# Not a sensor-only result; never tabulate it beside one as if it were.
+#
+#   python scripts/run_eval.py +experiment=mfv2_osg_climb_oracle ...same inputs as mfv2_osg
+defaults:
+  - mfv2_osg
+  - _self_
+
+agent:
+  climb_oracle: true

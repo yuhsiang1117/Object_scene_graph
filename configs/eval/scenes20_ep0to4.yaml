@@ -1,0 +1,124 @@
+defaults:
+  - base_hm3d
+
+# 20 val scenes x episodes 0-4 = 100 episodes.
+#
+# GENERATED -- do not hand-edit. Unlike dev50/dev50_mf this is not a sampled A/B
+# split: it is the first five episodes of every scene, the set ASCENT is
+# reported at 0.70 SR on.
+#
+# The ids follow habitat's loader, which assigns episode_id = str(i) in FILE
+# ORDER within each content file (object_nav_dataset.py). The raw episode_id
+# field in the json is "0" for nearly every episode and is NOT what the loader
+# exposes -- reading it directly matches only 27 of these 100.
+#
+# 21 of the 100 need a floor change (start-to-goal height gap > 1.0 m, taken
+# from goals_by_category rather than the per-episode `goals` list, which is
+# empty in v1). multi_floor and the stair machinery must be ON for this split
+# to measure what it is for.
+split: val
+dataset_version: v1
+episodes_path: data/datasets/objectnav/hm3d/v1/{split}/{split}.json.gz
+num_episodes: -1
+max_scene_repeat_episodes: -1
+episode_ids:
+    - 4ok3usBNeis.basis.glb:0
+    - 4ok3usBNeis.basis.glb:1
+    - 4ok3usBNeis.basis.glb:2
+    - 4ok3usBNeis.basis.glb:3
+    - 4ok3usBNeis.basis.glb:4
+    - 5cdEh9F2hJL.basis.glb:0
+    - 5cdEh9F2hJL.basis.glb:1
+    - 5cdEh9F2hJL.basis.glb:2
+    - 5cdEh9F2hJL.basis.glb:3
+    - 5cdEh9F2hJL.basis.glb:4
+    - 6s7QHgap2fW.basis.glb:0
+    - 6s7QHgap2fW.basis.glb:1
+    - 6s7QHgap2fW.basis.glb:2
+    - 6s7QHgap2fW.basis.glb:3
+    - 6s7QHgap2fW.basis.glb:4
+    - DYehNKdT76V.basis.glb:0
+    - DYehNKdT76V.basis.glb:1
+    - DYehNKdT76V.basis.glb:2
+    - DYehNKdT76V.basis.glb:3
+    - DYehNKdT76V.basis.glb:4
+    - Dd4bFSTQ8gi.basis.glb:0
+    - Dd4bFSTQ8gi.basis.glb:1
+    - Dd4bFSTQ8gi.basis.glb:2
+    - Dd4bFSTQ8gi.basis.glb:3
+    - Dd4bFSTQ8gi.basis.glb:4
+    - Nfvxx8J5NCo.basis.glb:0
+    - Nfvxx8J5NCo.basis.glb:1
+    - Nfvxx8J5NCo.basis.glb:2
+    - Nfvxx8J5NCo.basis.glb:3
+    - Nfvxx8J5NCo.basis.glb:4
+    - QaLdnwvtxbs.basis.glb:0
+    - QaLdnwvtxbs.basis.glb:1
+    - QaLdnwvtxbs.basis.glb:2
+    - QaLdnwvtxbs.basis.glb:3
+    - QaLdnwvtxbs.basis.glb:4
+    - TEEsavR23oF.basis.glb:0
+    - TEEsavR23oF.basis.glb:1
+    - TEEsavR23oF.basis.glb:2
+    - TEEsavR23oF.basis.glb:3
+    - TEEsavR23oF.basis.glb:4
+    - XB4GS9ShBRE.basis.glb:0
+    - XB4GS9ShBRE.basis.glb:1
+    - XB4GS9ShBRE.basis.glb:2
+    - XB4GS9ShBRE.basis.glb:3
+    - XB4GS9ShBRE.basis.glb:4
+    - bxsVRursffK.basis.glb:0
+    - bxsVRursffK.basis.glb:1
+    - bxsVRursffK.basis.glb:2
+    - bxsVRursffK.basis.glb:3
+    - bxsVRursffK.basis.glb:4
+    - cvZr5TUy5C5.basis.glb:0
+    - cvZr5TUy5C5.basis.glb:1
+    - cvZr5TUy5C5.basis.glb:2
+    - cvZr5TUy5C5.basis.glb:3
+    - cvZr5TUy5C5.basis.glb:4
+    - mL8ThkuaVTM.basis.glb:0
+    - mL8ThkuaVTM.basis.glb:1
+    - mL8ThkuaVTM.basis.glb:2
+    - mL8ThkuaVTM.basis.glb:3
+    - mL8ThkuaVTM.basis.glb:4
+    - mv2HUxq3B53.basis.glb:0
+    - mv2HUxq3B53.basis.glb:1
+    - mv2HUxq3B53.basis.glb:2
+    - mv2HUxq3B53.basis.glb:3
+    - mv2HUxq3B53.basis.glb:4
+    - p53SfW6mjZe.basis.glb:0
+    - p53SfW6mjZe.basis.glb:1
+    - p53SfW6mjZe.basis.glb:2
+    - p53SfW6mjZe.basis.glb:3
+    - p53SfW6mjZe.basis.glb:4
+    - q3zU7Yy5E5s.basis.glb:0
+    - q3zU7Yy5E5s.basis.glb:1
+    - q3zU7Yy5E5s.basis.glb:2
+    - q3zU7Yy5E5s.basis.glb:3
+    - q3zU7Yy5E5s.basis.glb:4
+    - qyAac8rV8Zk.basis.glb:0
+    - qyAac8rV8Zk.basis.glb:1
+    - qyAac8rV8Zk.basis.glb:2
+    - qyAac8rV8Zk.basis.glb:3
+    - qyAac8rV8Zk.basis.glb:4
+    - svBbv1Pavdk.basis.glb:0
+    - svBbv1Pavdk.basis.glb:1
+    - svBbv1Pavdk.basis.glb:2
+    - svBbv1Pavdk.basis.glb:3
+    - svBbv1Pavdk.basis.glb:4
+    - wcojb4TFT35.basis.glb:0
+    - wcojb4TFT35.basis.glb:1
+    - wcojb4TFT35.basis.glb:2
+    - wcojb4TFT35.basis.glb:3
+    - wcojb4TFT35.basis.glb:4
+    - ziup5kvtCCR.basis.glb:0
+    - ziup5kvtCCR.basis.glb:1
+    - ziup5kvtCCR.basis.glb:2
+    - ziup5kvtCCR.basis.glb:3
+    - ziup5kvtCCR.basis.glb:4
+    - zt1RVoi7PcG.basis.glb:0
+    - zt1RVoi7PcG.basis.glb:1
+    - zt1RVoi7PcG.basis.glb:2
+    - zt1RVoi7PcG.basis.glb:3
+    - zt1RVoi7PcG.basis.glb:4

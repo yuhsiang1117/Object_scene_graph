@@ -1,0 +1,30 @@
+# @package _global_
+#
+# `_sensor_v2` plus the extent-aware container merge.
+#
+# One physical surface should be one anchor. `container_merge_m` is a flat
+# 1.0 m radius, which has to serve a 2 m bed and a 0.5 m nightstand at once and
+# cannot. Checked against HM3D's own semantic annotations:
+#
+#   scene   real beds   our `bed` container nodes (flat merge)
+#   00829       1                    16
+#   00848       3                    20
+#   00880       2                    16
+#
+# Single-link clustering at 2 m collapses 00829's sixteen to seven in five
+# rooms, so over half the inflation is neighbouring fragments of one bed -- what
+# this fixes -- and the rest is the detector calling sofas and benches `bed`
+# across the house, which is label noise and belongs with the perception work.
+#
+# Every spurious node is a surface-queue entry with its own InspectionLog decay,
+# so the agent can spend a budget searching one bed several times. Six of the
+# eleven remaining never-in-view failures spent 84-94% of their steps in
+# goto_frontier without approaching anything.
+#
+# sigma 2.5 on the released maps: containers 83 -> 65, 87 -> 74, 77 -> 66;
+# `bed` 16 -> 12, 20 -> 14, 16 -> 13. sigma 0 reproduces the old counts exactly.
+
+defaults:
+  - /experiment/dualmap_protocol_osg_sensor_v2
+scene_graph:
+  container_merge_sigma: 2.5

@@ -1,0 +1,212 @@
+# @package _global_
+#
+# Data-driven authored YCB ObjectNav benchmark. Scene and layout selectors are
+# ordinary Hydra overrides; no per-scene experiment preset is needed.
+#
+#   # all complete authored scenes (default)
+#   python scripts/run_eval.py +experiment=ycb_authored_nav
+#
+#   # one scene, or a subset
+#   python scripts/run_eval.py +experiment=ycb_authored_nav 'ycb.scenes=[00829-QaLdnwvtxbs]'
+#   python scripts/run_eval.py +experiment=ycb_authored_nav 'ycb.scenes=[00829-QaLdnwvtxbs,00900-FutureScene]'
+#
+#   # one dynamic relocation slot
+#   python scripts/run_eval.py +experiment=ycb_authored_nav \
+#     'ycb.layout_types=[in_anchor]' 'ycb.layout_indices=[2]'
+#
+#   # explicit 6 GB fallback (never selected automatically)
+#   python scripts/run_eval.py +experiment=ycb_authored_nav detector=yoloe_small
+defaults:
+  - /legacy_defaults            # the pre-S71 base this preset was measured on
+  - override /detector: yoloe
+  - override /exploration: sweep
+  - override /verification: "off"
+  - override /eval: ycb_authored
+
+# YCB targets are an order of magnitude smaller than HM3D ObjectNav's furniture,
+# and the default gates are tuned for furniture. Measured on 00829-QaLdnwvtxbs:
+# a bowl reaches 1759 px at its BEST authored viewpoint, against a 1500 px
+# node-creation gate and a 3000 px candidate gate -- so the target was discarded
+# on sight and every episode failed for want of a detection, not for want of
+# navigation. With these values the same episode succeeds (SPL 0.32) and the
+# bowl is mapped 0.03 m from its authored pose.
+
+# Detection for the authored targets, measured by scripts/probe_ycb_detection.py
+# against the semantic sensor's own mask, over 20 navigable viewpoints per
+# object. The number is RECALL at the 0.30 admission gate, not a best-case score:
+#
+#                        imgsz 512   768  1280      cost/frame
+#   bowl                       0.90  0.90  1.00     512:  34 ms
+#   plate                      0.60  0.65  0.15     768:  38 ms
+#   tomato soup can            0.40  0.90  1.00     960:  42 ms
+#   cracker box                0.20  0.70  0.90    1280:  51 ms
+#   blue plastic pitcher       0.60  0.60     --
+#   bleach bottle              0.30  0.45  0.70
+#   scissors                   0.00  0.00  0.00
+#
+# Recall alone chose 1280, and that was a mistake, because "cracker box" is a
+# promiscuous label at high resolution. Over 300 random navigable poses in this
+# scene it fires above the gate on 28 things that are NOT the cracker box, against
+# 2 at 768 and 0 at 512 -- and the accumulated map held FIFTEEN "cracker box"
+# tracks for a house containing one, five of which outranked the real object. 768
+# keeps recall usable everywhere, brings the plate back as a usable target, and
+# costs 4 ms per keyframe over the 512 default against a ~250 ms control loop.
+#
+# An earlier version of this table read 0.00 for the cracker box at 512 and for
+# the plate at 960. Those were measurement artifacts. The probe scored a detection
+# by its overlap with `semantic == authored.semantic_id`; the collector's semantic
+# ids are 26..95 and this scene annotates 252 HM3D instances as 0..251, so the
+# "cracker box" mask was the box UNION picture_95 and the "plate" mask was
+# wall_35, covering 124506 px of a 307200 px frame. The benchmark itself never saw
+# this -- its manifest simulator carries a semantic sensor ALONE and habitat then
+# renders the whole scene as one blob -- but every conclusion drawn from that
+# table was contaminated, imgsz 1280 among them.
+detector:
+  imgsz: 768
+  # Per-class admission gates. One threshold prices every class the same, and a
+  # false-positive census says they are not the same. Measured at imgsz 1280
+  # over 900 random navigable poses across the three scenes, counting detections
+  # that clear the node-creation gate -- extra FALSE positives against the recall
+  # gained at the target's own authored viewpoints, moving that class 0.30 -> 0.20:
+  #
+  #   tomato soup can       +0 FP   0.26 -> 0.34      cracker box    +18 FP  0.77 -> 0.82
+  #   banana                +0 FP   0.67 -> 0.75      bleach bottle   +9 FP  0.74 -> 0.83
+  #   plate                 +2 FP   0.50 -> 0.56      bowl            +0 FP  0.99 -> 0.99
+  #   blue plastic pitcher  +3 FP   0.36 -> 0.49
+  #
+  # Applied globally the same move is +8 true positives for +32 false ones and
+  # precision falls 0.59 -> 0.49, which is not a trade worth making. Applied per
+  # class it costs five false positives in total and lands on exactly the four
+  # weakest targets -- pitcher, soup can, plate and banana were the four lowest
+  # per-target success rates in the last full run. The cracker box and the
+  # bleach bottle stay at 0.30 because they are the promiscuous labels: "cracker
+  # box" alone accounts for eighteen of the thirty-two.
+  #
+  # OFF by default, because the census does not settle it. A six-episode pilot
+  # ran the same scene with and without these overrides: the tomato soup can
+  # succeeded in 31 steps at the global 0.30 gate and failed at 500 with its own
+  # 0.20 gate -- on the SAME single track, 0.97 m from truth, same n_obs, same
+  # best score. What differed was the presence belief on arrival: 0.457 against
+  # 0.095, the latter carrying nine missed expectations by step 31, so the
+  # absence check abandoned a correct candidate.
+  #
+  # The census counted detections above the node-creation gate at random poses.
+  # It never measured what admitting more of them does to the PRESENCE FILTER,
+  # which is where the cost landed: more admitted detections mean more frames in
+  # which a track is expected and unmatched, and a correct track can be
+  # disbelieved before the agent reaches it. Settling this needs the full
+  # 96-episode run, not a wider census.
+  #
+  # Now ON. The ground-truth visibility instrument identified the population the
+  # pilot could not: 35 of 96 episodes have the agent standing within three
+  # metres of the object -- a median of 12 frames at 1.16 m -- and getting
+  # nothing usable, and 15 of those produce no track near it at all. The tomato
+  # soup can is localized in ZERO of twelve episodes while being looked at
+  # within three metres in nine of them. These four are exactly the classes the
+  # census says are cheap, and they are where the misses are.
+  class_conf:
+    blue plastic pitcher: 0.20
+    tin can: 0.20
+    banana: 0.20
+    red plate: 0.20
+  # The vocabulary is DEFAULT_VOCABULARY plus the episode target, so a mapping
+  # run for one target has no class for the others and cannot map them. A
+  # multi-target benchmark needs every target present from the start. The names
+  # are the ones the detector answers to rather than the ones a person would use:
+  # "pitcher" scores 0.00 on this asset at every resolution and against eight
+  # synonyms, "blue plastic pitcher" reaches 0.71.
+  #
+  # "box" and "book" are DELIBERATELY ABSENT. An open-vocabulary head runs
+  # class-competitive NMS over its own vocabulary, so a generic class that fits
+  # a target loosely takes the detection away from the specific class that fits
+  # it exactly. Measured over 20 viewpoints per object, dropping the two of them
+  # (recall at the 0.30 gate):
+  #
+  #                        00829        00848        00880
+  #   cracker box       0.60->0.75   0.00->0.40      0.00
+  #   tomato soup can   0.77->0.90      0.00       0.25
+  #   plate             0.47->0.65      0.85       0.50
+  #   bowl              0.93->0.90        --       1.00
+  #
+  # The 00848 cracker box is the clearest case: it is authored side-on, its
+  # nutrition panel reads as a menu, and "book" scored 0.76 against "cracker
+  # box" 0.00 at every one of twenty viewpoints. Losing the two generic classes
+  # costs nothing measurable and also shrinks the container-surface candidate
+  # set the search posterior has to walk.
+  # "tomato soup can" -> "tin can" and "plate" -> "red plate". Both were
+  # naming failures, the same shape as the pitcher's, and the ground-truth
+  # instrument is what exposed them: over 96 episodes the agent had the soup can
+  # at least half visible in 431 keyframes and the detector named it TWELVE
+  # times -- an in-situ recall of 0.03 against 0.90 for the bowl. Re-probed at
+  # the dynamic poses, swapping one candidate into the vocabulary at a time
+  # (adding rather than swapping measures class-competitive NMS, not the name):
+  #
+  #   005_tomato_soup_can          029_plate
+  #     cylindrical can  0.75        red dish     0.79
+  #     red can          0.56        red plate    0.76
+  #     tin can          0.55        red disc     0.70
+  #     tomato soup can  0.23        plate        0.47
+  #     soup can         0.12        dish         0.00
+  #
+  # Condition J used the top scorers, "cylindrical can" and "red dish", and they
+  # cost more than they were worth. On their own targets they were a large win
+  # -- soup can in-situ recall 0.03 -> 0.21 and SR 0.083 -> 0.500 -- but the
+  # rest of the vocabulary gave back eight episodes for their seven, because an
+  # open-vocabulary head runs class-competitive NMS and "cylindrical can"
+  # describes a shape the pitcher and the bleach bottle also have. The cracker
+  # box is the clearest: recall 0.32 -> 0.58 and SR 0.667 -> 0.333.
+  #
+  # So the SPECIFIC name, not the highest-scoring one: "tin can" 0.55 against
+  # "cylindrical can" 0.75, and "red plate" 0.76 against "red dish" 0.79. The
+  # first gives up real recall for a name that does not describe half the
+  # vocabulary; the second gives up almost nothing.
+  vocabulary: ["chair", "sofa", "armchair", "plant", "bed", "toilet", "tv_monitor", "table", "desk", "cabinet", "shelf", "dresser", "wardrobe", "nightstand", "lamp", "pillow", "cushion", "picture", "mirror", "window", "door", "sink", "bathtub", "shower", "towel", "counter", "stool", "bench", "refrigerator", "oven", "microwave", "washing machine", "stove", "fireplace", "stairs", "rug", "curtain", "clothes", "basket", "banana", "bowl", "cracker box", "mug", "blue plastic pitcher", "red plate", "bleach bottle", "tin can"]
+
+scene_graph:
+  min_det_bbox_px: 300
+
+verification:
+  min_bbox_px: 300
+  min_score: 0.30
+
+agent:
+  max_steps: 500
+  success_distance: 0.18
+  # SENSOR-ONLY. This used to be `use_habitat_navmesh: true`, which handed the
+  # agent two channels no sensor-only system has: habitat's ShortestPathFollower
+  # planning on the ground-truth navmesh, and `is_reachable`, an oracle that
+  # says whether a target sits on a connected navmesh island. `pointnav` is the
+  # frozen PointNav ResNet policy ASCENT itself drives with -- (rho, theta) plus
+  # a 224x224 depth image, nothing else.
+  #
+  # The cost is known and large: on HM3D the same agent scores 63.0% with the
+  # navmesh and 42.0% with this mover (S8/S30). Every ycb_dynamic number
+  # measured before this change was taken WITH the navmesh and is not
+  # comparable to anything measured after it. `+experiment=ycb_authored_navmesh`
+  # restores the old arm for reproducing them.
+  navigation: pointnav
+  use_habitat_navmesh: false
+  # Stop at a view point, not at a depth threshold. Success here is measured
+  # from the final pose to the nearest sampled goal viewpoint, and those sit on
+  # rings at 0.8/1.2/1.5/2.0 m; closing until the target's depth reaches 1.0 m
+  # lands between the two inner rings. Measured before this: four of seven
+  # episodes ended at 0.18-0.28 m against a 0.18 m radius, having found the
+  # object.
+  approach_to_viewpoint: true
+
+eval:
+  mode: ycb_authored
+
+ycb:
+  # The dataclass defaults select the mounted collector data tree under
+  # /datasets/habitat-data-collector/data and the canonical HM3D v0.2 scene
+  # root below it.
+  # The authored layouts are independent of DualMap's released
+  # data/dualmap/HM3D_collect tree.  The dataclass default selects the mounted
+  # /datasets/habitat-data-collector/outputs/dualmap_authoring root.
+  scenes: ["*"]
+  layout_types: [static]
+  layout_indices: [1, 2, 3]
+  starts_per_target: 1
+  seed: 42
+  manifest_cache_dir: outputs/ycb_manifests

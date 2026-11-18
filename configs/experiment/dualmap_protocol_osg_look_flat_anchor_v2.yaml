@@ -1,0 +1,13 @@
+# @package _global_
+#
+# The stale-anchor policy, second cut: the stop walks to the nearest navigable
+# point to the track centre before stopping (the first cut stopped on the
+# ring, a median 1.47 m from an object that moved 0.7 m), and a failed attempt
+# retires every fragment of the label at that place (00848's pitcher ghost is
+# three tracks 0.2 m apart and took three attempts).
+defaults:
+  - dualmap_protocol_osg_look_flat_anchor
+
+verification:
+  stale_stop_at_nearest_free: true
+  failed_attempt_disables_place: true

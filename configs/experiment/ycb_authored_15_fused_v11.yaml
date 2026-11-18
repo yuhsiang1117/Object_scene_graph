@@ -1,0 +1,25 @@
+# @package _global_
+#
+# v10, with the two defects v9 exposed in the climb's own plumbing.
+#
+# On 00821's cracker box v9 issued 82 pursuits of one stair target and started
+# zero climbs. Two reasons. The PointNav policy stops at its own 0.9 m radius,
+# and `stair_reach_m` was 0.6, so the entry test could never be met: the agent
+# ended 0.87 m from the target. And a directed request recurs every selection
+# round, each one re-ran `try_switch` and restarted the pursuit, so its grace
+# window never elapsed, no failure was ever remembered, and the same target was
+# chosen again -- which is also what base's 55 attempts were.
+#
+# The reach now sits outside the mover's radius, and `hold_pursuit` leaves a
+# pursuit that is still making its case alone. With the second, a stair target
+# that does not work is finally handed to the failure memory, so stairs-first
+# becomes "try the nearest evidence; if it fails it is out; then portals" rather
+# than the absolute preference that cost v6 an episode.
+defaults:
+  - ycb_authored_15_fused_v10
+
+agent:
+  stair_reach_m: 1.2
+
+floor:
+  hold_pursuit: true

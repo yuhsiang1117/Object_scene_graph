@@ -1,0 +1,22 @@
+# The default agent since S87 (S89 kept it and dropped the LLM ranker in
+# `exploration: s89`): `agent: s86` (the S71 arm + the storey belief and the
+# climb check of S85/S86) plus the on-stairs heading memory
+# (docs/history/AB_RESULTS.md S87):
+#
+#   climb_heading_memory  on the flight, step by heading instead of chasing a
+#                         carrot redrawn in every view
+#                         (`navigation/search/climb.py:HeadingMemory`)
+#
+# Measured against `agent: s86`: dev scenes20_ep0to4 67 -> 70/100, the goal's
+# storey reached 11 -> 13 of 22; held-out scenes20_ep5to9 60 -> 63/100,
+# 9 -> 16 (7 better, 0 worse, sign p = 0.016). Both SR differences are inside
+# the +-3 of n = 100, and on held-out the same-floor guardrails failed
+# (successes -3, bar -2; climb-mode share +3.9 points, bar +3). Adopted by
+# decision on the cross-floor gain. `agent: s86` (`+experiment=objsearch_storey`)
+# is the arm without it; `agent: s71` (`+experiment=ascentnav`) the arm with
+# no search addition at all.
+defaults:
+  - s86
+
+search:
+  climb_heading_memory: true

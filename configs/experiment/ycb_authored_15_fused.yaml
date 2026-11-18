@@ -1,0 +1,40 @@
+# @package _global_
+#
+# The fused arm: one pipeline in which the stale-map belief and the multi-storey
+# search are ordered rather than concurrent.
+#
+# The baseline (`ycb_authored_15`) already runs presence, the container
+# posterior and the floor stack together, but they are two systems answering the
+# same question at once. Measured on outputs/osg_authored_15, 30 episodes:
+#
+#   first cross-floor request at step 13 in            17/30 episodes
+#   ... including same-floor episodes                  10/19
+#   cross-floor requests / directed attempts / arrived 405 / 12 / 3
+#   absence checks in 30 episodes                          4
+#   cross-floor SR                                       2/11
+#
+# The storey argmax is a sum of container mass, which under a flat proximity
+# prior is "which floor has more furniture" -- a fact about the prior map,
+# available on the first selection round. So the agent left before it had been
+# anywhere, and presence, the one mechanism that knows the object moved, never
+# got to speak.
+#
+# Two flags change the order, nothing else:
+#
+#   search_floor_requires_anchor_test  hold the storey request while a
+#                                      target-labelled track on this floor is
+#                                      still believed and has not been visited
+#   floor_evidence_by_presence         the switch gate's "never leave a floor
+#                                      that has the target on it" asks presence
+#                                      whether that instance is still believed
+#
+# Both default OFF in core/config, so this preset is the only place the fused
+# configuration is asserted and the baseline stays reproducible from its own.
+#
+#   scripts/run_authored_15.sh   with PRESET=ycb_authored_15_fused
+defaults:
+  - ycb_authored_15
+
+exploration:
+  search_floor_requires_anchor_test: true
+  floor_evidence_by_presence: true

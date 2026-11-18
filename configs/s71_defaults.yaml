@@ -1,0 +1,5 @@
+# @package _global_
+# Values of the S71 default that live outside a config group. Everything else
+# the default arm needs is a group choice in config.yaml.
+mapping:
+  multi_floor: true               # one obstacle/value/object map per storey

@@ -1,0 +1,49 @@
+# @package _global_
+#
+# PASS 1 of the cross-anchor experiment: ASCENT's navigation explores the
+# STATIC layout, and the obstacle map it builds is kept.
+#
+#   bash scripts/serve_perception.sh                       # the five servers
+#   python scripts/run_eval.py +experiment=mf5_ascentnav_map \
+#       'ycb.scenes=[00800-TEEsavR23oF]' \
+#       ycb.obstacle_map_out=outputs/maps_mf5_ascent \
+#       output_dir=outputs/mf5_pass1
+#
+# The agent is the `ascentnav` arm unchanged -- ASCENT's control flow on
+# ASCENT's served models (see configs/experiment/ascentnav.yaml and
+# src/navigation/README.md). The ONLY differences are which dataset is loaded
+# and that `ycb.obstacle_map_out` is set, so the map this pass leaves behind is
+# the one ASCENT's own navigation and mapping produced.
+#
+# Pass 2 is `mf5_osg_unified` with `ycb.obstacle_map_in` pointed at the same
+# directory: the presence-filter pipeline then plans over occupancy it did not
+# build (src/navigation/mapping/map_store.py).
+defaults:
+  - ascentnav
+  - override /eval: ycb_authored
+  - _self_
+
+mapping:
+  # The obstacle map is a stack, one storey per discovered staircase, and the
+  # five scenes here were authored for cross-floor relocation. Without this the
+  # pass stores one floor and pass 2 has nothing for the upper storeys.
+  multi_floor: true
+
+ycb:
+  # The mount moved: docker/compose.yaml now bind-mounts the whole collector
+  # checkout at /habitat-data-collector, and /datasets stopped existing. Read
+  # the env var compose sets, with the current mount as the fallback, so this
+  # preset resolves on a container built either way (osg/core/paths.py holds
+  # the same two candidates for the dataclass defaults).
+  layout_root: ${oc.env:OSG_YCB_MULTI_FLOOR_ROOT,/habitat-data-collector/outputs/dualmap_multifloor}
+  scenes:
+    - 00800-TEEsavR23oF
+    - 00808-y9hTuugGdiq
+    - 00821-eF36g7L6Z9M
+    - 00873-bxsVRursffK
+    - 00878-XB4GS9ShBRE
+  # The map is built on the world BEFORE anything moves. That is what makes
+  # pass 2 a dynamic-scene test rather than an incomplete-map one.
+  layout_types: [static]
+  layout_indices: [1]
+  skip_incomplete_layouts: true

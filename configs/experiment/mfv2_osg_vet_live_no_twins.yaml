@@ -1,0 +1,25 @@
+# @package _global_
+#
+# `mfv2_osg_landing_vet_live` without the stale-twin rule
+# (`verification.retire_stale_twins_after_absence`): a never-seen prior track of
+# the label stays a candidate after another one is refuted in place, so the agent
+# walks to it and the absence channel refutes it there.
+#
+# Why: the rule fired in 14 of the final arm's 219 episodes and 7 of them failed.
+# Candidates are current-storey only, so a struck twin on the agent's storey is
+# never walked to and keeps holding that storey (s44 00821 cross_anchor_01: struck
+# 765 times, anchor 0.93-0.97 to step 1000). Dropping it from the storey belief
+# instead (`_follows`) strands the true object when the refuted track was a pass-1
+# false positive (s42 00878 static 50001: S at 642 -> 1000 steps on the wrong
+# storey). The flag acts only in those 14 episodes; every other one is unchanged.
+#
+# Measured on those 14 (3 seeds, run one episode at a time): 7 vs 7, 0
+# discordant, the successes in 3185 vs 3736 steps. The rule is inert on SR.
+#
+#   bash scripts/run_mfv2.sh osg_vet_live_no_twins <seed>
+defaults:
+  - mfv2_osg_landing_vet_live
+  - _self_
+
+verification:
+  retire_stale_twins_after_absence: false

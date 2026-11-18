@@ -1,0 +1,6 @@
+# Qwen2.5-7B on the local ollama -- ASCENT's own planner model. The S71 default.
+defaults:
+  - base_ollama
+
+text_model: qwen2.5:7b
+send_response_format: false      # plain chat; the planner parses the JSON itself (as ASCENT does)

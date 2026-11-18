@@ -13,17 +13,24 @@ pytestmark = pytest.mark.sim
 habitat = pytest.importorskip("habitat")
 
 
-def _data_present() -> bool:
-    return (
-        Path("data/scene_datasets/hm3d").exists()
-        and any(Path("data/datasets/objectnav/hm3d").rglob("*.json.gz"))
-    )
+def _missing() -> str:
+    """Which half is absent -- the scenes or the episodes. They arrive
+    separately and it is never obvious which one a bare skip meant."""
+    from osg.core.paths import hm3d_scene_root
+
+    if not hm3d_scene_root().is_dir():
+        return f"HM3D scenes not mounted at {hm3d_scene_root()}"
+    episodes = Path("data/datasets/objectnav/hm3d")
+    if not (episodes.is_dir() and any(episodes.rglob("*.json.gz"))):
+        return f"ObjectNav episodes not downloaded under {episodes} (scripts/download_data.py)"
+    return ""
 
 
 @pytest.mark.timeout(600)
 def test_one_episode_runs():
-    if not _data_present():
-        pytest.skip("HM3D data not mounted")
+    reason = _missing()
+    if reason:
+        pytest.skip(reason)
 
     from hydra import compose, initialize_config_dir
 

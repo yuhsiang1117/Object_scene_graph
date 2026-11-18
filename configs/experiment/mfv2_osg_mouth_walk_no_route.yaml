@@ -1,0 +1,13 @@
+# @package _global_
+#
+# Ablation of the final arm (`mfv2_osg_mouth_walk`): the stair route off: the climb walks the flight blob's carrot. The walk to the
+# mouth lives in the route follower, so it goes too; the switch still aims at the
+# remembered arrival and a descent is still pursued to its top.
+#
+#   bash scripts/run_mfv2.sh osg_mouth_walk_no_route <seed>
+defaults:
+  - mfv2_osg_mouth_walk
+  - _self_
+
+agent:
+  climb_route: false

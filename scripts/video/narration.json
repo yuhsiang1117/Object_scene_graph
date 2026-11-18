@@ -1,0 +1,192 @@
+{
+ "about": "The voiceover, cue by cue. `at` is seconds into `shot` (shotlist.json); a cue may run past its shot but must end before the next cue's start. `text` is also the subtitle. make_narration.py fixes the pronunciation (SAY), checks that no cue overruns the next and that every subtitle fits in two lines, and writes cues.json (timings from the synthesised audio), the .srt and the transcript.",
+ "voice": "af_heart",
+ "speed": 1.1,
+ "cues": [
+  {
+   "shot": "title",
+   "at": 0.3,
+   "text": "MD-SG: a scene graph that lets a map be wrong, and recover."
+  },
+  {
+   "shot": "outline",
+   "at": 0.3,
+   "text": "Problem, system, three modules, experiments, real robot, conclusion."
+  },
+  {
+   "shot": "problem_intro",
+   "at": 0.3,
+   "text": "Object navigation assumes objects stay put. In real homes, they move."
+  },
+  {
+   "shot": "problem_intro",
+   "at": 4.8,
+   "text": "A cup seen upstairs turns up downstairs: wrong place, and another floor."
+  },
+  {
+   "shot": "problem_clip",
+   "at": 0.3,
+   "text": "The map says the cracker box is here. Someone moved it."
+  },
+  {
+   "shot": "problem_clip",
+   "at": 5.0,
+   "text": "The verifier finds the table bare. The map is wrong, not just incomplete."
+  },
+  {
+   "shot": "problem_still",
+   "at": 0.2,
+   "text": "Our benchmark: map, move the objects, then search from the old map."
+  },
+  {
+   "shot": "problem_still",
+   "at": 4.2,
+   "text": "Moved across floors, the agent must leave the storey the map points at."
+  },
+  {
+   "shot": "system",
+   "at": 0.3,
+   "text": "One persistent scene graph of floors, rooms, containers and objects."
+  },
+  {
+   "shot": "system",
+   "at": 5.4,
+   "text": "Three mechanisms: the graph, presence revision, and belief-guided search."
+  },
+  {
+   "shot": "perception_clip",
+   "at": 0.4,
+   "text": "Module one: detections become ellipsoid tracks under floor, room and container."
+  },
+  {
+   "shot": "perception_clip",
+   "at": 6.0,
+   "text": "A stair edge joins two storeys only after a real climb."
+  },
+  {
+   "shot": "presence_clip",
+   "at": 0.3,
+   "text": "The map holds a cracker box here at belief point seven seven.",
+   "display": "The map holds a cracker box here at belief 0.77."
+  },
+  {
+   "shot": "presence_clip",
+   "at": 4.4,
+   "text": "Up close the surface is in clear view and empty: every miss counts."
+  },
+  {
+   "shot": "presence_clip",
+   "at": 8.8,
+   "text": "Belief falls to point four four; the search moves on.",
+   "display": "Belief falls to 0.44; the search moves on."
+  },
+  {
+   "shot": "eq3_card",
+   "at": 0.1,
+   "text": "A detection raises belief, a visible miss lowers it, occlusion changes nothing."
+  },
+  {
+   "shot": "floor_clip",
+   "at": 0.5,
+   "text": "Every surface carries a search posterior; a floor's score is their mean."
+  },
+  {
+   "shot": "floor_clip",
+   "at": 5.4,
+   "text": "The floor below now outscores the mapped floor: take the stairs."
+  },
+  {
+   "shot": "floor_still",
+   "at": 0.2,
+   "text": "Failed looks spend belief; after ten, the other floor wins the switch."
+  },
+  {
+   "shot": "hero",
+   "at": 0.4,
+   "text": "Same episode, same prior map. The bottle was mapped upstairs; it is now downstairs."
+  },
+  {
+   "shot": "hero",
+   "at": 6.8,
+   "text": "MD-SG takes the stairs it already mapped and finds the bottle in two hundred and seven steps.",
+   "display": "MD-SG takes the stairs it already mapped and finds the bottle in 207 steps."
+  },
+  {
+   "shot": "hero",
+   "at": 14.5,
+   "text": "ASCENT, with the same map, wanders to the step limit and never does."
+  },
+  {
+   "shot": "montage_1",
+   "at": 0.3,
+   "text": "Two more episodes: this cracker box was moved two floors down."
+  },
+  {
+   "shot": "montage_2",
+   "at": 0.3,
+   "text": "This bottle was moved one floor up. Both found."
+  },
+  {
+   "shot": "numbers_1",
+   "at": 0.3,
+   "text": "Twenty-five cross-floor episodes: ASCENT none, MD-SG forty percent.",
+   "display": "25 cross-floor episodes: ASCENT 0 %, MD-SG 40 %."
+  },
+  {
+   "shot": "numbers_2",
+   "at": 0.2,
+   "text": "Against DualMap, on one floor: thirty to fifty-three percent.",
+   "display": "Against DualMap, on one floor: 30 % → 53 %."
+  },
+  {
+   "shot": "setup_wide",
+   "at": 0.2,
+   "text": "Now, a real Stretch 3, in a two-storey building."
+  },
+  {
+   "shot": "setup_close",
+   "at": 0.2,
+   "text": "The Thor runs perception and the graph; the Stretch keeps its own navigation."
+  },
+  {
+   "shot": "robot_step0",
+   "at": 0.4,
+   "text": "Pass one: the robot explores the ground floor, and every detection goes into the graph."
+  },
+  {
+   "shot": "robot_step0",
+   "at": 7.6,
+   "text": "There is the ball, on the sofa."
+  },
+  {
+   "shot": "robot_step1",
+   "at": 0.3,
+   "text": "The ball goes upstairs. From the stale map, the robot drives straight to the sofa: gone."
+  },
+  {
+   "shot": "robot_step1",
+   "at": 6.3,
+   "text": "It searches the rest of the floor, then asks for floor one."
+  },
+  {
+   "shot": "robot_step1",
+   "at": 10.6,
+   "text": "It cannot climb, so it waits at the lift. The operator rides up with it and declares the floor."
+  },
+  {
+   "shot": "robot_step2",
+   "at": 0.3,
+   "text": "Floor one: a fresh grid, while the graph still remembers floor zero."
+  },
+  {
+   "shot": "robot_step2",
+   "at": 8.4,
+   "text": "And there is the ball, in the lab."
+  },
+  {
+   "shot": "close",
+   "at": 0.3,
+   "text": "To conclude: a map should hold beliefs, not facts; a search should know when a floor is spent; and both run on a real robot today."
+  }
+ ]
+}

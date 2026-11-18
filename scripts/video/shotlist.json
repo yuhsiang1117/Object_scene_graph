@@ -1,0 +1,591 @@
+{
+  "meta": {
+    "title": "MD-SG",
+    "subtitle": "Multi-floor Open-vocabulary Online 3D Scene Graph with Dynamic Handling Navigation",
+    "venue": "ICRA 2027",
+    "authors": "",
+    "limits": {
+      "max_seconds": 180,
+      "max_bytes": 20000000
+    },
+    "our_run": "outputs/RERUN/mf5",
+    "ascent_run": "outputs/ascent_crossanchor",
+    "robot_assets": "assets/real_experiment"
+  },
+  "episodes": {
+    "E873": {
+      "scene": "00873-bxsVRursffK",
+      "id": "00873-bxsVRursffK__cross_anchor_01__50001__s0",
+      "target": "cracker box"
+    },
+    "E878": {
+      "scene": "00878-XB4GS9ShBRE",
+      "id": "00878-XB4GS9ShBRE__cross_anchor_01__50006__s0",
+      "target": "yellow bottle"
+    },
+    "E878b": {
+      "scene": "00878-XB4GS9ShBRE",
+      "id": "00878-XB4GS9ShBRE__cross_anchor_01__50001__s0",
+      "target": "cracker box"
+    },
+    "E821": {
+      "scene": "00821-eF36g7L6Z9M",
+      "id": "00821-eF36g7L6Z9M__cross_anchor_01__50001__s0",
+      "target": "cracker box"
+    },
+    "E862": {
+      "scene": "00862-LT9Jq6dN3Ea",
+      "id": "00862-LT9Jq6dN3Ea__cross_anchor_01__50006__s0",
+      "target": "yellow bottle"
+    },
+    "E800": {
+      "scene": "00800-TEEsavR23oF",
+      "id": "00800-TEEsavR23oF__cross_anchor_01__50001__s0",
+      "target": "cracker box"
+    }
+  },
+  "shots": [
+    {
+      "id": "title",
+      "kind": "slate",
+      "card": "title",
+      "dur": 4,
+      "bg": {
+        "episode": "E878",
+        "step": 206
+      },
+      "beat": "Title over the hero clip's detection frame",
+      "on_screen": "MD-SG — title, venue",
+      "section": ""
+    },
+    {
+      "id": "outline",
+      "kind": "slate",
+      "card": "outline",
+      "dur": 5,
+      "beat": "The outline: six parts",
+      "on_screen": "1 problem · 2 system · 3 modules · 4 experiments · 5 real robot · 6 conclusion",
+      "section": ""
+    },
+    {
+      "id": "problem_intro",
+      "kind": "still",
+      "dur": 10,
+      "src": "docs/figures/teaser.png",
+      "crop": [
+        0.0,
+        0.0,
+        0.7,
+        1.0
+      ],
+      "section": "1 · The problem",
+      "beat": "Problem statement on the paper's Fig. 1: a cup seen in an upstairs bedroom is moved to the downstairs kitchen",
+      "on_screen": "teaser.png, the two floors and the route (illustration)"
+    },
+    {
+      "id": "problem_clip",
+      "kind": "clip",
+      "dur": 10,
+      "hold": 1.5,
+      "episode": "E873",
+      "run": "our",
+      "steps": [
+        1,
+        54
+      ],
+      "floors": [
+        [
+          1,
+          "upper floor · where the map says it is"
+        ]
+      ],
+      "belief": [
+        [
+          3,
+          0.94
+        ],
+        [
+          40,
+          null
+        ]
+      ],
+      "map_pos": "bl",
+      "insets": [
+        {
+          "from": 38,
+          "to": 54,
+          "image": "outputs/RERUN/mf5/00873-bxsVRursffK/verify_debug/00873-bxsVRursffK_cross_anchor_01_ep00873-bxsVRursffK__cross_anchor_01__50001__s0_call001_crackerbox_REJ.jpg",
+          "box": [
+            820,
+            80,
+            420,
+            315
+          ],
+          "label": "VLM: “a green box, possibly a container” → bare"
+        }
+      ],
+      "events": [
+        [
+          40,
+          "arrival rejected",
+          14
+        ]
+      ],
+      "beat": "Problem, shown: the agent walks to the remembered table, the verifier rejects, the map was wrong",
+      "on_screen": "first-person RGB + detections, costmap inset, verifier image inset",
+      "map_zoom": 200,
+      "section": "1 · The problem"
+    },
+    {
+      "id": "problem_still",
+      "kind": "still",
+      "dur": 9,
+      "src": "docs/figures/layout_conditions.png",
+      "crop": [
+        0.08,
+        0.6,
+        0.92,
+        0.995
+      ],
+      "beat": "The three-step protocol, on the real floor plates",
+      "on_screen": "layout_conditions panel (d): cracker box, table → kitchen island, 2.71 m of it vertical",
+      "section": "1 · The problem"
+    },
+    {
+      "id": "system",
+      "kind": "slate",
+      "card": "system",
+      "dur": 10,
+      "beat": "Our system: one persistent scene graph + three mechanisms",
+      "on_screen": "full_pipeline.png + three numbered module boxes",
+      "section": "2 · Our system"
+    },
+    {
+      "id": "perception_clip",
+      "kind": "clip",
+      "dur": 9,
+      "hold": 1.0,
+      "episode": "E821",
+      "run": "our",
+      "steps": [
+        226,
+        282
+      ],
+      "floors": [
+        [
+          1,
+          "floor 0 · two storeys below the mapped one"
+        ]
+      ],
+      "insets": [
+        {
+          "from": 250,
+          "to": 282,
+          "draw": "scene_graph",
+          "box": [
+            640,
+            84,
+            620,
+            470
+          ],
+          "label": "the persistent scene graph"
+        }
+      ],
+      "map_pos": "bl",
+      "events": [
+        [
+          281,
+          "cracker box found · 282 steps · SPL 0.69",
+          20
+        ]
+      ],
+      "beat": "Perception to scene graph, on footage",
+      "on_screen": "detections + the scene-graph tree sliding in",
+      "map_zoom": 200,
+      "section": "3 · Module 1/3 · Scene graph"
+    },
+    {
+      "id": "presence_clip",
+      "kind": "clip",
+      "dur": 12,
+      "hold": 2.0,
+      "episode": "E873",
+      "run": "our",
+      "steps": [
+        156,
+        196
+      ],
+      "floors": [
+        [
+          1,
+          "upper floor"
+        ]
+      ],
+      "belief": [
+        [
+          156,
+          0.77
+        ],
+        [
+          190,
+          0.44
+        ]
+      ],
+      "events": [
+        [
+          171,
+          "close look",
+          12
+        ],
+        [
+          190,
+          "absent on arrival · p 0.77 → 0.44",
+          7
+        ]
+      ],
+      "beat": "Presence-belief revision, on footage",
+      "on_screen": "belief bar dropping as the agent inspects an empty surface",
+      "map_zoom": 200,
+      "section": "3 · Module 2/3 · Presence belief"
+    },
+    {
+      "id": "eq3_card",
+      "kind": "slate",
+      "card": "eq3",
+      "dur": 5,
+      "beat": "Eq. 3, the three-row log-odds table",
+      "on_screen": "positive / eligible miss / ineligible miss",
+      "section": "3 · Module 2/3 · Presence belief"
+    },
+    {
+      "id": "floor_clip",
+      "kind": "clip",
+      "dur": 10,
+      "hold": 1.5,
+      "episode": "E878",
+      "run": "our",
+      "steps": [
+        40,
+        112
+      ],
+      "floors": [
+        [
+          1,
+          "upper floor · the mapped one"
+        ]
+      ],
+      "events": [
+        [
+          40,
+          "floor score at step 13 · below: 4.55   here (mapped): 0.38 → go down",
+          45
+        ]
+      ],
+      "beat": "Belief-guided search and the floor decision, on footage",
+      "on_screen": "floor-mass readout from search_log_events step 13",
+      "map_zoom": 200,
+      "section": "3 · Module 3/3 · Belief-guided search"
+    },
+    {
+      "id": "floor_still",
+      "kind": "slate",
+      "dur": 5,
+      "beat": "Floor score, redrawn: the two floors' scores as inspections fail (real numbers, 00873 / 'tin can')",
+      "on_screen": "curve chart: cross after 8 looks, switch accepted after 10",
+      "card": "floor_score",
+      "section": "3 · Module 3/3 · Belief-guided search"
+    },
+    {
+      "id": "hero",
+      "kind": "composite",
+      "dur": 19,
+      "left": {
+        "episode": "E878",
+        "run": "our",
+        "steps": [
+          1,
+          207
+        ],
+        "sps": 12,
+        "label": "MD-SG (ours)",
+        "floors": [
+          [
+            1,
+            "upper (mapped)"
+          ],
+          [
+            158,
+            "lower"
+          ]
+        ],
+        "end": "found · 207 steps · SPL 0.84",
+        "end_color": "green",
+        "map_zoom": 200
+      },
+      "right": {
+        "episode": "E878",
+        "run": "ascent",
+        "steps": [
+          1,
+          489
+        ],
+        "sps": 24,
+        "label": "ASCENT (reference policy)",
+        "end": "fail · 489 steps · 2.4 m away",
+        "end_color": "red"
+      },
+      "beat": "Hero: ours vs ASCENT on the identical episode",
+      "on_screen": "side by side, shared step clock, ours freezes on the detection",
+      "section": "4 · Experiments"
+    },
+    {
+      "id": "montage_1",
+      "kind": "clip",
+      "dur": 5,
+      "hold": 1.0,
+      "episode": "E821",
+      "run": "our",
+      "steps": [
+        190,
+        282
+      ],
+      "floors": [
+        [
+          1,
+          "floor 1"
+        ],
+        [
+          223,
+          "floor 0"
+        ]
+      ],
+      "events": [
+        [
+          223,
+          "floor 1 → 0",
+          10
+        ]
+      ],
+      "beat": "Montage 1/4: two flights down",
+      "on_screen": "",
+      "map_zoom": 200,
+      "section": "4 · Experiments"
+    },
+    {
+      "id": "montage_2",
+      "kind": "clip",
+      "dur": 4,
+      "hold": 1.0,
+      "episode": "E862",
+      "run": "our",
+      "steps": [
+        160,
+        292
+      ],
+      "floors": [
+        [
+          1,
+          "floor 1 (mapped)"
+        ],
+        [
+          188,
+          "floor 2"
+        ]
+      ],
+      "events": [
+        [
+          188,
+          "floor 1 → 2",
+          10
+        ]
+      ],
+      "beat": "Montage 2/4: one flight up",
+      "on_screen": "",
+      "map_zoom": 200,
+      "section": "4 · Experiments"
+    },
+    {
+      "id": "numbers_1",
+      "kind": "slate",
+      "card": "table2",
+      "dur": 5,
+      "bg": {
+        "episode": "E878",
+        "step": 206,
+        "blur": 21
+      },
+      "beat": "Table II",
+      "on_screen": "ASCENT 0 % / 0.000 vs ours 40.0 % / 0.162 (n = 25)",
+      "section": "4 · Experiments"
+    },
+    {
+      "id": "numbers_2",
+      "kind": "slate",
+      "card": "table1",
+      "dur": 5,
+      "bg": {
+        "episode": "E878",
+        "step": 206,
+        "blur": 21
+      },
+      "beat": "Table I cross-anchor + Table III trend",
+      "on_screen": "DualMap† 30.2 % vs ours 52.8 %; ablation 41.5 / 35.8 / 52.8",
+      "section": "4 · Experiments"
+    },
+    {
+      "id": "setup_wide",
+      "kind": "still",
+      "dur": 3,
+      "src": "assets/real_experiment/human_camera/setup_2.jpg",
+      "beat": "Real robot, the setup (wide)",
+      "on_screen": "setup_2.jpg",
+      "section": "5 · Real robot"
+    },
+    {
+      "id": "setup_close",
+      "kind": "still",
+      "dur": 5,
+      "src": "assets/real_experiment/human_camera/setup_1.jpg",
+      "crop": [
+        0.0,
+        0.0,
+        1.0,
+        0.72
+      ],
+      "labels": [
+        [
+          0.3,
+          0.5,
+          "Jetson AGX Thor · perception, scene graph, belief revision",
+          "lt"
+        ],
+        [
+          0.98,
+          0.2,
+          "Stretch 3 · Nav2 navigation, RTAB-Map localisation",
+          "rt"
+        ],
+        [
+          0.52,
+          0.72,
+          "one Ethernet cable · goals down, RGB-D and TF up",
+          "lt"
+        ]
+      ],
+      "beat": "Real robot, who does what",
+      "on_screen": "setup_1.jpg with three callouts",
+      "section": "5 · Real robot"
+    },
+    {
+      "id": "robot_step0",
+      "kind": "dual",
+      "dur": 10,
+      "hold": 1.0,
+      "phone": "assets/real_experiment/human_camera/step0_phone.mp4",
+      "rviz": "assets/real_experiment/rviz/step0.mp4",
+      "rviz_layout": "A",
+      "phone_t": [
+        30,
+        90
+      ],
+      "rviz_t0": 30,
+      "speed": 6.0,
+      "title": "Step 0 · pass 1 · map the ground floor, find the ball",
+      "events": [
+        [
+          52,
+          60,
+          "ball found · floor 0"
+        ]
+      ],
+      "beat": "Pass 1 on the real robot, one take at 6x: maps floor 0, finds the ball",
+      "on_screen": "phone | RViz, robot camera inset, speed badge",
+      "section": "5 · Real robot"
+    },
+    {
+      "id": "robot_step1",
+      "kind": "dual",
+      "dur": 17,
+      "hold": 0.75,
+      "phone": "assets/real_experiment/human_camera/step1_phone.mp4",
+      "rviz": "assets/real_experiment/rviz/step1.mp4",
+      "rviz_layout": [
+        [
+          0,
+          "A"
+        ],
+        [
+          126,
+          "full"
+        ]
+      ],
+      "cam_inset": true,
+      "phone_t": [
+        4,
+        140
+      ],
+      "rviz_t0": 12,
+      "speed": 8.0,
+      "title": "Step 1 · pass 2 · the ball has been moved to floor 1",
+      "events": [
+        [
+          16,
+          28,
+          "absent on arrival"
+        ],
+        [
+          86,
+          104,
+          ">>> WANTS FLOOR 1"
+        ],
+        [
+          126,
+          136,
+          "operator: floor-1 map loaded, /osg/floor 1"
+        ]
+      ],
+      "beat": "Pass 2, one take at 8x: old spot empty, floor 0 exhausted, WANTS FLOOR 1, waits at the lift",
+      "on_screen": "phone | RViz",
+      "section": "5 · Real robot"
+    },
+    {
+      "id": "robot_step2",
+      "kind": "dual",
+      "dur": 10,
+      "hold": 1.0,
+      "phone": "assets/real_experiment/human_camera/step2_phone.mp4",
+      "rviz": "assets/real_experiment/rviz/step2.mp4",
+      "rviz_layout": "B",
+      "phone_t": [
+        42,
+        102
+      ],
+      "rviz_t0": 42,
+      "speed": 6.0,
+      "title": "Step 2 · floor 1 · a fresh grid, and the ball again",
+      "events": [
+        [
+          54,
+          60,
+          "ball found · floor 1"
+        ]
+      ],
+      "beat": "Floor 1, one take at 6x: fresh grid, the corridor, the lab, the ball",
+      "on_screen": "phone | RViz",
+      "section": "5 · Real robot"
+    },
+    {
+      "id": "close",
+      "kind": "slate",
+      "card": "close",
+      "dur": 8,
+      "beat": "Closing card over the robot at the ball",
+      "on_screen": "takeaway + paper / code line",
+      "bg": {
+        "video": "assets/real_experiment/human_camera/step2_phone.mp4",
+        "t": 114
+      },
+      "section": "6 · Conclusion"
+    }
+  ]
+}

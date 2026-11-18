@@ -19,6 +19,7 @@
 #
 #   python scripts/run_eval.py +experiment=matched_single_floor
 defaults:
+  - /legacy_defaults            # the pre-S71 base this preset was measured on
   - override /detector: yoloe
   - override /eval: hm3d_val_v1
 

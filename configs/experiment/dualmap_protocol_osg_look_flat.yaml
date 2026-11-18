@@ -1,0 +1,13 @@
+# @package _global_
+#
+# Search order, arm 3: proximity effectively flat from the first step, on top
+# of the look before absence. exp(-d / 100) is 0.95 at 5.6 m, so surfaces are
+# ordered by affinity, the same-room bonus and travel cost alone -- the
+# nearest-first sweep condition Q reaches only after an absence arrival. The
+# extreme of the ladder, expected to cost in-anchor and to say whether
+# cross-anchor can be reached by order at all.
+defaults:
+  - dualmap_protocol_osg_look_inanchor
+
+exploration:
+  search_proximity_len_m: 100.0

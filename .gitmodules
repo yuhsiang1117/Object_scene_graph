@@ -1,0 +1,9 @@
+[submodule "relative_work/ascent"]
+	path = relative_work/ascent
+	url = https://github.com/Zeying-Gong/ascent.git
+	branch = main
+	# Upstream tracks its own .pyc files, which every server start rewrites, so
+	# the submodule would otherwise report "modified content" permanently. The
+	# pinned commit is still reported if it moves -- only working-tree noise is
+	# ignored.
+	ignore = dirty

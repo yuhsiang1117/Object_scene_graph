@@ -1,0 +1,34 @@
+# @package _global_
+#
+# The S71 arm (`ascentnav`) plus the first two additions of S83
+# (docs/history/AB_RESULTS.md), and NOTHING else. It is `agent: s86`, the
+# default of S86 (S87 added the heading memory); the preset pins that group so
+# S85/S86 can be re-run by name:
+#
+#   M1   a belief over the storeys ASCENT has mapped decides when to leave
+#        one (`navigation/search/storey.py`), instead of waiting for it to run
+#        out of frontiers or for the LLM to say so.
+#   M2b  a climb is judged by the height it gained: one that ends on the level
+#        it began is not an arrival, and two of those on one storey in one
+#        direction stop the agent being sent that way for 125 steps.
+#
+# plus the guard that keeps the walk to a staircase from ending the episode.
+# Each value is the dataclass default (`AgentSearchConfig`, where the
+# measurement behind it is written down); only the switches are set here.
+#
+#   python scripts/run_eval.py +experiment=objsearch_storey \
+#       eval.behaviour_log=true agent.search.trace=true output_dir=outputs/<name>
+#
+# Compare against outputs/s83_baseline_v0 with
+# scripts/analyze_objectnav_search.py <baseline> <run>.
+defaults:
+  - override /agent: s86
+  - override /exploration: s71        # with the LLM ranker, as measured (S89 removed it)
+  - override /scene_graph: place365
+
+agent:
+  search:
+    storey_belief: true
+    verify_climb: true
+    climb_fail_cap: 2
+    stair_stop_guard: true

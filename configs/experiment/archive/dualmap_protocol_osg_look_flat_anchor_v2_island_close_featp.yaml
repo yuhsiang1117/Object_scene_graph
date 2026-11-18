@@ -1,0 +1,13 @@
+# @package _global_
+#
+# DualMap's local inquiry, fused with the belief DualMap does not have.
+#
+# Its memory of a failed candidate is an ignore list discarded when the query
+# ends, so its argmax cannot express "I have walked past that thing and never
+# seen it again". Presence can, and it is graded and recoverable. The pick
+# becomes argmax of exp(-beta*(best - sim)) * presence.p rather than of the
+# cosine alone. Paired against `..._feat`, which is the unfused route.
+defaults:
+  - archive/dualmap_protocol_osg_look_flat_anchor_v2_island_close_feat
+feature_memory:
+  fuse_presence: true

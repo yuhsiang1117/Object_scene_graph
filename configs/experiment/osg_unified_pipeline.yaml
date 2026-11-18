@@ -1,0 +1,88 @@
+# @package _global_
+#
+# The single fused pipeline: every MECHANISM flag, and nothing about which
+# dataset is run. Included by dualmap_osg_unified, mf5_osg_unified and
+# ycb15_osg_unified so the agent is byte-identical across all three; only the
+# eval group and the scene list differ between them.
+#
+# Floor/climb group (values from ycb_authored_15_fused_v16) + the DualMap
+# perception tuning (values from dualmap_protocol_osg_sensor_v4_fuse_cls,
+# the 62/107 arm) + the region-proposal fusion. Derived by diffing the two
+# presets; see docs/UNIFIED_PIPELINE.md.
+
+agent:
+  agent_radius: 0.1
+  approach_close_clearance_m: 0.15
+  approach_close_last_metre_m: 0.8
+  approach_close_source: costmap
+  approach_stop_at_best_m: 0.15
+  climb_blocked_turn_after: 4
+  climb_enabled: true
+  climb_flight_carrot: true
+  climb_max_steps: 200
+  climb_relink_flights: true
+  down_look_every: 30
+  navmesh_3d_goals: true
+  navmesh_snap_on_agent_island: true
+  pointnav_arrival_m: 0.3
+  pointnav_creep_stall_steps: 8
+  stair_evidence_every_kf: true
+  stair_reach_m: 1.2
+  close_look_before_absence: true
+
+exploration:
+  floor_ask_every: 40
+  floor_evidence_by_presence: true
+  floor_llm: true
+  floor_mass_margin: 1.15
+  floor_mass_rule: mean
+  floor_min_steps: 60
+  # DualMap's value (fuse_cls), not the multi-floor base's: it is a general
+  # frontier-costing heuristic, not a floor mechanism, and true perturbs
+  # single-floor exploration (measured: broke scissors' bit-identity).
+  frontier_cost_free_cell: false
+  search_floor_requires_anchor_test: true
+  search_surface_when_floor_unreachable: true
+  search_proximity_len_m: 100.0
+
+floor:
+  climb_targets: flights_first
+  cross_floor: true
+  dwell_on_arrival: true
+  enabled: true
+  estimate_only: false
+  hold_pursuit: true
+  no_level_on_flight: true
+  per_floor_costmap: true
+  portal_failure_memory: true
+  prior_stairs_override_gate: true
+  stairs: true
+  use_prior_stairs: true
+  switch_requires_second_level: true
+
+mapping:
+  multi_floor: true
+
+scene_graph:
+  containers_floor_relative: true
+
+verification:
+  failed_attempt_disables_place: true
+  retire_stale_twins_after_absence: true
+  stale_stop_at_nearest_free: true
+  stop_at_stale_anchor_once: true
+  viewpoint_min_clearance_m: 0.25
+  ring_radius_extent_aware: true
+  ring_radii_m: [0.35, 0.5, 0.65, 0.8, 1.2, 1.5, 2.0]
+
+region_proposal:
+  commit_min_obs: 4
+  commit_tau: 0.28
+  commit_tau_by_class:
+    bowl: 0.3
+    mug: 0.3
+    plate: 0.3
+    red_plate: 0.3
+  enabled: true
+  every_keyframe: true
+  max_per_episode: 100000

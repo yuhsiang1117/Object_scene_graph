@@ -1,0 +1,14 @@
+# @package _global_
+#
+# The stale-anchor policy, on top of look_flat (tight ring, look before
+# absence, flat proximity): stop once at the stale anchor when it is silent,
+# and stop touring the other prior-map ghosts of the label once one has been
+# refuted. See core/config/verification.py for the measurements behind both.
+#
+#   ARMS=flat_anchor OUT_ROOT=outputs/osg_anchor MAX_PARALLEL=3 scripts/run_close_look_ab.sh
+defaults:
+  - dualmap_protocol_osg_look_flat
+
+verification:
+  stop_at_stale_anchor_once: true
+  retire_stale_twins_after_absence: true

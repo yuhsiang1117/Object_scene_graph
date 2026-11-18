@@ -1,0 +1,42 @@
+# @package _global_
+#
+# Our pipeline on our own authored benchmark, scored by the released rule.
+#
+# The 15-scene authoring root (111 objects, layout index 1, in_anchor and
+# cross_anchor) is multi-storey throughout -- on the first scene four of six
+# static targets sit a floor below the start, and the single-floor stack never
+# descends -- so the base is the combined multi-storey preset,
+# ycb_dynamic_multifloor: the same nav_agent, presence beliefs and container
+# posterior, with every storey given its own map. Its cross-floor-only
+# relocation filter is lifted so every authored relocation is scored, same
+# floor or not; starts stay on the object's prior floor, as that benchmark
+# samples them.
+#
+# On top of that base, the working configuration from the released-benchmark
+# campaign (docs/history/SR_PROPOSAL_CLOSE_LOOK.md): terminal rings measured from the
+# object's surface, the close look before absence, the flat proximity prior.
+# Success is what DualMap's benchmark means by it -- a STOP within 1 m
+# horizontal of the object, within three attempts -- not the authored-viewpoint
+# rule whose effective tolerance is about 2 m. Habitat's own numbers are kept
+# under habitat_* beside it.
+#
+#   scripts/run_authored_15.sh        # two passes per scene, see the script
+defaults:
+  - ycb_dynamic_multifloor
+
+ycb:
+  scenes: ["*"]
+  layout_indices: [1]
+  cross_floor_relocations_only: false
+  score_by_object_distance: true
+  object_success_distance_m: 1.0
+
+verification:
+  ring_radii_m: [0.35, 0.5, 0.65, 0.8, 1.2, 1.5, 2.0]
+  ring_radius_extent_aware: true
+
+agent:
+  close_look_before_absence: true
+
+exploration:
+  search_proximity_len_m: 100.0

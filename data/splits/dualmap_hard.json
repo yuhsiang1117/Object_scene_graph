@@ -1,0 +1,327 @@
+{
+  "reference_run": "outputs/osg_closelook/inanchor",
+  "rules": [
+    "hard_cross",
+    "cross_named",
+    "inanchor_leave"
+  ],
+  "dropped_queries": [
+    "scissors",
+    "mug"
+  ],
+  "selected_on": "the reference run's outcome; a selection on noise as well as difficulty",
+  "counts": {
+    "total": 33,
+    "by_rule": {
+      "cross_named": 8,
+      "hard_cross": 18,
+      "dropped_query": 11,
+      "inanchor_leave": 7
+    },
+    "by_scene": {
+      "00829-QaLdnwvtxbs": 6,
+      "00848-ziup5kvtCCR": 16,
+      "00880-Nfvxx8J5NCo": 11
+    }
+  },
+  "reference_wall_hours": 1.92,
+  "trials": [
+    {
+      "trial_id": "00829-QaLdnwvtxbs__cross_anchor__0128-1__bowl",
+      "scene": "00829-QaLdnwvtxbs",
+      "condition": "cross_anchor",
+      "query": "bowl",
+      "rule": "cross_named",
+      "reference_success": 0,
+      "reference_steps": 500
+    },
+    {
+      "trial_id": "00829-QaLdnwvtxbs__cross_anchor__0128-1__pitcher",
+      "scene": "00829-QaLdnwvtxbs",
+      "condition": "cross_anchor",
+      "query": "pitcher",
+      "rule": "hard_cross",
+      "reference_success": 0,
+      "reference_steps": 500
+    },
+    {
+      "trial_id": "00829-QaLdnwvtxbs__cross_anchor__0128-2__plate",
+      "scene": "00829-QaLdnwvtxbs",
+      "condition": "cross_anchor",
+      "query": "plate",
+      "rule": "hard_cross",
+      "reference_success": 0,
+      "reference_steps": 500
+    },
+    {
+      "trial_id": "00829-QaLdnwvtxbs__cross_anchor__0129-1__pitcher",
+      "scene": "00829-QaLdnwvtxbs",
+      "condition": "cross_anchor",
+      "query": "pitcher",
+      "rule": "hard_cross",
+      "reference_success": 0,
+      "reference_steps": 101
+    },
+    {
+      "trial_id": "00829-QaLdnwvtxbs__cross_anchor__0129-1__soup_can",
+      "scene": "00829-QaLdnwvtxbs",
+      "condition": "cross_anchor",
+      "query": "soup can",
+      "rule": "hard_cross",
+      "reference_success": 0,
+      "reference_steps": 500
+    },
+    {
+      "trial_id": "00829-QaLdnwvtxbs__in_anchor__0116__soup_can",
+      "scene": "00829-QaLdnwvtxbs",
+      "condition": "in_anchor",
+      "query": "soup can",
+      "rule": "inanchor_leave",
+      "reference_success": 0,
+      "reference_steps": 500
+    },
+    {
+      "trial_id": "00848-ziup5kvtCCR__cross_anchor__0128-1__cracker_box",
+      "scene": "00848-ziup5kvtCCR",
+      "condition": "cross_anchor",
+      "query": "cracker box",
+      "rule": "hard_cross",
+      "reference_success": 0,
+      "reference_steps": 500
+    },
+    {
+      "trial_id": "00848-ziup5kvtCCR__cross_anchor__0128-1__pitcher",
+      "scene": "00848-ziup5kvtCCR",
+      "condition": "cross_anchor",
+      "query": "pitcher",
+      "rule": "hard_cross",
+      "reference_success": 0,
+      "reference_steps": 298
+    },
+    {
+      "trial_id": "00848-ziup5kvtCCR__cross_anchor__0128-1__plate",
+      "scene": "00848-ziup5kvtCCR",
+      "condition": "cross_anchor",
+      "query": "plate",
+      "rule": "cross_named",
+      "reference_success": 0,
+      "reference_steps": 500
+    },
+    {
+      "trial_id": "00848-ziup5kvtCCR__cross_anchor__0128-2__banana",
+      "scene": "00848-ziup5kvtCCR",
+      "condition": "cross_anchor",
+      "query": "banana",
+      "rule": "hard_cross",
+      "reference_success": 0,
+      "reference_steps": 500
+    },
+    {
+      "trial_id": "00848-ziup5kvtCCR__cross_anchor__0128-2__cracker_box",
+      "scene": "00848-ziup5kvtCCR",
+      "condition": "cross_anchor",
+      "query": "cracker box",
+      "rule": "hard_cross",
+      "reference_success": 0,
+      "reference_steps": 500
+    },
+    {
+      "trial_id": "00848-ziup5kvtCCR__cross_anchor__0128-2__pitcher",
+      "scene": "00848-ziup5kvtCCR",
+      "condition": "cross_anchor",
+      "query": "pitcher",
+      "rule": "hard_cross",
+      "reference_success": 0,
+      "reference_steps": 156
+    },
+    {
+      "trial_id": "00848-ziup5kvtCCR__cross_anchor__0128-2__plate",
+      "scene": "00848-ziup5kvtCCR",
+      "condition": "cross_anchor",
+      "query": "plate",
+      "rule": "cross_named",
+      "reference_success": 0,
+      "reference_steps": 500
+    },
+    {
+      "trial_id": "00848-ziup5kvtCCR__cross_anchor__0129-1__banana",
+      "scene": "00848-ziup5kvtCCR",
+      "condition": "cross_anchor",
+      "query": "banana",
+      "rule": "hard_cross",
+      "reference_success": 0,
+      "reference_steps": 500
+    },
+    {
+      "trial_id": "00848-ziup5kvtCCR__cross_anchor__0129-1__cracker_box",
+      "scene": "00848-ziup5kvtCCR",
+      "condition": "cross_anchor",
+      "query": "cracker box",
+      "rule": "hard_cross",
+      "reference_success": 0,
+      "reference_steps": 500
+    },
+    {
+      "trial_id": "00848-ziup5kvtCCR__cross_anchor__0129-1__pitcher",
+      "scene": "00848-ziup5kvtCCR",
+      "condition": "cross_anchor",
+      "query": "pitcher",
+      "rule": "cross_named",
+      "reference_success": 0,
+      "reference_steps": 371
+    },
+    {
+      "trial_id": "00848-ziup5kvtCCR__cross_anchor__0129-1__plate",
+      "scene": "00848-ziup5kvtCCR",
+      "condition": "cross_anchor",
+      "query": "plate",
+      "rule": "cross_named",
+      "reference_success": 0,
+      "reference_steps": 500
+    },
+    {
+      "trial_id": "00848-ziup5kvtCCR__in_anchor__0116__pitcher",
+      "scene": "00848-ziup5kvtCCR",
+      "condition": "in_anchor",
+      "query": "pitcher",
+      "rule": "inanchor_leave",
+      "reference_success": 0,
+      "reference_steps": 500
+    },
+    {
+      "trial_id": "00848-ziup5kvtCCR__in_anchor__0117__banana",
+      "scene": "00848-ziup5kvtCCR",
+      "condition": "in_anchor",
+      "query": "banana",
+      "rule": "inanchor_leave",
+      "reference_success": 0,
+      "reference_steps": 96
+    },
+    {
+      "trial_id": "00848-ziup5kvtCCR__in_anchor__0117__pitcher",
+      "scene": "00848-ziup5kvtCCR",
+      "condition": "in_anchor",
+      "query": "pitcher",
+      "rule": "inanchor_leave",
+      "reference_success": 0,
+      "reference_steps": 296
+    },
+    {
+      "trial_id": "00848-ziup5kvtCCR__in_anchor__0118__pitcher",
+      "scene": "00848-ziup5kvtCCR",
+      "condition": "in_anchor",
+      "query": "pitcher",
+      "rule": "inanchor_leave",
+      "reference_success": 0,
+      "reference_steps": 131
+    },
+    {
+      "trial_id": "00848-ziup5kvtCCR__in_anchor__0118__plate",
+      "scene": "00848-ziup5kvtCCR",
+      "condition": "in_anchor",
+      "query": "plate",
+      "rule": "inanchor_leave",
+      "reference_success": 0,
+      "reference_steps": 366
+    },
+    {
+      "trial_id": "00880-Nfvxx8J5NCo__cross_anchor__0128-1__bowl",
+      "scene": "00880-Nfvxx8J5NCo",
+      "condition": "cross_anchor",
+      "query": "bowl",
+      "rule": "hard_cross",
+      "reference_success": 0,
+      "reference_steps": 45
+    },
+    {
+      "trial_id": "00880-Nfvxx8J5NCo__cross_anchor__0128-1__cracker_box",
+      "scene": "00880-Nfvxx8J5NCo",
+      "condition": "cross_anchor",
+      "query": "cracker box",
+      "rule": "hard_cross",
+      "reference_success": 0,
+      "reference_steps": 277
+    },
+    {
+      "trial_id": "00880-Nfvxx8J5NCo__cross_anchor__0128-1__plate",
+      "scene": "00880-Nfvxx8J5NCo",
+      "condition": "cross_anchor",
+      "query": "plate",
+      "rule": "hard_cross",
+      "reference_success": 0,
+      "reference_steps": 500
+    },
+    {
+      "trial_id": "00880-Nfvxx8J5NCo__cross_anchor__0128-1__soup_can",
+      "scene": "00880-Nfvxx8J5NCo",
+      "condition": "cross_anchor",
+      "query": "soup can",
+      "rule": "hard_cross",
+      "reference_success": 0,
+      "reference_steps": 500
+    },
+    {
+      "trial_id": "00880-Nfvxx8J5NCo__cross_anchor__0128-2__pitcher",
+      "scene": "00880-Nfvxx8J5NCo",
+      "condition": "cross_anchor",
+      "query": "pitcher",
+      "rule": "hard_cross",
+      "reference_success": 0,
+      "reference_steps": 427
+    },
+    {
+      "trial_id": "00880-Nfvxx8J5NCo__cross_anchor__0128-2__soup_can",
+      "scene": "00880-Nfvxx8J5NCo",
+      "condition": "cross_anchor",
+      "query": "soup can",
+      "rule": "cross_named",
+      "reference_success": 0,
+      "reference_steps": 319
+    },
+    {
+      "trial_id": "00880-Nfvxx8J5NCo__cross_anchor__0129-1__bowl",
+      "scene": "00880-Nfvxx8J5NCo",
+      "condition": "cross_anchor",
+      "query": "bowl",
+      "rule": "hard_cross",
+      "reference_success": 0,
+      "reference_steps": 45
+    },
+    {
+      "trial_id": "00880-Nfvxx8J5NCo__cross_anchor__0129-1__cracker_box",
+      "scene": "00880-Nfvxx8J5NCo",
+      "condition": "cross_anchor",
+      "query": "cracker box",
+      "rule": "cross_named",
+      "reference_success": 0,
+      "reference_steps": 272
+    },
+    {
+      "trial_id": "00880-Nfvxx8J5NCo__cross_anchor__0129-1__pitcher",
+      "scene": "00880-Nfvxx8J5NCo",
+      "condition": "cross_anchor",
+      "query": "pitcher",
+      "rule": "hard_cross",
+      "reference_success": 0,
+      "reference_steps": 500
+    },
+    {
+      "trial_id": "00880-Nfvxx8J5NCo__cross_anchor__0129-1__soup_can",
+      "scene": "00880-Nfvxx8J5NCo",
+      "condition": "cross_anchor",
+      "query": "soup can",
+      "rule": "cross_named",
+      "reference_success": 0,
+      "reference_steps": 500
+    },
+    {
+      "trial_id": "00880-Nfvxx8J5NCo__in_anchor__0117__soup_can",
+      "scene": "00880-Nfvxx8J5NCo",
+      "condition": "in_anchor",
+      "query": "soup can",
+      "rule": "inanchor_leave",
+      "reference_success": 0,
+      "reference_steps": 500
+    }
+  ]
+}

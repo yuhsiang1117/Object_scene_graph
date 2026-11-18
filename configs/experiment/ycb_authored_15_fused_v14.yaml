@@ -1,0 +1,16 @@
+# @package _global_
+#
+# v13, and the agent stays on a floor long enough to look at it.
+#
+# v13 is the first sensor-only arm that climbs: on 00808's yellow bottle it
+# descended a flight the height layer found, gained 2.20 m inside the climb,
+# and the estimator committed the object's floor at step 314. At step 347 the
+# original geometric gate -- "nothing near is left to explore" -- was true,
+# because a floor reached 33 steps ago has almost no map, and the agent climbed
+# straight back up. `floor.dwell_on_arrival` gives a newly reached storey the
+# same `no_switch_before` dwell the start of an episode gets.
+defaults:
+  - ycb_authored_15_fused_v13
+
+floor:
+  dwell_on_arrival: true

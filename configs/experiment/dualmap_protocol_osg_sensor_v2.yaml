@@ -1,0 +1,27 @@
+# @package _global_
+#
+# The sensor-only configuration, corrected: clearance 0.25, not 0.15.
+#
+# The sweep that picked 0.15 was run WITHOUT the closing walk, where the two
+# thresholds tied at 20/44, and I chose 0.15 on "ladder health" -- the strict
+# ring search succeeding more often and the relaxed fallback carrying fewer
+# approaches. Measured with the closing walk in place that reasoning inverts:
+#
+#   clearance 0.25 + costmap closing walk   26/44, median stop 0.95 m
+#   clearance 0.15 + costmap closing walk   19/44, median stop 1.10 m
+#
+# In five of the eight trials 0.25 wins, neither arm did a best-pose walk-back,
+# so the difference is the goal itself. The relaxed fallback accepts UNKNOWN
+# cells and drops the line-of-sight test, which lets it place a pose NEARER the
+# object than any strict ring pose; a stricter clearance forces that fallback
+# more often and therefore lands closer. `viewpoint_none` was the wrong thing
+# to minimise -- it reads as a failure and is functioning as the mechanism.
+#
+# So: keep the constraint (a pose the agent does not fit in is still useless),
+# and let it push the search onto the relaxed ladder.
+
+defaults:
+  - dualmap_protocol_osg_sensor_final
+
+verification:
+  viewpoint_min_clearance_m: 0.25

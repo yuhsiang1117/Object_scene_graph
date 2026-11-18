@@ -1,0 +1,9 @@
+defaults:
+  - value
+
+# ASCENT's frontier ranking: value argmax with a 3 m nearby shortcut and
+# frontier retirement, instead of score/path_cost. Keeps the WFD extractor so
+# the A/B isolates the selector -- and so this arm also reports WFD's frontier
+# supply for comparison against the contour arm.
+selector: ascent
+nearby_distance_m: 3.0

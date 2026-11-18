@@ -4,51 +4,96 @@ services:
     restart: unless-stopped
     environment:
       - OLLAMA_KEEP_ALIVE=30m
-      - OLLAMA_MAX_LOADED_MODELS=2  
+      - OLLAMA_MAX_LOADED_MODELS=2
       - OLLAMA_CONTEXT_LENGTH=8192
     volumes:
       - ollama-models:/root/.ollama
     ports:
-      - "11434:11434"
+      - "11435:11434"
     deploy:
       resources:
         reservations:
           devices:
             - driver: nvidia
               count: 1
-              capabilities: [gpu]
+              capabilities: [ gpu ]
 
   nav:
     build:
-      context: .
-      dockerfile: Dockerfile
+      # The repo root, so the build can COPY the ASCENT submodule. Kept small
+      # by /.dockerignore, which drops .conda-envs, data, outputs and the
+      # 4.5 GB of model weights -- 35 GB on disk, ~264 MB sent.
+      context: ..
+      dockerfile: docker/Dockerfile
       args:
-        USER_UID: ${UID:-1000}
-        USER_GID: ${GID:-1000}
+        USER_UID: ${UID:?Set UID in docker/.env to the output of id -u}
+        USER_GID: ${GID:?Set GID in docker/.env to the output of id -g}
     runtime: nvidia
     depends_on:
       - ollama
     stdin_open: true
     tty: true
-    command: ["bash"]
+    # Keep bind-mounted files owned by the host user. Set UID/GID in
+    # docker/.env to the output of `id -u` and `id -g` on the host.
+    user: "${UID:?Set UID in docker/.env}:${GID:?Set GID in docker/.env}"
+    # An explicit uid:gid can discard supplementary image groups. Retain the
+    # Ubuntu sudo group so entrypoint.sh can initialize named-volume folders.
+    group_add:
+      - "27"
+    command: [ "bash" ]
     environment:
       - OLLAMA_HOST=http://ollama:11434
       - NVIDIA_DRIVER_CAPABILITIES=all
+      - NVIDIA_VISIBLE_DEVICES=all
       - PYTORCH_CUDA_ALLOC_CONF=expandable_segments:True
       - HOME=/tmp
       - YOLO_CONFIG_DIR=/tmp/Ultralytics
       - NVIDIA_API_KEY=${NVIDIA_API_KEY}
+      - UMASK=0002
+      # habitat-data-collector is mounted as one complete, editable checkout.
+      - HABITAT_COLLECTOR_ROOT=/habitat-data-collector
+      - OSG_DATA_ROOT=/habitat-data-collector/data
+      - OSG_HM3D_SCENES_DIR=/habitat-data-collector/data/versioned_data/hm3d-0.2
+      - OSG_YCB_AUTHORING_ROOT=/habitat-data-collector/outputs/dualmap_authoring
+      - OSG_YCB_MULTI_FLOOR_ROOT=/habitat-data-collector/outputs/dualmap_multifloor
+      # --- x11: GUI tools inside the container (the Rerun 3D viewer) ---------
+      # Inherit the host's DISPLAY. Empty when the host has no X session, which
+      # is harmless: GUI apps then fail with "Failed to open connection to X
+      # server" and everything headless keeps working.
+      - DISPLAY=${DISPLAY:-}
+      - XDG_RUNTIME_DIR=/tmp
+      - XAUTHORITY=/tmp/.Xauthority
     volumes:
       - ..:/workspace
       - weights-cache:/workspace/data/weights
       - ../outputs:/workspace/outputs
+      # HM3D scene meshes (license-gated, ~10 GB+ for val). Kept out of the
+      # repo, so HM3D_SCENES in docker/.env points at wherever they actually
+      # live and they are mounted onto the path the episode datasets expect:
+      # data/scene_datasets/hm3d is a symlink to versioned_data/hm3d-0.2/hm3d.
+      # Without this the eval dies in the env worker with "No Stage Attributes
+      # exists for requested scene ...basis.glb", not a missing-file error.
+      - ${HM3D_SCENES:-../data/versioned_data}:/workspace/data/versioned_data
+      # Mount the full collector checkout at one stable location. Disabling
+      # automatic host-path creation avoids Docker creating a root-owned empty
+      # directory when HABITAT_COLLECTOR_DIR contains a typo.
+      - type: bind
+        source: ${HABITAT_COLLECTOR_DIR:-../../habitat-data-collector}
+        target: /habitat-data-collector
+        bind:
+          create_host_path: false
+      # X11 server and GPU rendering devices for interactive collector tools.
+      - /tmp/.X11-unix:/tmp/.X11-unix # X11-unix is mounted to allow GUI applications to display on host.
+      - $HOME/.Xauthority:/tmp/.Xauthority # Xauthority is mounted to allow X11 forwarding for remote display.
+      # Mount Direct Rendering Infrastructure (DRI) for hardware acceleration support such as OpenGL.
+      - /dev/dri:/dev/dri
     deploy:
       resources:
         reservations:
           devices:
             - driver: nvidia
               count: 1
-              capabilities: [gpu, graphics]
+              capabilities: [ gpu, graphics ]
     ipc: host
 
 volumes:

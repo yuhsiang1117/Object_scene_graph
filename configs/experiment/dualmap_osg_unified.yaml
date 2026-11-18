@@ -1,0 +1,14 @@
+# @package _global_
+#
+# The unified pipeline on DualMap's released benchmark (107 trials over 00829,
+# 00848, 00880). This is the arm that must hold 62/107 (in 34/54, cross 28/53).
+#
+# It is `dualmap_protocol_osg_sensor_v2` (the DualMap eval + the perception
+# stack) plus `osg_unified_pipeline` (region-proposal fusion + the floor/climb
+# group). The floor group is inert on single-floor scenes by construction, so
+# the intent is that this reproduces `dualmap_protocol_osg_sensor_v4_fuse_cls`
+# trial for trial; docs/UNIFIED_PIPELINE.md records the bit-identity check.
+defaults:
+  - dualmap_protocol_osg_sensor_v2
+  - osg_unified_pipeline
+  - _self_

@@ -1,0 +1,13 @@
+# @package _global_
+#
+# Variant of the final arm (`mfv2_osg_mouth_walk`): ADDS vetting of the prior map before each episode (`verification.stop_gate_vet_prior`,
+# see mfv2_osg_gate2_vet): offline over outputs/maps_v2_osg's 90 target-labelled tracks
+# the recogniser keeps 34 of 38 true and 9 of 52 false.
+#
+#   bash scripts/run_mfv2.sh osg_mouth_walk_vet <seed>
+defaults:
+  - mfv2_osg_mouth_walk
+  - _self_
+
+verification:
+  stop_gate_vet_prior: true

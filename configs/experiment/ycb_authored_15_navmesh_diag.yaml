@@ -1,0 +1,26 @@
+# @package _global_
+#
+# DIAGNOSTIC, NOT A HEADLINE. The baseline with habitat's navmesh restored.
+#
+# The portal machinery was built when the ycb line ran `use_habitat_navmesh:
+# true`: docs/history/MULTI_FLOOR.md and portals.py both say a portal is "not the
+# staircase itself, but a place to walk toward, after which the navmesh handles
+# the climb". On 2026-09-08 the line went sensor-only (commit 866ab0e), which
+# removed the thing that was going to do the climbing, and nothing downstream
+# was changed to compensate.
+#
+# That predicts what we measure: on 00821's cracker box the agent made 55 switch
+# attempts at portals correctly reporting a +2.68 m gap, arrived at one, and rose
+# 0.17 m in 500 steps.
+#
+# This arm restores the navmesh to test that prediction and nothing else. It
+# hands the agent two channels no sensor-only system has -- habitat's
+# ShortestPathFollower planning on the ground-truth navmesh, and `is_reachable`
+# as an oracle -- so its success rate is NOT comparable to the sensor-only
+# numbers and must never be quoted as an improvement.
+defaults:
+  - ycb_authored_15
+
+agent:
+  navigation: navmesh
+  use_habitat_navmesh: true

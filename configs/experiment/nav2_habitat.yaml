@@ -1,0 +1,24 @@
+# @package _global_
+#
+# The nav2 mover, in habitat, with no ROS in the room.
+#
+#   python scripts/run_eval.py +experiment=nav2_habitat eval.num_episodes=3
+#
+# `SimNav2Backend` gives habitat's navmesh follower Nav2's semantics --
+# accepted, active, SUCCEEDED, ABORTED -- so the goal selection, the mover
+# hand-off and the FSM's response to a refused goal are all exercisable where
+# there is ground truth and a repeatable episode. That is what makes a ROS
+# failure attributable: if it works here and not on the robot, the fault is in
+# the bridge, not in the pipeline.
+#
+# PRIVILEGED NAVIGATION, exactly as `navmesh` is: the follower plans on the
+# simulator's geometry. SR/SPL from this preset must never be compared against
+# a sensor-only arm (CLAUDE.md).
+defaults:
+  - osg_unified_pipeline
+  - override /eval: hm3d_val_mini
+  - override /verification: "off"      # reproducible: the VLM is not deterministic
+  - _self_
+
+agent:
+  navigation: nav2

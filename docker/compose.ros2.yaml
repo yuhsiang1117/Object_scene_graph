@@ -1,0 +1,35 @@
+# The `nav` service, on the robot's network.
+#
+#   docker compose -f docker/compose.yaml -f docker/compose.ros2.yaml \
+#       --env-file docker/.env up -d
+#
+# An override rather than an edit to compose.yaml, because host networking is
+# a real cost and every non-robot run should keep the bridge network: DDS
+# discovery is multicast and the robot is another machine, which the default
+# bridge network cannot reach. Taking the host's network also takes its
+# resolver, so compose's service names stop working and ollama has to be
+# addressed by its published port.
+services:
+  nav:
+    network_mode: host
+    environment:
+      # Was http://ollama:11434 via compose DNS; on the host network the
+      # published port is the only way in (compose.yaml maps 11435:11434).
+      - OLLAMA_HOST=http://localhost:11435
+      # Must match the robot's. Anything on the same domain sees the same
+      # topics, so give a shared lab a number of its own.
+      - ROS_DOMAIN_ID=${ROS_DOMAIN_ID:-0}
+      # The Stretch's DDS implementation. Mismatched vendors discover each
+      # other unreliably and then fail in ways that look like network trouble.
+      - RMW_IMPLEMENTATION=${RMW_IMPLEMENTATION:-rmw_cyclonedds_cpp}
+      # 0: the robot is not this machine.
+      - ROS_LOCALHOST_ONLY=0
+      # The same wired-link DDS settings the Thor deployment uses, and for the
+      # same reason: docker/cyclonedds-eth.xml is a copy of stretch_main's,
+      # both ends must pin identically, and raw camera frames do not fit over
+      # Wi-Fi. See docker/.env.example.
+      - CYCLONEDDS_URI=${CYCLONEDDS_URI:-/etc/cyclonedds-eth.xml}
+      # This machine's wired NIC, NOT the robot's (`ip -brief addr`).
+      - CYCLONEDDS_IFACE=${CYCLONEDDS_IFACE:-enP2p1s0}
+    volumes:
+      - ${CYCLONEDDS_CONFIG:-./cyclonedds-eth.xml}:/etc/cyclonedds-eth.xml:ro

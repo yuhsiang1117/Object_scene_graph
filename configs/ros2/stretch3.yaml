@@ -1,0 +1,29 @@
+# The Hello Robot Stretch 3, as this pipeline sees it.
+#
+# Every value here is the default in src/osg/core/config/ros2.py; the file
+# exists so the group is selectable (`ros2=stretch3`) and so a second robot is
+# a second file rather than a fork. The fields worth checking first on a real
+# robot are listed in docs/ROS2.md; `rotate_deg` and the depth topic are the
+# two that change what the pipeline sees rather than merely where it looks.
+defaults:
+  - base_stretch3
+
+# MEASURED ON THE ROBOT, 2026-09-21: the dataclass default (+90) turns this
+# Stretch's published frame upside down; -90 is upright. Settled by pulling one
+# frame through the bridge at 0 / +90 / -90 and looking at the three images
+# (outputs/ros2_check/real_frame_rot*.png) -- with the D435i mounted portrait
+# and publishing 1280x720 landscape, the sign is the difference between the
+# detector seeing a room and seeing its reflection in the ceiling. Positive is
+# counter-clockwise, per the field's own comment in src/osg/core/config/ros2.py.
+rotate_deg: -90.0
+
+# Compressed transport, 2026-09-22: the same D435i frames as jpeg (colour) and
+# png (16UC1 depth) instead of raw 1280x720 -- roughly a tenth of the bytes
+# over the wired link. The bridge picks the message type from the topic name
+# (src/osg/ros2/bridge_node.py, is_compressed_topic), so this is the whole
+# switch; set the two back to `.../image_raw` for raw. The robot side must run
+# image_transport's compressed plugins (they are part of a standard RealSense
+# install: `ros2 topic list | grep compressed` on the robot). png level 1
+# on the driver's compressedDepth keeps the encoder cheap on the robot.
+rgb_topic: /camera/color/image_raw/compressed
+depth_topic: /camera/aligned_depth_to_color/image_raw/compressedDepth

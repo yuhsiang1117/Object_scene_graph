@@ -1,0 +1,34 @@
+# @package _global_
+#
+# Every sensor-only fix together, at the clearance the sweep picked.
+#
+# Nothing in this arm queries the navmesh. The ladder that got here, on the 44
+# trials stranded in the PointNav creep band:
+#
+#   base 11 -> +stall 14 -> +fit 18 -> +best 20 -> +costclose 26
+#
+# against the navmesh MOVER's 26/44 on the same subset, and against the same
+# arm holding a navmesh closing walk (`_navclose`) at 24 -- the ground-truth
+# query turned out to be a mild liability, because a goal the agent's own map
+# thinks is blocked is one it approaches badly.
+#
+#   pointnav_creep_stall_steps   the blind creep must stop pressing a goal it
+#                                cannot reach
+#   viewpoint_min_clearance_m    do not aim at a pose the agent does not fit in
+#   approach_stop_at_best_m      stop at the closest pose reached, not the last
+#   approach_close_source        the closing walk, asked of the costmap
+#
+# 0.15 m clearance rather than 0.25: the sweep found the same success rate with
+# the strict ring search intact (56 strict viewpoints against 43, and the
+# relaxed fallback carrying 27 approaches instead of 44).
+
+defaults:
+  - dualmap_protocol_osg_sensor_r10_best
+
+verification:
+  viewpoint_min_clearance_m: 0.15
+
+agent:
+  approach_close_last_metre_m: 0.8
+  approach_close_source: costmap
+  approach_close_clearance_m: 0.15

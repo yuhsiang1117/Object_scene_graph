@@ -1,0 +1,38 @@
+# @package _global_
+#
+# The object layer's ellipsoid as adopted in docs/history/AB_RESULTS.md S82
+# ("A", variant R2 -- what `mfv2_osg_vet_live_ellipsoid_v3` composes to), and
+# NOTHING else, so it lays over the default arm (`ascentnav`). The default,
+# every key below off, is "V0".
+#
+# For the S84 question -- does the ellipsoid's centre and size move where the
+# agent stops? -- which is asked by replaying one recorded run twice:
+#
+#   python scripts/replay_object_layer.py agent.osg_world_model=true \
+#       +experiment=objsearch_ellipsoid_a +replay.root=<run>/objrec \
+#       +replay.out=<run>/replay_a +replay.target_log=true
+#
+# Offline against instance ground truth (S82, 418 objects on the test scenes):
+# IoU 0.114 -> 0.437, centre error 0.289 -> 0.135 m, at 1.47x object-layer
+# time. `ascentnav`'s own stop never reads the object layer, so composing this
+# onto a default-arm run changes its maps and not its actions.
+#
+# The block is spelled out rather than inherited: the mfv2 preset drags the
+# whole OSG multi-floor arm in with it. tests/unit/test_objsearch_presets.py
+# holds the two equal.
+scene_graph:
+  ellipsoid:
+    init: points
+    reinit_truncated: true
+    buffer: true
+    refine_mode: points
+    overlap_mode: voxel
+    assoc_3d_overlap: 0.3
+    normalize_labels: true
+    merge_split_overlap: 0.5
+    extent_pad_m: 0.015
+    yaw_mode: manhattan
+    depth_axis: thickness
+    refit_min_views: 1
+    assoc_2d_reassign: 0.1
+    fuse_report: true

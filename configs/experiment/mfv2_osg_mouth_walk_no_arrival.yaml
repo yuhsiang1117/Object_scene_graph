@@ -1,0 +1,14 @@
+# @package _global_
+#
+# Ablation of the final arm (`mfv2_osg_mouth_walk`): the storey switch aimed at a remembered stair as measured before 8ea9c2c:
+# `entry_xy` of the latest edge leaving this storey, only when no portal is in view.
+#
+#   bash scripts/run_mfv2.sh osg_mouth_walk_no_arrival <seed>
+defaults:
+  - mfv2_osg_mouth_walk
+  - _self_
+
+floor:
+  prior_stair_mouth: edge
+  prefer_prior_stairs: false
+  prior_stair_max_failures: 0

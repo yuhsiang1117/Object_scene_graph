@@ -1,0 +1,48 @@
+# @package _global_
+#
+# Benchmark v2, the multi-floor dynamic set: WHICH episodes, and how they are
+# scored. Nothing about the agent -- `mfv2_osg` and `mfv2_ascent` each put an
+# agent on top of this, so the two arms cannot drift onto different episodes
+# (the paper's Table II arms did: `outputs/mf5_pass2_final` ran the pre-09-16
+# layouts, all 25 relocations downward, and `outputs/ascent_crossanchor` ran
+# the current ones, 12 upward / 13 downward).
+#
+# What v1 (`mf5_*`) left out, and why each matters to the floor decision:
+#
+#   * every relocation, not only the cross-floor ones. The same five scenes'
+#     layouts hold same-floor moves that v1 filtered out, so v1 could only
+#     reward an agent for leaving its storey, never penalise it.
+#   * the static layout too: the object is where the prior says, and an agent
+#     that leaves its storey anyway pays for it. NOT `in_anchor_01`: the
+#     multi-floor `in_anchor_01` layouts move objects to other anchors and
+#     storeys (5 of 8 on 00821) and `ycb_layouts.py` refuses to load them
+#     ("moved to a different anchor"). The class of each episode is read off
+#     its geometry by `scripts/analyze_multifloor.py`, not off a folder name.
+#   * starts on a uniformly drawn storey (`ycb.start_storey_uniform`), so about
+#     half the episodes start on the object's storey and the agent has to
+#     decide whether to change storey at all. v1 started every episode on the
+#     prior storey of an object that was always on the other one.
+#   * success on the object's storey (`ycb.object_success_max_floor_dy_m`):
+#     two v1 successes were stops a storey away from the object.
+#
+# Seeds: `ycb.seed` changes every start; run 42, 43, 44.
+ycb:
+  layout_root: ${oc.env:OSG_YCB_MULTI_FLOOR_ROOT,/habitat-data-collector/outputs/dualmap_multifloor}
+  scenes:
+    - 00800-TEEsavR23oF
+    - 00821-eF36g7L6Z9M
+    - 00862-LT9Jq6dN3Ea
+    - 00873-bxsVRursffK
+    - 00878-XB4GS9ShBRE
+  layout_types: [static, cross_anchor]
+  layout_indices: [1]
+  skip_incomplete_layouts: true
+  cross_floor_relocations_only: false
+  start_on_prior_floor: false
+  start_on_target_floor: false
+  start_storey_uniform: true
+  starts_per_target: 1
+  seed: 42
+  score_by_object_distance: true
+  object_success_distance_m: 1.0
+  object_success_max_floor_dy_m: 1.0

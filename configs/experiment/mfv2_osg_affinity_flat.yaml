@@ -1,0 +1,16 @@
+# @package _global_
+#
+# AN ABLATION: `mfv2_osg` with no affinity prior at all -- no hand table, no
+# model -- so the search posterior weighs every affording surface by proximity
+# alone. Paired with `mfv2_osg` and `mfv2_osg_affinity_llm`, it says what the
+# semantic prior is worth on a benchmark whose destinations follow the
+# collector's affordance rules (20 of 36 relocations in the prior's top 3).
+#
+#   python scripts/run_eval.py +experiment=mfv2_osg_affinity_flat ...same inputs as mfv2_osg
+defaults:
+  - mfv2_osg
+  - _self_
+
+exploration:
+  affinity_llm: false
+  affinity_table: false

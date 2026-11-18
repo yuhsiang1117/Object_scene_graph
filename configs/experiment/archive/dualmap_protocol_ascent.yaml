@@ -1,0 +1,72 @@
+# @package _global_
+#
+# The ASCENT BASELINE on DualMap's released benchmark -- static, in_anchor and
+# cross_anchor, 186 trials, scored by DualMap's own protocol.
+#
+#   bash scripts/serve_perception.sh          # ASCENT needs all five models
+#   ARM=ascent PRESET_PREFIX=dualmap_protocol_ \
+#     SPLIT=data/splits/dualmap_all.json OUT=outputs/ascent_dualmap \
+#     MAX_PARALLEL=1 bash scripts/run_dualmap_arm.sh
+#
+# Built on the OSG protocol arm so every protocol constant is shared -- the
+# reference run, the 1.0 m success radius, 3 attempts, 500 steps, the three
+# conditions -- and ONLY the policy differs. That is what makes it a baseline
+# rather than a second experiment.
+#
+# KNOWN LIMIT, and it must be quoted with any number from this arm: ASCENT
+# drives on D-FINE, a CLOSED-SET COCO detector (src/navigation/README.md), and
+# DualMap's targets are YCB objects. Four of the eight have a COCO name
+# (banana, bowl, mug->cup, scissors); four do NOT (cracker box, tomato soup
+# can, pitcher, plate). On the multi-floor set, whose eight targets have NO
+# COCO name at all, this arm detected the target 0 times in 91 in-view frames
+# and never once issued a STOP -- 0/25, a vocabulary result rather than a
+# navigation one. Expect the same for the four unnameable targets here, and
+# report per-target rather than only in aggregate.
+#
+# MAX_PARALLEL=1. The five perception servers keep ONE predictor with per-image
+# state, so concurrent clients corrupt each other: measured, three clients
+# produced four HTTP 500s from MobileSAM within six minutes and killed 3 of 5
+# scenes, where the serial run produced none.
+# Composed from the PROTOCOL preset, with ASCENT's group overrides restated
+# here rather than by inheriting `ascentnav`. Neither order of the two presets
+# works, and both failures are silent:
+#
+#   protocol, ascentnav : `ascentnav` carries `override /eval: scenes20_ep0to4`,
+#                         which replaces the protocol's eval group -- the run
+#                         then selects ZERO trials (measured: `{}`, and
+#                         num_episodes 0 for a known-good trial id).
+#   ascentnav, protocol : the protocol preset's own agent/detector groups win
+#                         and `agent.policy` comes back `nav_agent` with a
+#                         yoloe detector -- the OSG arm wearing ASCENT's name.
+#
+# So the eval/dualmap side comes from the protocol and the POLICY side is set
+# explicitly below. Check both after any edit; a wrong one still runs.
+defaults:
+  - /experiment/dualmap_protocol_osg_sensor_r10_fit
+  - override /agent: s71
+  - override /detector: dfine
+  - override /scene_graph: place365
+  - override /exploration: s71
+  - override /llm: qwen_local
+  - override /verification: s71
+  - _self_
+
+mapping:
+  multi_floor: true
+
+agent:
+  # ASCENT's control flow, not OSG's FSM.
+  policy: ascentnav
+  # The protocol's budget, kept explicit so a change to the OSG arm cannot move
+  # the baseline silently.
+  max_steps: 500
+
+llm:
+  # ASCENT's OWN planner model. The protocol preset's body sets
+  # `nvidia/nemotron-3.5-lightning-30b-a3b`, which is not on this ollama server,
+  # so every planner call came back 404 -- measured in the smoke test -- and
+  # ASCENT ran with no value ranking at all. `override /llm: qwen_local` in the
+  # defaults is not enough: a direct key in a composed preset's BODY beats the
+  # group file, so the model has to be named here, in _self_, which is applied
+  # last. README: "Qwen2.5-7B, local ollama | ASCENT's system message".
+  text_model: qwen2.5:7b

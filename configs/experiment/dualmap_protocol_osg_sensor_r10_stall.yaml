@@ -1,0 +1,23 @@
+# @package _global_
+#
+# sensor_r10 plus the creep stall test. One key.
+#
+# The creep between `pointnav_arrival_m` (0.30) and `pointnav_approach_creep_m`
+# (1.00) is a blind forward with no obstacle test. 27 of 44 stranded approaches
+# on sensor_r10 had a goal the navmesh calls non-navigable -- a free cell in the
+# depth-built costmap that is actually inside the furniture -- so habitat refused
+# every forward, rho never fell, and the press ran to the budget (median 262
+# approach steps; 33 of the 44 ended the episode).
+#
+# Eight consecutive creep steps that fail to close by 5 cm is two metres of
+# commanded travel with nothing to show for it. Reported as arrival, because for
+# a goal that cannot be stood on it is the only arrival there is.
+#
+# Gate on the counters before SR: `pointnav_creep_stalled` must be > 0, and
+# `approach_stop_reason: path_consumed` should rise from 14/81.
+
+defaults:
+  - dualmap_protocol_osg_sensor_r10
+
+agent:
+  pointnav_creep_stall_steps: 8

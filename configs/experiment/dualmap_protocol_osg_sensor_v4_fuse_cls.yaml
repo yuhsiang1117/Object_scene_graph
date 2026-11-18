@@ -1,0 +1,20 @@
+# @package _global_
+#
+# `_sensor_v4_fuse` with a per-class commit bar. 0.28 for every class, 0.30
+# for the three whose query text admits on more than 15% of object-free
+# frames in the offline probe (docs/history/REGION_FALSE_ADMISSION.md: bowl 42%,
+# plate 26%, mug 16%). Set off-run; checked against the full 107 at 0.28 only
+# afterwards: it removes 12 of the 15 phantom commits there and keeps all 14
+# true ones. A uniform 0.30 got the three phantom losses back and lost three
+# of the five perception wins (docs/history/PROPOSAL_FUSION_RESULT.md).
+
+defaults:
+  - dualmap_protocol_osg_sensor_v4_fuse
+
+region_proposal:
+  commit_tau: 0.28
+  commit_tau_by_class:
+    bowl: 0.30
+    red_plate: 0.30
+    plate: 0.30
+    mug: 0.30

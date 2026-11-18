@@ -1,0 +1,20 @@
+# @package _global_
+#
+# The observation arm for the proposal fusion. The stage runs on every
+# keyframe the detector did not name the target on, its regions enter the map
+# as proposal observations with their features, tracks accumulate a running
+# mean -- and NOTHING may be committed to on a proposal alone. Behaviour is
+# therefore that of `_sensor_v2` plus map bookkeeping; what this arm produces
+# is the per-track record (`target_tracks[].n_proposal_obs`, `.proposal_sim`)
+# from which `commit_min_obs` and `commit_tau` are set on true-vs-phantom
+# tracks. The previous threshold was set on per-frame precision over frames
+# that contained the object, and that was the whole mistake
+# (docs/history/REGION_FALSE_ADMISSION.md).
+
+defaults:
+  - /experiment/dualmap_protocol_osg_sensor_v2
+region_proposal:
+  enabled: true
+  every_keyframe: true
+  commits: false
+  max_per_episode: 100000

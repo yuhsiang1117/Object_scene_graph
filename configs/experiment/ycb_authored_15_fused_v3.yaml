@@ -1,0 +1,23 @@
+# @package _global_
+#
+# The fused arm, plus the staircase the prior map already walked.
+#
+# v1 fixed WHEN the storey question is asked, v2 stopped a standing request from
+# vetoing this floor's search. Neither helps the agent GET there, and that is
+# where the benchmark is actually lost: of 11 cross-floor episodes in
+# outputs/osg_authored_15, 3 reached the object's floor and 8 did not. All 3
+# used a directed switch; all 8 used none. Four of the eight never saw a portal
+# at all and never attempted a switch, and the other four attempted six each and
+# climbed a median 0.13 m.
+#
+# The agent is not ignorant of the staircase. `save_map` records every committed
+# floor transition in the prior map's `connectivity`, and `apply_map` restores it
+# into `FloorStack.stair_edges`. Nothing read it back. `floor.use_prior_stairs`
+# makes a remembered mouth the fallback when no portal is visible, which is the
+# semantic map informing the floor choice rather than the two sitting side by
+# side.
+defaults:
+  - ycb_authored_15_fused_v2
+
+floor:
+  use_prior_stairs: true

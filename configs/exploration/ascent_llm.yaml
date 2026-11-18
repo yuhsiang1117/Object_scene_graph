@@ -1,0 +1,15 @@
+defaults:
+  - value
+
+# ASCENT's LLM: one synchronous forced choice among the top-3 frontiers, with
+# the room-to-goal priors written into the prompt. Everything else matches
+# `value` so the A/B isolates the ranker.
+#
+# knowledge_prior stays OFF: that flag is the numeric multiplier applied outside
+# the model. The ranker uses the same graph for the prompt text, which it loads
+# independently -- so this arm tests "priors as text" against "no priors at
+# all", not against "priors twice".
+ranker: ascent
+ranker_topk: 3
+ranker_every_steps: 20
+knowledge_prior: false

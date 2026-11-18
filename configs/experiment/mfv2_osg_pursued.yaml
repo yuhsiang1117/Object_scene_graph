@@ -1,0 +1,26 @@
+# @package _global_
+#
+# `mfv2_osg_mouth_walk`, and a climb only on the staircase being pursued
+# (`agent.climb_route_start_near_m`): a route probe starts a climb, and a
+# re-plan from the start floor is walked, only where the route leaves the
+# floor within 1.5 m of the pursued flight's cells (else of the pursuit's
+# goal; portal pursuits are left free).
+#
+# Traced on the seed-42 ascents that stalled at 0.0 m (outputs/mfv2/_smoke_ascent):
+# 00821 cross 50006, 00821 static 50003 and 00800 static 50001 all pursued the
+# flight the navmesh climbs, and in all three the probe started the climb 3.6-7 m
+# from it, on something step-like, within one to 56 steps of the pursuit; the
+# re-plans then wandered the room. 1.5 m: pass 1's arrival lies 0.3-1.0 m from
+# the mouth it stands for, and a flight's own cells include its treads.
+# Re-plans inside the climb are NOT gated (`climb_route_replan_near_m` 0): on
+# 00862 cross 50006 the pursued "flight" lies ~6 m from the real staircase and
+# mouth_walk's re-plan found the real one from there (2.72 m); the gate rejected
+# 9 re-plans at 1.5 m and again at 3.0 m and the climb was lost.
+#
+#   bash scripts/run_mfv2.sh osg_pursued <seed>
+defaults:
+  - mfv2_osg_mouth_walk
+  - _self_
+
+agent:
+  climb_route_start_near_m: 1.5

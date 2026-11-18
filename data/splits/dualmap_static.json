@@ -1,0 +1,411 @@
+{
+ "reference_run": null,
+ "rules": [
+  "all dynamic trials"
+ ],
+ "counts": {
+  "total": 79,
+  "by_scene": {
+   "00829-QaLdnwvtxbs": 26,
+   "00848-ziup5kvtCCR": 27,
+   "00880-Nfvxx8J5NCo": 26
+  }
+ },
+ "trials": [
+  {
+   "trial_id": "00829-QaLdnwvtxbs__static__static__bag",
+   "scene": "00829-QaLdnwvtxbs",
+   "condition": "static"
+  },
+  {
+   "trial_id": "00829-QaLdnwvtxbs__static__static__bathtub",
+   "scene": "00829-QaLdnwvtxbs",
+   "condition": "static"
+  },
+  {
+   "trial_id": "00829-QaLdnwvtxbs__static__static__bed",
+   "scene": "00829-QaLdnwvtxbs",
+   "condition": "static"
+  },
+  {
+   "trial_id": "00829-QaLdnwvtxbs__static__static__bin",
+   "scene": "00829-QaLdnwvtxbs",
+   "condition": "static"
+  },
+  {
+   "trial_id": "00829-QaLdnwvtxbs__static__static__bowl",
+   "scene": "00829-QaLdnwvtxbs",
+   "condition": "static"
+  },
+  {
+   "trial_id": "00829-QaLdnwvtxbs__static__static__cabinet",
+   "scene": "00829-QaLdnwvtxbs",
+   "condition": "static"
+  },
+  {
+   "trial_id": "00829-QaLdnwvtxbs__static__static__chair",
+   "scene": "00829-QaLdnwvtxbs",
+   "condition": "static"
+  },
+  {
+   "trial_id": "00829-QaLdnwvtxbs__static__static__clothes",
+   "scene": "00829-QaLdnwvtxbs",
+   "condition": "static"
+  },
+  {
+   "trial_id": "00829-QaLdnwvtxbs__static__static__cracker_box",
+   "scene": "00829-QaLdnwvtxbs",
+   "condition": "static"
+  },
+  {
+   "trial_id": "00829-QaLdnwvtxbs__static__static__decoration",
+   "scene": "00829-QaLdnwvtxbs",
+   "condition": "static"
+  },
+  {
+   "trial_id": "00829-QaLdnwvtxbs__static__static__magazine",
+   "scene": "00829-QaLdnwvtxbs",
+   "condition": "static"
+  },
+  {
+   "trial_id": "00829-QaLdnwvtxbs__static__static__ottoman",
+   "scene": "00829-QaLdnwvtxbs",
+   "condition": "static"
+  },
+  {
+   "trial_id": "00829-QaLdnwvtxbs__static__static__picture",
+   "scene": "00829-QaLdnwvtxbs",
+   "condition": "static"
+  },
+  {
+   "trial_id": "00829-QaLdnwvtxbs__static__static__pitcher",
+   "scene": "00829-QaLdnwvtxbs",
+   "condition": "static"
+  },
+  {
+   "trial_id": "00829-QaLdnwvtxbs__static__static__plate",
+   "scene": "00829-QaLdnwvtxbs",
+   "condition": "static"
+  },
+  {
+   "trial_id": "00829-QaLdnwvtxbs__static__static__scissors",
+   "scene": "00829-QaLdnwvtxbs",
+   "condition": "static"
+  },
+  {
+   "trial_id": "00829-QaLdnwvtxbs__static__static__sofa",
+   "scene": "00829-QaLdnwvtxbs",
+   "condition": "static"
+  },
+  {
+   "trial_id": "00829-QaLdnwvtxbs__static__static__soup_can",
+   "scene": "00829-QaLdnwvtxbs",
+   "condition": "static"
+  },
+  {
+   "trial_id": "00829-QaLdnwvtxbs__static__static__table",
+   "scene": "00829-QaLdnwvtxbs",
+   "condition": "static"
+  },
+  {
+   "trial_id": "00829-QaLdnwvtxbs__static__static__tap",
+   "scene": "00829-QaLdnwvtxbs",
+   "condition": "static"
+  },
+  {
+   "trial_id": "00829-QaLdnwvtxbs__static__static__telephone",
+   "scene": "00829-QaLdnwvtxbs",
+   "condition": "static"
+  },
+  {
+   "trial_id": "00829-QaLdnwvtxbs__static__static__toilet",
+   "scene": "00829-QaLdnwvtxbs",
+   "condition": "static"
+  },
+  {
+   "trial_id": "00829-QaLdnwvtxbs__static__static__towel",
+   "scene": "00829-QaLdnwvtxbs",
+   "condition": "static"
+  },
+  {
+   "trial_id": "00829-QaLdnwvtxbs__static__static__tv",
+   "scene": "00829-QaLdnwvtxbs",
+   "condition": "static"
+  },
+  {
+   "trial_id": "00829-QaLdnwvtxbs__static__static__tv_stand",
+   "scene": "00829-QaLdnwvtxbs",
+   "condition": "static"
+  },
+  {
+   "trial_id": "00829-QaLdnwvtxbs__static__static__washbasin_counter",
+   "scene": "00829-QaLdnwvtxbs",
+   "condition": "static"
+  },
+  {
+   "trial_id": "00848-ziup5kvtCCR__static__static__armchair",
+   "scene": "00848-ziup5kvtCCR",
+   "condition": "static"
+  },
+  {
+   "trial_id": "00848-ziup5kvtCCR__static__static__banana",
+   "scene": "00848-ziup5kvtCCR",
+   "condition": "static"
+  },
+  {
+   "trial_id": "00848-ziup5kvtCCR__static__static__bathroom_counter",
+   "scene": "00848-ziup5kvtCCR",
+   "condition": "static"
+  },
+  {
+   "trial_id": "00848-ziup5kvtCCR__static__static__bathtub",
+   "scene": "00848-ziup5kvtCCR",
+   "condition": "static"
+  },
+  {
+   "trial_id": "00848-ziup5kvtCCR__static__static__bed",
+   "scene": "00848-ziup5kvtCCR",
+   "condition": "static"
+  },
+  {
+   "trial_id": "00848-ziup5kvtCCR__static__static__bench",
+   "scene": "00848-ziup5kvtCCR",
+   "condition": "static"
+  },
+  {
+   "trial_id": "00848-ziup5kvtCCR__static__static__bowl_of_fruit",
+   "scene": "00848-ziup5kvtCCR",
+   "condition": "static"
+  },
+  {
+   "trial_id": "00848-ziup5kvtCCR__static__static__christmas_tree",
+   "scene": "00848-ziup5kvtCCR",
+   "condition": "static"
+  },
+  {
+   "trial_id": "00848-ziup5kvtCCR__static__static__coffee_maker",
+   "scene": "00848-ziup5kvtCCR",
+   "condition": "static"
+  },
+  {
+   "trial_id": "00848-ziup5kvtCCR__static__static__cooker",
+   "scene": "00848-ziup5kvtCCR",
+   "condition": "static"
+  },
+  {
+   "trial_id": "00848-ziup5kvtCCR__static__static__cracker_box",
+   "scene": "00848-ziup5kvtCCR",
+   "condition": "static"
+  },
+  {
+   "trial_id": "00848-ziup5kvtCCR__static__static__kettle",
+   "scene": "00848-ziup5kvtCCR",
+   "condition": "static"
+  },
+  {
+   "trial_id": "00848-ziup5kvtCCR__static__static__kitchen_island",
+   "scene": "00848-ziup5kvtCCR",
+   "condition": "static"
+  },
+  {
+   "trial_id": "00848-ziup5kvtCCR__static__static__magazine",
+   "scene": "00848-ziup5kvtCCR",
+   "condition": "static"
+  },
+  {
+   "trial_id": "00848-ziup5kvtCCR__static__static__microwave",
+   "scene": "00848-ziup5kvtCCR",
+   "condition": "static"
+  },
+  {
+   "trial_id": "00848-ziup5kvtCCR__static__static__mug",
+   "scene": "00848-ziup5kvtCCR",
+   "condition": "static"
+  },
+  {
+   "trial_id": "00848-ziup5kvtCCR__static__static__pillow",
+   "scene": "00848-ziup5kvtCCR",
+   "condition": "static"
+  },
+  {
+   "trial_id": "00848-ziup5kvtCCR__static__static__pitcher",
+   "scene": "00848-ziup5kvtCCR",
+   "condition": "static"
+  },
+  {
+   "trial_id": "00848-ziup5kvtCCR__static__static__plate",
+   "scene": "00848-ziup5kvtCCR",
+   "condition": "static"
+  },
+  {
+   "trial_id": "00848-ziup5kvtCCR__static__static__refrigerator",
+   "scene": "00848-ziup5kvtCCR",
+   "condition": "static"
+  },
+  {
+   "trial_id": "00848-ziup5kvtCCR__static__static__scissors",
+   "scene": "00848-ziup5kvtCCR",
+   "condition": "static"
+  },
+  {
+   "trial_id": "00848-ziup5kvtCCR__static__static__soup_can",
+   "scene": "00848-ziup5kvtCCR",
+   "condition": "static"
+  },
+  {
+   "trial_id": "00848-ziup5kvtCCR__static__static__stool",
+   "scene": "00848-ziup5kvtCCR",
+   "condition": "static"
+  },
+  {
+   "trial_id": "00848-ziup5kvtCCR__static__static__tap",
+   "scene": "00848-ziup5kvtCCR",
+   "condition": "static"
+  },
+  {
+   "trial_id": "00848-ziup5kvtCCR__static__static__toilet_paper",
+   "scene": "00848-ziup5kvtCCR",
+   "condition": "static"
+  },
+  {
+   "trial_id": "00848-ziup5kvtCCR__static__static__towel",
+   "scene": "00848-ziup5kvtCCR",
+   "condition": "static"
+  },
+  {
+   "trial_id": "00848-ziup5kvtCCR__static__static__vase",
+   "scene": "00848-ziup5kvtCCR",
+   "condition": "static"
+  },
+  {
+   "trial_id": "00880-Nfvxx8J5NCo__static__static__bowl",
+   "scene": "00880-Nfvxx8J5NCo",
+   "condition": "static"
+  },
+  {
+   "trial_id": "00880-Nfvxx8J5NCo__static__static__cabinet",
+   "scene": "00880-Nfvxx8J5NCo",
+   "condition": "static"
+  },
+  {
+   "trial_id": "00880-Nfvxx8J5NCo__static__static__clothes",
+   "scene": "00880-Nfvxx8J5NCo",
+   "condition": "static"
+  },
+  {
+   "trial_id": "00880-Nfvxx8J5NCo__static__static__container",
+   "scene": "00880-Nfvxx8J5NCo",
+   "condition": "static"
+  },
+  {
+   "trial_id": "00880-Nfvxx8J5NCo__static__static__couch",
+   "scene": "00880-Nfvxx8J5NCo",
+   "condition": "static"
+  },
+  {
+   "trial_id": "00880-Nfvxx8J5NCo__static__static__cracker_box",
+   "scene": "00880-Nfvxx8J5NCo",
+   "condition": "static"
+  },
+  {
+   "trial_id": "00880-Nfvxx8J5NCo__static__static__curtain",
+   "scene": "00880-Nfvxx8J5NCo",
+   "condition": "static"
+  },
+  {
+   "trial_id": "00880-Nfvxx8J5NCo__static__static__desk",
+   "scene": "00880-Nfvxx8J5NCo",
+   "condition": "static"
+  },
+  {
+   "trial_id": "00880-Nfvxx8J5NCo__static__static__dishwasher",
+   "scene": "00880-Nfvxx8J5NCo",
+   "condition": "static"
+  },
+  {
+   "trial_id": "00880-Nfvxx8J5NCo__static__static__hat",
+   "scene": "00880-Nfvxx8J5NCo",
+   "condition": "static"
+  },
+  {
+   "trial_id": "00880-Nfvxx8J5NCo__static__static__ironing_board",
+   "scene": "00880-Nfvxx8J5NCo",
+   "condition": "static"
+  },
+  {
+   "trial_id": "00880-Nfvxx8J5NCo__static__static__laptop",
+   "scene": "00880-Nfvxx8J5NCo",
+   "condition": "static"
+  },
+  {
+   "trial_id": "00880-Nfvxx8J5NCo__static__static__microwave",
+   "scene": "00880-Nfvxx8J5NCo",
+   "condition": "static"
+  },
+  {
+   "trial_id": "00880-Nfvxx8J5NCo__static__static__mirror",
+   "scene": "00880-Nfvxx8J5NCo",
+   "condition": "static"
+  },
+  {
+   "trial_id": "00880-Nfvxx8J5NCo__static__static__painting",
+   "scene": "00880-Nfvxx8J5NCo",
+   "condition": "static"
+  },
+  {
+   "trial_id": "00880-Nfvxx8J5NCo__static__static__pitcher",
+   "scene": "00880-Nfvxx8J5NCo",
+   "condition": "static"
+  },
+  {
+   "trial_id": "00880-Nfvxx8J5NCo__static__static__plate",
+   "scene": "00880-Nfvxx8J5NCo",
+   "condition": "static"
+  },
+  {
+   "trial_id": "00880-Nfvxx8J5NCo__static__static__printer",
+   "scene": "00880-Nfvxx8J5NCo",
+   "condition": "static"
+  },
+  {
+   "trial_id": "00880-Nfvxx8J5NCo__static__static__scissors",
+   "scene": "00880-Nfvxx8J5NCo",
+   "condition": "static"
+  },
+  {
+   "trial_id": "00880-Nfvxx8J5NCo__static__static__shelf",
+   "scene": "00880-Nfvxx8J5NCo",
+   "condition": "static"
+  },
+  {
+   "trial_id": "00880-Nfvxx8J5NCo__static__static__sink",
+   "scene": "00880-Nfvxx8J5NCo",
+   "condition": "static"
+  },
+  {
+   "trial_id": "00880-Nfvxx8J5NCo__static__static__soup_can",
+   "scene": "00880-Nfvxx8J5NCo",
+   "condition": "static"
+  },
+  {
+   "trial_id": "00880-Nfvxx8J5NCo__static__static__table",
+   "scene": "00880-Nfvxx8J5NCo",
+   "condition": "static"
+  },
+  {
+   "trial_id": "00880-Nfvxx8J5NCo__static__static__trashcan",
+   "scene": "00880-Nfvxx8J5NCo",
+   "condition": "static"
+  },
+  {
+   "trial_id": "00880-Nfvxx8J5NCo__static__static__tv",
+   "scene": "00880-Nfvxx8J5NCo",
+   "condition": "static"
+  },
+  {
+   "trial_id": "00880-Nfvxx8J5NCo__static__static__washing_machine",
+   "scene": "00880-Nfvxx8J5NCo",
+   "condition": "static"
+  }
+ ]
+}

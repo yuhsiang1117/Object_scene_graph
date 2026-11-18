@@ -1,0 +1,38 @@
+# @package _global_
+#
+# The final arm (`mfv2_osg_landing_vet_live`) with ONE change: the object layer's
+# depth-point ellipsoids, variant R2M4 of docs/history/AB_RESULTS.md S77:
+# points init, a per-track voxel buffer refit, 3D association by voxel overlap
+# and split-mask merging. Paired against osg_landing_vet_live_s<seed> on the
+# SAME pass-1 recording; the prior map must be the one this variant builds:
+#
+#   OSG=outputs/maps_v2_osg_R2M4 bash scripts/run_mfv2.sh osg_vet_live_ellipsoid <seed>
+#
+# (outputs/maps_v2_osg_R2M4 = scripts/replay_object_layer.py +replay.snapshots=...
+# over the pass-1 recording, with these same overrides.)
+#
+# NOT ADOPTED. Offline, on 418 test instances, it cut extra tracks per object
+# by 23% (3.05 -> 2.34), centre error 0.289 -> 0.233 m and lifted 3D IoU
+# 0.114 -> 0.266 -- and cost 1.11 pt of purity against a pre-registered 1 pt
+# guardrail, almost all on rows of adjacent same-label cabinets. This preset
+# exists for the one-seed closed-loop check of whether that cost reaches the
+# agent.
+#
+# Closed loop (seed 42, 4 scenes, 58 paired episodes, BOTH arms with the
+# absence VLM, floor LLM and affinity LLM off -- no NIM here; S77): 39 vs 36
+# successes (6/3, sign p 0.51), FP goal commits 38 vs 53 (p 0.10), best stop
+# 0.65 vs 0.69 m from the object (p 0.014). Not an SR claim.
+defaults:
+  - mfv2_osg_landing_vet_live
+  - _self_
+
+scene_graph:
+  ellipsoid:
+    init: points
+    reinit_truncated: true
+    buffer: true
+    refine_mode: points
+    overlap_mode: voxel
+    assoc_3d_overlap: 0.3
+    normalize_labels: true
+    merge_split_overlap: 0.5

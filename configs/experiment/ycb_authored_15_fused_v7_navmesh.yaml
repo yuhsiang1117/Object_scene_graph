@@ -1,0 +1,12 @@
+# @package _global_
+#
+# DIAGNOSTIC. The fused pipeline with the navmesh restored, to ask whether the
+# decision work pays off once the climb is possible at all. Same caveat as
+# ycb_authored_15_navmesh_diag: the navmesh is an oracle channel and these
+# numbers are not comparable to the sensor-only line.
+defaults:
+  - ycb_authored_15_fused_v7
+
+agent:
+  navigation: navmesh
+  use_habitat_navmesh: true

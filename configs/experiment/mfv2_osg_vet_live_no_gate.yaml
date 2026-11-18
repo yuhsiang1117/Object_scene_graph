@@ -1,0 +1,13 @@
+# @package _global_
+#
+# The final arm (`mfv2_osg_landing_vet_live`) with ONE change: no STOP gate -- and with it no prior or live vetting, which judge with the gate's recogniser: no false-positive handling at all.
+# Paired against osg_landing_vet_live_s<seed>; the same ablation on the earlier
+# arm is `mfv2_osg_mouth_walk_no_gate`.
+#
+#   bash scripts/run_mfv2.sh osg_vet_live_no_gate <seed>
+defaults:
+  - mfv2_osg_landing_vet_live
+  - _self_
+
+verification:
+  stop_gate: 'off'

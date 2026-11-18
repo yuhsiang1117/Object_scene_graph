@@ -1,0 +1,24 @@
+# @package _global_
+#
+# Everything: the ordering, the fallback, the remembered staircase, the LLM's
+# storey choice, containers measured from their own floor, and a storey score
+# that is not a furniture count.
+#
+# The last of those is what makes the rest coherent. Measured on 00808's prior
+# map, for five different targets, the two floors' mean candidate mass agrees to
+# within half a percent while their sums differ by 2.4x -- the container priors
+# carry essentially no information about which storey, and summing them turns
+# that tie into a standing preference for whichever floor holds more furniture.
+# `mean` plus a margin lets the posterior answer "no opinion", which on this
+# evidence is the honest answer, and leaves the storey to the two mechanisms
+# that do carry floor information: the stale anchor, and the LLM once that
+# anchor has been tested.
+defaults:
+  - ycb_authored_15_fused_v4
+
+scene_graph:
+  containers_floor_relative: true
+
+exploration:
+  floor_mass_rule: mean
+  floor_mass_margin: 1.15

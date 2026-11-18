@@ -1,0 +1,13 @@
+# @package _global_
+#
+# On top of the second-cut stale-anchor policy: navmesh goals and
+# reachability queries snapped onto the agent's own island. The HM3D navmesh
+# carries furniture tops as separate 2 m2 islands, and a goal beside a desk
+# snapped from the agent's height lands on the desk top, so the true track
+# reads as unreachable from everywhere (37 of 37 rejections on the in-anchor
+# failures). One change; see core/config/agent.py.
+defaults:
+  - dualmap_protocol_osg_look_flat_anchor_v2
+
+agent:
+  navmesh_snap_on_agent_island: true

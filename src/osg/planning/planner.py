@@ -32,6 +32,22 @@ class Planner(ABC):
     ) -> PlanResult: ...
 
 
+class StraightLinePlanner(Planner):
+    """Reachability-free planner used only with a self-planning mover."""
+
+    def plan(
+        self, costmap: Costmap2D, start_xy: np.ndarray, goal_xy: np.ndarray,
+        goal_tolerance_m: Optional[float] = None,
+    ) -> PlanResult:
+        start = np.asarray(start_xy, dtype=float)
+        goal = np.asarray(goal_xy, dtype=float)
+        cost = float(np.linalg.norm(goal - start))
+        return PlanResult(
+            True, path=np.stack([start, goal]),
+            cost=max(cost, float(costmap.resolution)),
+        )
+
+
 _SQRT2 = float(np.sqrt(2.0))
 _NEIGHBORS: List[Tuple[int, int, float]] = [
     (-1, 0, 1.0), (1, 0, 1.0), (0, -1, 1.0), (0, 1, 1.0),

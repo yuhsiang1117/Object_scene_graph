@@ -1,0 +1,281 @@
+{
+ "reference_run": null,
+ "rules": [
+  "all dynamic trials"
+ ],
+ "counts": {
+  "total": 53,
+  "by_scene": {
+   "00829-QaLdnwvtxbs": 18,
+   "00848-ziup5kvtCCR": 18,
+   "00880-Nfvxx8J5NCo": 17
+  }
+ },
+ "trials": [
+  {
+   "trial_id": "00829-QaLdnwvtxbs__cross_anchor__0128-1__bowl",
+   "scene": "00829-QaLdnwvtxbs",
+   "condition": "cross_anchor"
+  },
+  {
+   "trial_id": "00829-QaLdnwvtxbs__cross_anchor__0128-1__cracker_box",
+   "scene": "00829-QaLdnwvtxbs",
+   "condition": "cross_anchor"
+  },
+  {
+   "trial_id": "00829-QaLdnwvtxbs__cross_anchor__0128-1__pitcher",
+   "scene": "00829-QaLdnwvtxbs",
+   "condition": "cross_anchor"
+  },
+  {
+   "trial_id": "00829-QaLdnwvtxbs__cross_anchor__0128-1__plate",
+   "scene": "00829-QaLdnwvtxbs",
+   "condition": "cross_anchor"
+  },
+  {
+   "trial_id": "00829-QaLdnwvtxbs__cross_anchor__0128-1__scissors",
+   "scene": "00829-QaLdnwvtxbs",
+   "condition": "cross_anchor"
+  },
+  {
+   "trial_id": "00829-QaLdnwvtxbs__cross_anchor__0128-1__soup_can",
+   "scene": "00829-QaLdnwvtxbs",
+   "condition": "cross_anchor"
+  },
+  {
+   "trial_id": "00829-QaLdnwvtxbs__cross_anchor__0128-2__bowl",
+   "scene": "00829-QaLdnwvtxbs",
+   "condition": "cross_anchor"
+  },
+  {
+   "trial_id": "00829-QaLdnwvtxbs__cross_anchor__0128-2__cracker_box",
+   "scene": "00829-QaLdnwvtxbs",
+   "condition": "cross_anchor"
+  },
+  {
+   "trial_id": "00829-QaLdnwvtxbs__cross_anchor__0128-2__pitcher",
+   "scene": "00829-QaLdnwvtxbs",
+   "condition": "cross_anchor"
+  },
+  {
+   "trial_id": "00829-QaLdnwvtxbs__cross_anchor__0128-2__plate",
+   "scene": "00829-QaLdnwvtxbs",
+   "condition": "cross_anchor"
+  },
+  {
+   "trial_id": "00829-QaLdnwvtxbs__cross_anchor__0128-2__scissors",
+   "scene": "00829-QaLdnwvtxbs",
+   "condition": "cross_anchor"
+  },
+  {
+   "trial_id": "00829-QaLdnwvtxbs__cross_anchor__0128-2__soup_can",
+   "scene": "00829-QaLdnwvtxbs",
+   "condition": "cross_anchor"
+  },
+  {
+   "trial_id": "00829-QaLdnwvtxbs__cross_anchor__0129-1__bowl",
+   "scene": "00829-QaLdnwvtxbs",
+   "condition": "cross_anchor"
+  },
+  {
+   "trial_id": "00829-QaLdnwvtxbs__cross_anchor__0129-1__cracker_box",
+   "scene": "00829-QaLdnwvtxbs",
+   "condition": "cross_anchor"
+  },
+  {
+   "trial_id": "00829-QaLdnwvtxbs__cross_anchor__0129-1__pitcher",
+   "scene": "00829-QaLdnwvtxbs",
+   "condition": "cross_anchor"
+  },
+  {
+   "trial_id": "00829-QaLdnwvtxbs__cross_anchor__0129-1__plate",
+   "scene": "00829-QaLdnwvtxbs",
+   "condition": "cross_anchor"
+  },
+  {
+   "trial_id": "00829-QaLdnwvtxbs__cross_anchor__0129-1__scissors",
+   "scene": "00829-QaLdnwvtxbs",
+   "condition": "cross_anchor"
+  },
+  {
+   "trial_id": "00829-QaLdnwvtxbs__cross_anchor__0129-1__soup_can",
+   "scene": "00829-QaLdnwvtxbs",
+   "condition": "cross_anchor"
+  },
+  {
+   "trial_id": "00848-ziup5kvtCCR__cross_anchor__0128-1__banana",
+   "scene": "00848-ziup5kvtCCR",
+   "condition": "cross_anchor"
+  },
+  {
+   "trial_id": "00848-ziup5kvtCCR__cross_anchor__0128-1__cracker_box",
+   "scene": "00848-ziup5kvtCCR",
+   "condition": "cross_anchor"
+  },
+  {
+   "trial_id": "00848-ziup5kvtCCR__cross_anchor__0128-1__mug",
+   "scene": "00848-ziup5kvtCCR",
+   "condition": "cross_anchor"
+  },
+  {
+   "trial_id": "00848-ziup5kvtCCR__cross_anchor__0128-1__pitcher",
+   "scene": "00848-ziup5kvtCCR",
+   "condition": "cross_anchor"
+  },
+  {
+   "trial_id": "00848-ziup5kvtCCR__cross_anchor__0128-1__plate",
+   "scene": "00848-ziup5kvtCCR",
+   "condition": "cross_anchor"
+  },
+  {
+   "trial_id": "00848-ziup5kvtCCR__cross_anchor__0128-1__scissors",
+   "scene": "00848-ziup5kvtCCR",
+   "condition": "cross_anchor"
+  },
+  {
+   "trial_id": "00848-ziup5kvtCCR__cross_anchor__0128-2__banana",
+   "scene": "00848-ziup5kvtCCR",
+   "condition": "cross_anchor"
+  },
+  {
+   "trial_id": "00848-ziup5kvtCCR__cross_anchor__0128-2__cracker_box",
+   "scene": "00848-ziup5kvtCCR",
+   "condition": "cross_anchor"
+  },
+  {
+   "trial_id": "00848-ziup5kvtCCR__cross_anchor__0128-2__mug",
+   "scene": "00848-ziup5kvtCCR",
+   "condition": "cross_anchor"
+  },
+  {
+   "trial_id": "00848-ziup5kvtCCR__cross_anchor__0128-2__pitcher",
+   "scene": "00848-ziup5kvtCCR",
+   "condition": "cross_anchor"
+  },
+  {
+   "trial_id": "00848-ziup5kvtCCR__cross_anchor__0128-2__plate",
+   "scene": "00848-ziup5kvtCCR",
+   "condition": "cross_anchor"
+  },
+  {
+   "trial_id": "00848-ziup5kvtCCR__cross_anchor__0128-2__scissors",
+   "scene": "00848-ziup5kvtCCR",
+   "condition": "cross_anchor"
+  },
+  {
+   "trial_id": "00848-ziup5kvtCCR__cross_anchor__0129-1__banana",
+   "scene": "00848-ziup5kvtCCR",
+   "condition": "cross_anchor"
+  },
+  {
+   "trial_id": "00848-ziup5kvtCCR__cross_anchor__0129-1__cracker_box",
+   "scene": "00848-ziup5kvtCCR",
+   "condition": "cross_anchor"
+  },
+  {
+   "trial_id": "00848-ziup5kvtCCR__cross_anchor__0129-1__mug",
+   "scene": "00848-ziup5kvtCCR",
+   "condition": "cross_anchor"
+  },
+  {
+   "trial_id": "00848-ziup5kvtCCR__cross_anchor__0129-1__pitcher",
+   "scene": "00848-ziup5kvtCCR",
+   "condition": "cross_anchor"
+  },
+  {
+   "trial_id": "00848-ziup5kvtCCR__cross_anchor__0129-1__plate",
+   "scene": "00848-ziup5kvtCCR",
+   "condition": "cross_anchor"
+  },
+  {
+   "trial_id": "00848-ziup5kvtCCR__cross_anchor__0129-1__scissors",
+   "scene": "00848-ziup5kvtCCR",
+   "condition": "cross_anchor"
+  },
+  {
+   "trial_id": "00880-Nfvxx8J5NCo__cross_anchor__0128-1__bowl",
+   "scene": "00880-Nfvxx8J5NCo",
+   "condition": "cross_anchor"
+  },
+  {
+   "trial_id": "00880-Nfvxx8J5NCo__cross_anchor__0128-1__cracker_box",
+   "scene": "00880-Nfvxx8J5NCo",
+   "condition": "cross_anchor"
+  },
+  {
+   "trial_id": "00880-Nfvxx8J5NCo__cross_anchor__0128-1__pitcher",
+   "scene": "00880-Nfvxx8J5NCo",
+   "condition": "cross_anchor"
+  },
+  {
+   "trial_id": "00880-Nfvxx8J5NCo__cross_anchor__0128-1__plate",
+   "scene": "00880-Nfvxx8J5NCo",
+   "condition": "cross_anchor"
+  },
+  {
+   "trial_id": "00880-Nfvxx8J5NCo__cross_anchor__0128-1__scissors",
+   "scene": "00880-Nfvxx8J5NCo",
+   "condition": "cross_anchor"
+  },
+  {
+   "trial_id": "00880-Nfvxx8J5NCo__cross_anchor__0128-1__soup_can",
+   "scene": "00880-Nfvxx8J5NCo",
+   "condition": "cross_anchor"
+  },
+  {
+   "trial_id": "00880-Nfvxx8J5NCo__cross_anchor__0128-2__bowl",
+   "scene": "00880-Nfvxx8J5NCo",
+   "condition": "cross_anchor"
+  },
+  {
+   "trial_id": "00880-Nfvxx8J5NCo__cross_anchor__0128-2__pitcher",
+   "scene": "00880-Nfvxx8J5NCo",
+   "condition": "cross_anchor"
+  },
+  {
+   "trial_id": "00880-Nfvxx8J5NCo__cross_anchor__0128-2__plate",
+   "scene": "00880-Nfvxx8J5NCo",
+   "condition": "cross_anchor"
+  },
+  {
+   "trial_id": "00880-Nfvxx8J5NCo__cross_anchor__0128-2__scissors",
+   "scene": "00880-Nfvxx8J5NCo",
+   "condition": "cross_anchor"
+  },
+  {
+   "trial_id": "00880-Nfvxx8J5NCo__cross_anchor__0128-2__soup_can",
+   "scene": "00880-Nfvxx8J5NCo",
+   "condition": "cross_anchor"
+  },
+  {
+   "trial_id": "00880-Nfvxx8J5NCo__cross_anchor__0129-1__bowl",
+   "scene": "00880-Nfvxx8J5NCo",
+   "condition": "cross_anchor"
+  },
+  {
+   "trial_id": "00880-Nfvxx8J5NCo__cross_anchor__0129-1__cracker_box",
+   "scene": "00880-Nfvxx8J5NCo",
+   "condition": "cross_anchor"
+  },
+  {
+   "trial_id": "00880-Nfvxx8J5NCo__cross_anchor__0129-1__pitcher",
+   "scene": "00880-Nfvxx8J5NCo",
+   "condition": "cross_anchor"
+  },
+  {
+   "trial_id": "00880-Nfvxx8J5NCo__cross_anchor__0129-1__plate",
+   "scene": "00880-Nfvxx8J5NCo",
+   "condition": "cross_anchor"
+  },
+  {
+   "trial_id": "00880-Nfvxx8J5NCo__cross_anchor__0129-1__scissors",
+   "scene": "00880-Nfvxx8J5NCo",
+   "condition": "cross_anchor"
+  },
+  {
+   "trial_id": "00880-Nfvxx8J5NCo__cross_anchor__0129-1__soup_can",
+   "scene": "00880-Nfvxx8J5NCo",
+   "condition": "cross_anchor"
+  }
+ ]
+}

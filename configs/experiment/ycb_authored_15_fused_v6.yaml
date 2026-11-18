@@ -1,0 +1,19 @@
+# @package _global_
+#
+# v5, and the staircase preferred over the sightline.
+#
+# The cross-floor half is lost in the climb, not in the decision. Of 7 genuine
+# cross-floor episodes, base and v5 both score 0 and both reach the object's
+# floor twice. 00821's cracker box is the clearest case: 14 portals seen, 55
+# switch attempts, every one a real 2.69 m gap, the agent arrived at one and
+# rose 0.17 m in 500 steps, re-selecting the same 28-cell patch every five.
+#
+# `find_portals` answers "where can I SEE another storey from", which over a
+# balcony rail is not a way up. The prior map's `connectivity` answers "where did
+# I actually change floor", which is a staircase by construction. This prefers
+# the second over the first whenever the map has one.
+defaults:
+  - ycb_authored_15_fused_v5
+
+floor:
+  prefer_prior_stairs: true

@@ -1,0 +1,15 @@
+defaults:
+  - base_yoloe
+
+# Closed-set COCO YOLO11x-seg, the stand-in for ASCENT's D-FINE. All six HM3D
+# goal categories are COCO classes, so nothing a navigation decision reads is
+# lost: stairs come from RedNet under `stair_up_mode: rednet`, and the scene
+# graph does not feed the policy in this preset.
+#
+# `conf` is 0.5 rather than YOLOE's 0.3 because the scores are not the same
+# quantity -- a closed-set head is calibrated on its trained classes where a
+# prompted open-vocabulary head is not.
+name: yolo_coco
+weights: data/weights/yolo11x-seg.pt
+imgsz: 640
+conf: 0.5

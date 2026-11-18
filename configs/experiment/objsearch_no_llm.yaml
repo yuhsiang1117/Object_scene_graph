@@ -1,0 +1,31 @@
+# @package _global_
+#
+# S87 (`+experiment=objsearch_climb`) with ASCENT's LLM frontier ranker removed,
+# and with it the two models that exist only to write its prompt
+# (docs/history/AB_RESULTS.md S89):
+#
+#   exploration.ranker: none        the planner gets no LLM; `_chat` answers
+#        "-1", ASCENT's failure value, so every multi-frontier decision takes
+#        the value map's top frontier (`navigation/planner.py:
+#        llm_analyze_single_floor`, index 0). Every other planner rule -- the
+#        single-frontier shortcut, the latched frontier, the nearby search,
+#        stick-and-disable -- is unchanged.
+#   exploration.ram_tags: false     RAM++ tags fed only the prompts
+#   scene_graph.room_classifier: none   Places365 rooms fed only the prompts
+#
+# Why: S73 found the ranker inert on this arm (3.6x the asks, 418 overrides,
+# +2 episodes, p = 0.77), S53 measured it -4 in OSG, and it is the one
+# synchronous LLM call on the control loop (5-12 s each, ~3 an episode).
+# Never measured before: the ranker absent altogether.
+#
+# Measured (S89), paired against S87: dev 70 -> 70 (+2/-2), held-out 63 -> 62
+# (+4/-5); pooled 133 -> 132 of 200. Wall time for 100 episodes 2.37 -> 1.08 h
+# (dev), 2.89 -> 1.28 h (held-out). Passed the pre-registered rule on both.
+#
+#   python scripts/run_eval.py +experiment=objsearch_no_llm \
+#       eval.behaviour_log=true output_dir=outputs/<name>
+# The default since S89; the preset pins it so S89 re-runs by name.
+defaults:
+  - override /agent: s87
+  - override /exploration: s89
+  - override /scene_graph: default

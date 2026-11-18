@@ -1,0 +1,301 @@
+"""The `episodes.jsonl` key set, pinned.
+
+Nine analysis scripts read this record by name -- `analyze_campaign.py` splits
+three funnels out of `gt_kf_*`, `search_log_events` and `target_tracks`;
+`analyze_localization.py` needs `target_obj_xy` beside `final_xy`;
+`analyze_dynamic_bench.py` needs `authored_layout.relocation`. None of them
+would fail loudly on a dropped field: they would report zero and the conclusion
+drawn from that zero would be wrong.
+
+So the record's key set is pinned here, taken from a real run
+(`outputs/20260823_053711/episodes.jsonl`). The keys are derived the way the
+runner actually builds them -- the literal block plus the four `**` helpers,
+each really called -- so this survives the record assembly moving to its own
+module.
+"""
+from __future__ import annotations
+
+import pytest
+import ast
+import inspect
+import types
+
+# From a real 96-episode campaign run. Sorted, so a diff reads alphabetically.
+EXPECTED_KEYS = {
+    "agent_stats", "approach_bbox_log", "approach_diag",
+    "approach_retarget_log", "approach_stop_reason", "candidate_reject_log",
+    # The close look's ledger, the closest range each surface was glanced
+    # from, and the container table that resolves their ids
+    # (agent/close_look.py; scripts/compare_close_look.py reads all three).
+    "close_look_log", "glance_ranges", "containers",
+    "habitat_success", "habitat_spl",
+    "attempt_log", "attempts_used", "authored_layout", "cand_best_cam_xy",
+    "cand_best_score", "cand_n_obs", "control_fps", "detector",
+    "distance_to_goal", "episode_id", "final_xy", "final_y", "floor_changes",
+    "floor_class", "floor_log", "floor_transitions", "floor_y_drift",
+    "frontier_select_log", "giveup_log", "goal_commit_log", "goal_y_span",
+    # One entry per appearance commit (agent/candidate._appearance_pick):
+    # which surface, which track, its cosine, how many it beat.
+    "feature_pick_log",
+    "gt_best_det_bbox_px", "gt_best_det_score", "gt_best_offaxis", "gt_frames",
+    "gt_in_view_close_frames", "gt_in_view_frames", "gt_kf_close_centred",
+    "gt_kf_close_centred_detected", "gt_kf_close_peripheral",
+    "gt_kf_admitted", "gt_kf_close_peripheral_detected", "gt_kf_detected",
+    "gt_kf_far_centred",
+    "gt_kf_far_centred_detected", "gt_kf_far_peripheral",
+    "gt_frames_within_3m", "gt_kf_far_peripheral_detected", "gt_kf_in_view",
+    "gt_mean_visible_fraction", "gt_min_range_any_m", "gt_min_range_m", "llm_calls", "llm_errors",
+    "llm_last_error", "n_floors_seen", "n_stair_tracks", "portal_log", "floor_llm_log",
+    "presence_events", "prior_map", "prior_obstacle_map",
+    "scene", "search_log_events", "spl",
+    # SPL's inputs, so a recorded SPL can be audited from the file it lives
+    # in. Their absence is how an SPL of 0.0 on a SUCCESSFUL episode survived
+    # a whole run unnoticed (outputs/mf5_pass2_final, 00862/50001).
+    "shortest_path_to_object_m", "travelled_m", "attempt_count",
+    "stair_tracks", "start_y", "state_log", "steps", "success", "target",
+    "target_obj_xy", "target_tracks", "traj_y_range", "verify_calls",
+    "verify_errors", "wall_time_s", "start_floor", "goal_floor", "prior_floor",
+    "relocation_direction", "selected_search_floor", "floor_switches",
+    "climb_attempts", "goal_floor_reached",
+}
+
+# The four blocks spliced in with `**`, and the analyses that would go quiet
+# without them.
+CONTRIBUTED_BY_HELPERS = {
+    "target_obj_xy", "cand_best_cam_xy", "cand_best_score", "cand_n_obs",
+    "floor_class", "start_y", "final_y", "traj_y_range", "floor_changes",
+    "goal_y_span", "n_stair_tracks", "stair_tracks",
+    "start_floor", "goal_floor", "prior_floor", "relocation_direction",
+    "selected_search_floor", "floor_switches", "climb_attempts",
+    "goal_floor_reached",
+}
+
+
+def _record_module():
+    """Wherever the record is assembled -- found by the symbol, not by a
+    filename, so this survives the assembly moving again."""
+    import importlib
+    import pkgutil
+
+    import osg.eval
+
+    for info in pkgutil.iter_modules(osg.eval.__path__):
+        module = importlib.import_module(f"osg.eval.{info.name}")
+        if hasattr(module, "build_episode_record"):
+            return module
+    raise AssertionError("no module in osg.eval defines build_episode_record")
+
+
+def _literal_keys() -> set:
+    """String keys of the record's dict literal, read from the source.
+
+    Building the real record needs a live Habitat episode, so the literal half
+    is read statically: the record is the one dict literal in the module with
+    more than twenty string keys.
+    """
+    tree = ast.parse(inspect.getsource(_record_module()))
+    best: set = set()
+    for node in ast.walk(tree):
+        if not isinstance(node, ast.Dict):
+            continue
+        keys = {k.value for k in node.keys
+                if isinstance(k, ast.Constant) and isinstance(k.value, str)}
+        if len(keys) > len(best):
+            best = keys
+    assert len(best) > 20, "could not find the episode record's dict literal"
+    return best
+
+
+def _helper_keys() -> set:
+    """The `**` blocks, actually called. Each takes stub inputs happily: the
+    point is the key set, not the values."""
+    from osg.eval.floors import episode_floor_fields, runtime_floor_fields
+    from osg.eval.instruments import GroundTruthVisibility
+    from osg.eval.record import stair_track_fields, target_track_fields
+    from osg.objects.object_layer import ObjectLayer
+
+    agent = types.SimpleNamespace(object_layer=ObjectLayer(), floors=None, stats={})
+    return (
+        set(target_track_fields(agent))
+        | set(episode_floor_fields(types.SimpleNamespace(), [0.0]))
+        | set(runtime_floor_fields(types.SimpleNamespace(), [0.0], agent, {}))
+        | set(stair_track_fields(agent))
+        | set(GroundTruthVisibility(None).fields())
+    )
+
+
+def test_the_record_still_has_every_field_the_analyzers_read():
+    produced = _literal_keys() | _helper_keys()
+    assert not (EXPECTED_KEYS - produced), (
+        f"episodes.jsonl fields dropped: {sorted(EXPECTED_KEYS - produced)}"
+    )
+    assert not (produced - EXPECTED_KEYS), (
+        "episodes.jsonl gained fields; add them to EXPECTED_KEYS on purpose: "
+        f"{sorted(produced - EXPECTED_KEYS)}"
+    )
+
+
+def test_the_spliced_blocks_are_still_spliced_in():
+    """A `**helper()` that stops being splatted drops a dozen fields at once and
+    the literal half of the record still looks fine."""
+    assert CONTRIBUTED_BY_HELPERS <= _helper_keys()
+    assert not (CONTRIBUTED_BY_HELPERS & _literal_keys()), (
+        "a helper's field is now also a literal -- one of the two is dead"
+    )
+
+
+def test_every_spliced_value_survives_json_dumps():
+    """`json.dumps` is what writes the record, and numpy scalars do not survive
+    it. The helpers are where numpy gets in -- ellipsoid centres, camera poses,
+    trajectory heights -- so they are the ones worth checking."""
+    import json
+    import types
+
+    from osg.eval.floors import episode_floor_fields, runtime_floor_fields
+    from osg.eval.instruments import GroundTruthVisibility
+    from osg.eval.record import stair_track_fields, target_track_fields
+    from osg.objects.object_layer import ObjectLayer
+
+    agent = types.SimpleNamespace(object_layer=ObjectLayer(), floors=None, stats={})
+    for block in (
+        target_track_fields(agent),
+        episode_floor_fields(types.SimpleNamespace(), [0.0]),
+        runtime_floor_fields(types.SimpleNamespace(), [0.0], agent, {}),
+        stair_track_fields(agent),
+        GroundTruthVisibility(None).fields(),
+    ):
+        json.dumps(block)
+
+
+# ------------------------------------------------------------- debug video
+
+def test_debug_video_is_h264_after_close(tmp_path):
+    """`cv2` writes MPEG-4 Part 2 (`mp4v`), which is ~4x larger than H.264 for
+    these panels -- a 500-step episode came out at 36 MB, over the 30 MB a file
+    share accepts, so the one video worth looking at could not be sent.
+
+    The assertion is the CODEC, not the byte count: on a short synthetic clip
+    H.264's header overhead can exceed the payload, so size proves nothing at
+    test scale. What must hold is that the re-encode actually ran.
+    """
+    import shutil
+    import subprocess
+
+    import numpy as np
+    import pytest
+
+    if shutil.which("ffmpeg") is None or shutil.which("ffprobe") is None:
+        pytest.skip("ffmpeg/ffprobe not installed")
+
+    from osg.eval.debug_video import DebugVideo
+
+    class _Cfg:
+        class eval:  # noqa: A003 - mirrors the real config node
+            rgb_width, rgb_height = 320, 240
+            debug_video_crf = 30
+
+    vid = DebugVideo(_Cfg(), tmp_path, "ep1")
+    panel = np.zeros((240, 640, 3), dtype=np.uint8)
+    for i in range(60):
+        panel[:] = (i * 3) % 255
+        vid._writer((640, 240)).write(panel)
+    vid.close()
+
+    assert vid._path.exists(), "the recording was lost"
+    assert vid._path.stat().st_size > 0
+    codec = subprocess.run(
+        ["ffprobe", "-v", "error", "-select_streams", "v:0",
+         "-show_entries", "stream=codec_name", "-of", "csv=p=0", str(vid._path)],
+        capture_output=True, text=True, check=True).stdout.strip()
+    assert codec == "h264", f"still {codec}: the re-encode did not run"
+
+
+def test_debug_video_keeps_the_file_when_compression_is_off(tmp_path):
+    """crf=0 opts out, and the recording must survive that untouched."""
+    import shutil
+    import subprocess
+
+    import numpy as np
+    import pytest
+
+    from osg.eval.debug_video import DebugVideo
+
+    class _Cfg:
+        class eval:  # noqa: A003
+            rgb_width, rgb_height = 320, 240
+            debug_video_crf = 0
+
+    vid = DebugVideo(_Cfg(), tmp_path, "ep2")
+    vid._writer((640, 240)).write(np.zeros((240, 640, 3), dtype=np.uint8))
+    vid.close()
+    assert vid._path.exists()
+    if shutil.which("ffprobe") is None:
+        pytest.skip("ffprobe not installed")
+    codec = subprocess.run(
+        ["ffprobe", "-v", "error", "-select_streams", "v:0",
+         "-show_entries", "stream=codec_name", "-of", "csv=p=0", str(vid._path)],
+        capture_output=True, text=True, check=True).stdout.strip()
+    assert codec != "h264", "crf=0 should have skipped the re-encode"
+
+
+def test_a_successful_episode_never_reports_spl_zero_for_want_of_a_path():
+    """SPL 0.0 on a SUCCESS is a bookkeeping failure, not a result.
+
+    `_shortest_to_object` samples rings around the object for a navigable point
+    inside the success radius; when every sample fails to snap or to path, it
+    returns None and `summary` used to fall straight through to spl = 0.0 --
+    for an episode that HAD stopped within the radius. Measured on
+    outputs/mf5_pass2_final 00862/50001: success=1, spl=0.000, dragging the
+    reported mean SPL below the truth.
+
+    The winning stop is inside the radius by construction, so the geodesic to
+    it is a valid numerator; the rule holds no simulator, so the env injects it.
+    """
+    from osg.sim.ycb_env import ObjectDistanceRule
+    import numpy as np
+
+    rule = ObjectDistanceRule(enabled=True, threshold_m=1.0)
+    rule.shortest_m = None                      # the sampling found nothing
+    rule._travelled = 12.0
+    target = np.array([1.0, 0.0, 0.0])
+    rule.record_stop(40, np.array([0.5, 0.0, 0.0]), target)   # 0.5 m -> success
+    assert rule.attempts[-1]["success"]
+
+    # Without a fallback the success still reports SPL 0.0 ...
+    assert rule.summary(np.array([0.5, 0.0, 0.0]), target)["spl"] == 0.0
+
+    # ... and with one it reports the real ratio.
+    rule.shortest_fallback = lambda attempts: 6.0
+    out = rule.summary(np.array([0.5, 0.0, 0.0]), target)
+    assert out["success"] == 1
+    assert out["spl"] == pytest.approx(6.0 / 12.0)
+
+
+def test_the_fallback_is_not_consulted_when_the_sampling_worked():
+    """A measured shortest path always wins; the fallback is a last resort."""
+    from osg.sim.ycb_env import ObjectDistanceRule
+    import numpy as np
+
+    rule = ObjectDistanceRule(enabled=True, threshold_m=1.0)
+    rule.shortest_m = 4.0
+    rule._travelled = 8.0
+    rule.shortest_fallback = lambda attempts: 999.0      # must be ignored
+    target = np.array([1.0, 0.0, 0.0])
+    rule.record_stop(10, np.array([0.5, 0.0, 0.0]), target)
+    assert rule.summary(np.array([0.5, 0.0, 0.0]), target)["spl"] == pytest.approx(0.5)
+
+
+def test_a_failed_episode_still_reports_spl_zero():
+    """No success, no SPL -- the fallback must not invent one."""
+    from osg.sim.ycb_env import ObjectDistanceRule
+    import numpy as np
+
+    rule = ObjectDistanceRule(enabled=True, threshold_m=1.0)
+    rule.shortest_m = None
+    rule._travelled = 30.0
+    rule.shortest_fallback = lambda attempts: 5.0
+    target = np.array([10.0, 0.0, 0.0])
+    rule.record_stop(50, np.array([0.0, 0.0, 0.0]), target)   # 10 m -> failure
+    out = rule.summary(np.array([0.0, 0.0, 0.0]), target)
+    assert out["success"] == 0
+    assert out["spl"] == 0.0

@@ -1,0 +1,9 @@
+# @package _global_
+#
+# The unified pipeline on the fifteen-scene authored benchmark
+# (outputs/dualmap_authoring). Same agent as dualmap_osg_unified and
+# mf5_osg_unified; only the dataset differs.
+defaults:
+  - ycb_authored_15
+  - osg_unified_pipeline
+  - _self_

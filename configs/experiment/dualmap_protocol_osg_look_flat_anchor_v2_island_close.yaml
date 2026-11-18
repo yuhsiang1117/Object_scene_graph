@@ -1,0 +1,15 @@
+# @package _global_
+#
+# On top of the island arm: close the last metre. The approach ends on the
+# innermost viewpoint ring with a FREE costmap cell, which beside a bed or a
+# desk is about a metre out; 20 failed trials of the island run stopped
+# 1.0-1.6 m from an object whose track was within 0.6 m of it, and the navmesh
+# floor came within 0.9 m of the object in 13 of them. Once the viewpoint is
+# reached and the agent is still farther than 0.8 m from the track centre, it
+# walks to the navmesh's nearest navigable point to the centre and stops
+# there. One change; see core/config/agent.py.
+defaults:
+  - dualmap_protocol_osg_look_flat_anchor_v2_island
+
+agent:
+  approach_close_last_metre_m: 0.8

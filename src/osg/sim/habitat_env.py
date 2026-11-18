@@ -25,7 +25,7 @@ def make_objectnav_config(cfg):
     # needs to initialize its own search path. Our cfg is already resolved to
     # a plain DictConfig at this point, so clearing is safe.
     GlobalHydra.instance().clear()
-    hab_cfg = habitat.get_config("benchmark/nav/objectnav/objectnav_hm3d.yaml")
+    hab_cfg = habitat.get_config(str(cfg.eval.benchmark_config))
     with read_write(hab_cfg):
         task = hab_cfg.habitat.task
         sim = hab_cfg.habitat.simulator
@@ -36,7 +36,7 @@ def make_objectnav_config(cfg):
         ds.scenes_dir = cfg.eval.scenes_dir
         # Restrict to specific scenes (e.g. single-floor only: the 2D costmap /
         # room-seg scene graph cannot handle stairs). Default ["*"] = all.
-        content_scenes = getattr(cfg.eval, "content_scenes", None)
+        content_scenes = cfg.eval.content_scenes
         if content_scenes:
             ds.content_scenes = list(content_scenes)
 
@@ -69,7 +69,7 @@ def make_objectnav_config(cfg):
         # max_scene_repeat_steps (default 10000), so a ~30-episode run stays
         # inside a single scene -- unrepresentative of the val split. -1 keeps
         # the habitat default.
-        msre = getattr(cfg.eval, "max_scene_repeat_episodes", -1)
+        msre = cfg.eval.max_scene_repeat_episodes
         if msre and msre > 0:
             hab_cfg.habitat.environment.iterator_options.max_scene_repeat_episodes = msre
         hab_cfg.habitat.seed = cfg.seed
@@ -94,46 +94,154 @@ class HabitatObjectNavEnv:
         # Only used when agent.use_habitat_navmesh is set; harmless otherwise.
         self._follower = None
         self._action_name = {v: k for k, v in self.ACTIONS.items()}
-        self._navmesh_goal_radius = float(getattr(cfg.agent, "navmesh_goal_radius", 0.1))
+        self._navmesh_goal_radius = float(cfg.agent.navmesh_goal_radius)
+        self.snap_on_agent_island = bool(getattr(cfg.agent, "navmesh_snap_on_agent_island", False))
 
     def _ensure_follower(self):
         if self._follower is None:
             from habitat.tasks.nav.shortest_path_follower import ShortestPathFollower
+            # stop_on_error=False so a GreedyFollowerError reaches us instead of
+            # being silently converted to a `stop` action inside habitat. The
+            # value returned to the caller is None either way -- what changes is
+            # that `nav_reasons` can tell a real arrival from a follower that
+            # gave up. With habitat's default of True, every greedy failure was
+            # indistinguishable from an arrival, which is how the 00848 kitchen
+            # loop stayed invisible for four conditions.
             self._follower = ShortestPathFollower(
-                self.env.sim, goal_radius=self._navmesh_goal_radius, return_one_hot=False
+                self.env.sim,
+                goal_radius=self._navmesh_goal_radius,
+                return_one_hot=False,
+                stop_on_error=False,
             )
         return self._follower
 
-    def action_to_goal(self, goal_xy) -> Optional[str]:
-        """Next discrete action to drive toward a ground-plane goal on Habitat's
-        navmesh, or None if arrived (within goal_radius) or the goal is not
-        navigable. Snaps the 2D goal to the nearest navmesh point at the agent's
-        current floor height."""
+    def _snap_goal(self, goal3d: np.ndarray) -> np.ndarray:
+        """Snap a 3D goal to the navmesh -- onto the agent's own island when
+        `agent.navmesh_snap_on_agent_island` is set, so a goal beside a desk
+        lands on the floor beside the desk and not on the desk top."""
+        pf = self.env.sim.pathfinder
+        point = np.asarray(goal3d, dtype=np.float32)
+        if bool(getattr(self, "snap_on_agent_island", False)):
+            try:
+                here = pf.snap_point(np.asarray(self.env.sim.get_agent_state().position, dtype=np.float32))
+                island = int(pf.get_island(here))
+                snapped = np.asarray(pf.snap_point(point, island_index=island), dtype=np.float32)
+                if not bool(np.isnan(snapped).any()):
+                    return snapped
+            except (TypeError, AttributeError, RuntimeError):
+                pass
+        return np.asarray(pf.snap_point(point), dtype=np.float32)
+
+    def _goal3d(self, goal, floor_y=None) -> np.ndarray:
+        """Lift a goal to a 3D navmesh query point.
+
+        A 3-vector passes through. A 2-vector gets a height: `floor_y` when the
+        caller knows which storey the goal is on, otherwise the agent's own
+        height -- the historical behaviour, which silently forces every goal
+        onto the agent's current floor. That substitution is why cross-floor
+        targets read as unreachable (see docs/history/MULTI_FLOOR.md).
+        """
+        g = np.asarray(goal, dtype=float).ravel()
+        if g.size == 3:
+            return g.astype(np.float32)
+        y = float(self.env.sim.get_agent_state().position[1]) if floor_y is None else float(floor_y)
+        return np.array([float(g[0]), y, float(g[1])], dtype=np.float32)
+
+    @property
+    def nav_reasons(self):
+        """Why `action_to_goal` returned None, counted per episode.
+
+        Lazily created rather than set in __init__, because YCBAuthoredNavEnv
+        defines its own __init__ and does not run this one -- which is exactly
+        how the first version of this counter crashed a diagnostic run.
+        """
+        counter = getattr(self, "_nav_reasons", None)
+        if counter is None:
+            import collections
+
+            counter = collections.Counter()
+            self._nav_reasons = counter
+        return counter
+
+    def _path_exists(self, snapped) -> bool:
+        """Whether the pathfinder finds a route from the agent to an already
+        snapped goal. Separate from `is_reachable`, which snaps its own goal --
+        here the snap has already happened and re-snapping would query a
+        different point than the follower was given."""
+        import habitat_sim
+
+        pf = self.env.sim.pathfinder
+        path = habitat_sim.ShortestPath()
+        path.requested_start = pf.snap_point(self.env.sim.get_agent_state().position)
+        path.requested_end = np.asarray(snapped, dtype=np.float32)
+        return bool(pf.find_path(path))
+
+    def action_to_goal(self, goal_xy, floor_y=None) -> Optional[str]:
+        """Next discrete action to drive toward a goal on Habitat's navmesh, or
+        None if arrived (within goal_radius) or the goal is not navigable.
+
+        `goal_xy` is a ground-plane (x, z) pair or a full 3D point; a 2D goal is
+        snapped at `floor_y`, defaulting to the agent's current height.
+
+        None means four different things and every caller has had to treat them
+        alike: the snap failed, the follower raised, the follower said stop
+        because the agent is there, or the follower said stop because it cannot
+        get there. `nav_reasons` counts which, per episode, because guessing
+        between them has now been wrong twice -- once as "the goal snaps through
+        a wall" and once as "the object is on a disconnected navmesh island".
+        Neither survived measurement.
+        """
         follower = self._ensure_follower()
-        pos = self.env.sim.get_agent_state().position
-        goal3d = np.array([float(goal_xy[0]), float(pos[1]), float(goal_xy[1])], dtype=np.float32)
-        snapped = self.env.sim.pathfinder.snap_point(goal3d)
+        goal3d = self._goal3d(goal_xy, floor_y)
+        snapped = self._snap_goal(goal3d)
         if snapped is None or bool(np.isnan(np.asarray(snapped)).any()):
+            self.nav_reasons["nav_snap_failed"] += 1
             return None  # unreachable -> caller treats as "arrived" and re-decides
         try:
             a = follower.get_next_action(np.asarray(snapped, dtype=np.float32))
         except Exception:
+            # The greedy follower could not produce an action sequence. That is
+            # not the same as "there is no route": ask the pathfinder directly,
+            # because a goal that IS geodesically reachable but that the greedy
+            # follower refuses is a recoverable failure, not an arrival.
+            self.nav_reasons["nav_follower_raised"] += 1
+            here = np.asarray(self.env.sim.get_agent_state().position, dtype=float)
+            gap = float(np.linalg.norm(here[[0, 2]] - np.asarray(snapped, dtype=float)[[0, 2]]))
+            self.nav_reasons["nav_raised_m_x10"] += int(round(gap * 10))
+            if self._path_exists(snapped):
+                self.nav_reasons["nav_greedy_failed_but_reachable"] += 1
+            else:
+                self.nav_reasons["nav_greedy_failed_unreachable"] += 1
             return None
         if a is None or int(a) == self.ACTIONS["stop"]:
-            return None  # arrived at goal
+            # Arrived, or refused. The distance separates them: the follower
+            # stops within goal_radius (0.1 m), so a "stop" issued from metres
+            # away is a refusal wearing an arrival's clothes.
+            here = np.asarray(self.env.sim.get_agent_state().position, dtype=float)
+            gap = float(np.linalg.norm(here[[0, 2]] - np.asarray(snapped, dtype=float)[[0, 2]]))
+            if gap <= max(2.0 * self._navmesh_goal_radius, 0.25):
+                self.nav_reasons["nav_arrived"] += 1
+            else:
+                self.nav_reasons["nav_refused"] += 1
+                self.nav_reasons["nav_refused_m_x10"] += int(round(gap * 10))
+            return None
         return self._action_name.get(int(a))
 
-    def is_reachable(self, goal_xy) -> bool:
-        """Whether a ground-plane goal is on the same navmesh component as the
-        agent (a geodesic path exists). Targets in sealed/disconnected rooms
-        (closed door or a step in the mesh) are visible but unreachable -- the
-        agent should not commit to them."""
+    def is_reachable(self, goal_xy, floor_y=None) -> bool:
+        """Whether a goal is on the same navmesh component as the agent (a
+        geodesic path exists). Targets in sealed/disconnected rooms (closed door
+        or a step in the mesh) are visible but unreachable -- the agent should
+        not commit to them.
+
+        Pass a 3D goal (or `floor_y`) for anything that may be on another
+        storey: with a bare 2D goal the agent's own height is substituted, so a
+        target one floor up snaps to whatever is under the agent instead and is
+        reported unreachable even when the navmesh connects the two."""
         import habitat_sim
 
         pf = self.env.sim.pathfinder
         pos = self.env.sim.get_agent_state().position
-        goal3d = np.array([float(goal_xy[0]), float(pos[1]), float(goal_xy[1])], dtype=np.float32)
-        g = pf.snap_point(goal3d)
+        g = self._snap_goal(self._goal3d(goal_xy, floor_y))
         if g is None or bool(np.isnan(np.asarray(g)).any()):
             return False
         path = habitat_sim.ShortestPath()
@@ -141,10 +249,41 @@ class HabitatObjectNavEnv:
         path.requested_end = g
         return bool(pf.find_path(path))
 
+    def nearest_navigable_xy(self, xy, floor_y=None, max_radius_m: float = 1.5):
+        """Nearest navmesh point to a ground-plane point, on the agent's island.
+
+        The costmap's nearest FREE cell sits outside its obstacle inflation, so
+        beside furniture it is a metre from the object; the navmesh already
+        accounts for the agent's radius and knows the real edge of the floor.
+        Rings of 0.05 m are sampled outward and the closest snapped point by
+        horizontal distance is returned as an (x, z) pair, or None when nothing
+        within `max_radius_m` snaps.
+        """
+        centre = self._goal3d(xy, floor_y)
+        best, best_d = None, float("inf")
+        n = 24
+        for rad in np.arange(0.0, float(max_radius_m) + 1e-6, 0.05):
+            for k in range(n if rad > 0.0 else 1):
+                ang = 2.0 * np.pi * k / n
+                q = np.array([centre[0] + rad * np.cos(ang), centre[1], centre[2] + rad * np.sin(ang)],
+                             dtype=np.float32)
+                s = self._snap_goal(q)
+                if s is None or bool(np.isnan(np.asarray(s)).any()):
+                    continue
+                d = float(np.hypot(float(s[0]) - float(centre[0]), float(s[2]) - float(centre[2])))
+                if d < best_d:
+                    best, best_d = s, d
+            if best is not None and best_d <= rad + 0.05:
+                break  # no farther ring can snap nearer than this one
+        if best is None:
+            return None
+        return np.array([float(best[0]), float(best[2])], dtype=float)
+
     # ---------------------------------------------------------------- episode
 
     def reset(self) -> FrameData:
         obs = self.env.reset()
+        self.nav_reasons.clear()
         self._frame_id = 0
         return self._to_frame(obs)
 

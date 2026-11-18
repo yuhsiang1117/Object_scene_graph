@@ -1,0 +1,22 @@
+# @package _global_
+#
+# v7, and a portal that failed is not tried again.
+#
+# This is the direct answer to "why do 55 switch attempts yield 0.17 m of
+# ascent". `find_portals` is recomputed from scratch every selection round and
+# keeps no state, and `end_pursuit("no_vertical_progress")` recorded a counter
+# and nothing else. So the patch that ranked first stayed first: 00821's cracker
+# box made 55 attempts, the last 50 at one 28-cell patch at (1.19, -7.96), each
+# reporting a correct +2.68 m gap. The agent arrived once and learned nothing.
+#
+# `portal_failure_memory` records the place a pursuit failed from and filters it
+# out of later rounds, within `portal_failure_radius_m` so that the next patch of
+# the same stairwell is not simply the same mistake. The remembered staircase
+# then becomes reachable in the way v6 tried to force: not by preferring it
+# outright, which cost an episode, but by the portal that does not work dropping
+# out of the running.
+defaults:
+  - ycb_authored_15_fused_v7
+
+floor:
+  portal_failure_memory: true

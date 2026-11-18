@@ -1,0 +1,23 @@
+# @package _global_
+#
+# v5, and a remembered staircase that is allowed to satisfy the gate.
+#
+# Three of the seven cross-floor episodes never made a single switch attempt.
+# They return from `try_switch` before `find_portals` is ever called, because
+# `may_switch`'s last clause is "nothing near is left on this floor" and a large
+# storey never satisfies it. So `use_prior_stairs`, which fires when no portal is
+# visible, could not reach them.
+#
+# `prior_stairs_override_gate` lets a traversal the prior map actually made stand
+# in for that clause. Every timing guard is kept: not in the last third of the
+# budget, not twice in quick succession, and not before the current floor has
+# been looked at for `no_switch_before` steps.
+#
+# v6's `prefer_prior_stairs` is deliberately NOT included -- it fired 106 times
+# and took reached-the-object's-floor from 2/8 to 1/8.
+defaults:
+  - ycb_authored_15_fused_v5
+
+floor:
+  use_prior_stairs: true
+  prior_stairs_override_gate: true

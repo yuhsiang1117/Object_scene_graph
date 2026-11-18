@@ -1,0 +1,34 @@
+# @package _global_
+#
+# The operator's floor switch, fired by step number instead of by a topic.
+#
+#   python scripts/run_eval.py +experiment=floor_schedule_habitat \
+#          eval=dev50_mf eval.num_episodes=1 eval.behaviour_log=true
+#
+# The same code path the robot's /osg/floor message reaches
+# (`FloorPolicy.request_floor`), so the consequences of a switch can be watched
+# in a scene with ground truth: the active costmap layer, the object layer's
+# `floor_key`, the storey `rebuild_floor` is called with, the frontier set, and
+# `WorldView.floor_id` in the posterior. All of those are keyed by
+# `floors.current_id`, so all of them follow.
+#
+# Afterwards, in episodes.jsonl: `floor_log` shows keys 0 -> 1 -> 0 at steps
+# 60 and 160, and `agent_stats.floor_switch_external` is 2.
+#
+# WHAT THIS PRESET DOES NOT EXERCISE. On the robot the switch also lifts the
+# pose by `floor.virtual_storey_m`, because Nav2's map is 2D and the storeys
+# would otherwise share one height (sim/ros2_env.py). Habitat's z is real, so
+# nothing lifts here -- and since the agent does not actually change storey,
+# both keys end up registered within a centimetre of each other. Anything that
+# separates storeys BY HEIGHT is therefore meaningless in this preset:
+# `floor_of_height`, the height ordering in `FloorStack.layers()` (so up/down),
+# and `eval/floors.py`'s height-matched telemetry. The height-separated
+# behaviour is covered instead by tests/unit/test_floor_external.py, which can
+# place the storeys where the robot would.
+defaults:
+  - nav2_habitat
+  - _self_
+
+floor:
+  source: external
+  external_schedule: ["60:1", "160:0"]

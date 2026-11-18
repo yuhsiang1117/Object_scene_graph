@@ -1,0 +1,26 @@
+# @package _global_
+#
+# The stall arm plus the root-cause fix: do not aim at a pose the agent does not
+# fit in.
+#
+# `ViewpointPlanner.approach_viewpoint` computes a clearance transform and, until
+# now, used it only to RANK candidates -- acceptance was `cell == FREE`. A cell
+# one costmap pixel from an obstacle is FREE and is not somewhere a 0.10 m agent
+# can stand, and that is where the approach goals came from: 27 of the 44
+# stranded approaches on sensor_r10 had a goal habitat's navmesh calls
+# non-navigable, against 17 of 17 navigable among the approaches that arrived.
+#
+# The navmesh follower hid this for every arm before the switch, because it
+# SNAPPED the goal onto the mesh. The PointNav mover takes the goal as a bearing
+# and walks into the furniture, which is what the creep stall test then has to
+# catch. This is the same fix one stage earlier, and it needs nothing from the
+# simulator: the clearance is measured on the agent's own depth-built costmap.
+#
+# 0.25 m = the 0.10 m body plus a 0.15 m margin, a little over the 0.12 m median
+# by which stranded goals sat off the mesh.
+
+defaults:
+  - dualmap_protocol_osg_sensor_r10_stall
+
+verification:
+  viewpoint_min_clearance_m: 0.25

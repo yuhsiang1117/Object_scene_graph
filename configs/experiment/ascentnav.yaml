@@ -1,0 +1,45 @@
+# @package _global_
+#
+# S71: ASCENT's control flow, on ASCENT's models, in OSG's harness.
+#
+#   bash scripts/serve_perception.sh                          # five servers
+#   python scripts/run_eval.py +experiment=ascentnav eval=scenes20_ep0to4
+#
+# This was the default config from S71 to S86 and is kept under its name so
+# earlier runs and docs/history/AB_RESULTS.md stay comparable. Since S87 the
+# default (`agent: s87`) is this plus the storey belief, the climb
+# verification and the on-stairs heading memory (`agent.search.*`); this preset keeps `agent: s71`, where every
+# addition is off and the policy is the transcription action for action.
+#
+# `src/navigation/agent.py` is a transcription of `Ascent_Policy.act` and the
+# `Map_Controller` it drives, for one environment, on the vendored ASCENT maps,
+# with every rule cited to its reference line. The previous port scored 54.0%
+# on this split against the reference's 65.0%, and seventeen configuration and
+# perception arms never beat it; a paired trace diagnosis showed the loss was
+# BEFORE the target is ever in frame -- frontiers retired early and same-floor
+# stair climbing (17.5% of steps vs 9.2%), plus a STOP that could fire on step
+# 12 with the opening scan unfinished. Both are control flow; both are ported.
+#
+# THE MODELS are the reference's own, served as ASCENT itself serves them:
+#   detector    D-FINE, closed-set COCO, target detections at 0.8,
+#               one MobileSAM mask per detection, EVERY detection ingested
+#   gate        the value map's BLIP-2 cosine >= 0.15, latched, never cleared
+#   stairs      RedNet AND GroundingDINO "stair" >= 0.60 (the strict fusion)
+#   prompt      RAM++ tags + Places365 room per step, ASCENT's prompts verbatim
+#   LLM         Qwen2.5-7B, local, ASCENT's system message
+#
+# `detector.strict` / `exploration.value_strict`: a served model that does not
+# answer raises `PerceptionUnavailable` instead of returning a neutral value.
+# Under this gate a silent 0 from BLIP-2 is an agent that never STOPs.
+
+defaults:
+  - override /agent: s71
+  - override /detector: dfine
+  - override /scene_graph: place365
+  - override /exploration: s71
+  - override /llm: qwen_local
+  - override /verification: s71
+  - override /eval: scenes20_ep0to4
+
+mapping:
+  multi_floor: true

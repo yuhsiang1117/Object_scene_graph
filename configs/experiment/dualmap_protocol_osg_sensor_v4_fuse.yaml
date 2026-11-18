@@ -1,0 +1,32 @@
+# @package _global_
+#
+# `_sensor_v2` plus the proposal stage, fused as appearance hypotheses.
+#
+# FastSAM runs on every keyframe the detector did not name the target on. A
+# region above the per-frame bar enters the map as a PROPOSAL observation
+# carrying its MobileCLIP feature, into a population of tracks the detector's
+# map never sees (no association, presence, linking, draws or ids shared --
+# the named path is bit-identical to `_sensor_v2`, verified trial for trial
+# on 43 episodes with commits off). A proposal-only track keeps the running
+# mean of its features, and may become a candidate only behind every named
+# track and only past this bar, set on the observation runs
+# (docs/history/PROPOSAL_FUSION.md) against the authored object positions:
+#
+#   commit_min_obs 4, commit_tau 0.28
+#     true tracks on the 11 perception trials that had one:  8/11 clear it
+#     phantom tracks, 110 over 37 episodes:                   9 clear it, in 5 episodes
+#
+# A phantom that clears it costs one attempt, not the trial; the true track
+# outranks it by feature where both exist. Read `goal_commit_log[].proposal_only`
+# and the paired perception trials before reading SR.
+
+defaults:
+  - dualmap_protocol_osg_sensor_v2
+
+region_proposal:
+  enabled: true
+  every_keyframe: true
+  max_per_episode: 100000
+  commits: true
+  commit_min_obs: 4
+  commit_tau: 0.28

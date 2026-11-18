@@ -1,0 +1,85 @@
+# @package _global_
+#
+# ASCENT's policy on OSG's eyes: the review's "swap the sensors, align the
+# perception". `mfv2_ascent` with its target detector replaced by the one the
+# OSG arm (`mfv2_osg`) runs -- YOLOE-11L-seg at imgsz 1280, the same score
+# thresholds and the same 47-name vocabulary, copied from that arm's composed
+# config rather than re-derived, so for one frame the two arms are handed the
+# same boxes and what differs is what each policy does with them.
+#
+# Everything else is ASCENT's: its value map (BLIP-2), RAM tags, Places365
+# rooms, its local LLM, its stair fusion (GroundingDINO `stair` + RedNet --
+# YOLOE names "stairs" too, and `AscentNavAgent._stair_det_mask` keeps it out
+# of that fusion), and no prior map.
+#
+# Not neutral, and to be quoted with the number: this vocabulary and the 0.2
+# class thresholds were chosen for the OSG arm on these benchmark objects
+# (`docs/ZERO_SHOT_AUDIT.md`). Handing them to ASCENT is the point -- it gets
+# the same advantage -- but neither arm is zero-shot in its detector.
+#
+#   bash scripts/serve_perception.sh      # ASCENT still needs four of the five
+#   python scripts/run_eval.py +experiment=mfv2_ascent_yoloe \
+#       output_dir=outputs/mfv2/ascent_yoloe_s42
+defaults:
+  - mfv2_ascent
+  - _self_
+
+detector:
+  name: yoloe
+  weights: data/weights/yoloe-11l-seg.pt
+  imgsz: 1280
+  conf: 0.3
+  class_conf:
+    blue plastic pitcher: 0.2
+    tin can: 0.2
+    banana: 0.2
+    red plate: 0.2
+  gdino_target_url: ''
+  vocabulary:
+    - chair
+    - sofa
+    - armchair
+    - plant
+    - bed
+    - toilet
+    - tv_monitor
+    - table
+    - desk
+    - cabinet
+    - shelf
+    - dresser
+    - wardrobe
+    - nightstand
+    - lamp
+    - pillow
+    - cushion
+    - picture
+    - mirror
+    - window
+    - door
+    - sink
+    - bathtub
+    - shower
+    - towel
+    - counter
+    - stool
+    - bench
+    - refrigerator
+    - oven
+    - microwave
+    - washing machine
+    - stove
+    - fireplace
+    - stairs
+    - rug
+    - curtain
+    - clothes
+    - basket
+    - banana
+    - bowl
+    - cracker box
+    - mug
+    - blue plastic pitcher
+    - red plate
+    - bleach bottle
+    - tin can

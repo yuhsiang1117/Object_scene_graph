@@ -1,0 +1,240 @@
+"""Cross-floor portals: where can the agent see another storey from here?
+
+The measured failure this addresses: on the 100-episode v1 run, **all 24
+cross-floor episodes failed and not one of them ever attempted a floor
+change**. The agent could not fail to climb the stairs -- it never tried.
+Stage 2 showed the mechanics work once a transition is committed (the Habitat
+navmesh walks the stairs by itself), so the missing piece is purely the
+decision, and the decision needs two things: knowing another floor exists, and
+having somewhere to head for.
+
+Both fall out of the height layer that Stage 4 added. Wherever the agent can
+see another storey -- up a stairwell, over a mezzanine rail, down an opening --
+the cells it observes record a surface roughly a storey away from the floor it
+is standing on. Those cells are a **portal**: not the staircase itself, but a
+place to walk toward, after which the navmesh handles the climb.
+
+This deliberately does NOT depend on `mapping.stairs`, which does not detect
+staircases (see docs/history/MULTI_FLOOR.md). It needs only the height layer, and it
+works for descending portals too, which are invisible to a forward-facing
+obstacle band.
+"""
+from __future__ import annotations
+
+from dataclasses import dataclass
+from typing import List, Optional, Sequence
+
+import numpy as np
+
+from .costmap import Costmap2D
+
+
+@dataclass
+class Portal:
+    """A patch of another storey, visible from the current one."""
+
+    centroid_xy: np.ndarray   # world (x, z) to head toward
+    target_y: float           # median surface height of the patch
+    n_cells: int
+    delta_y: float            # signed: + is up, - is down
+
+    @property
+    def going_up(self) -> bool:
+        return self.delta_y > 0
+
+
+def find_portals(
+    costmap: Costmap2D,
+    floor_y: float,
+    min_delta_m: float = 1.8,
+    max_delta_m: float = 4.0,
+    min_cells: int = 20,
+    merge_m: float = 1.5,
+) -> List[Portal]:
+    """Patches of the height layer that sit a storey away from `floor_y`.
+
+    `min_delta_m` matches the floor estimator's `new_level_m`: below it the
+    surface is a split level or furniture, not another storey. `max_delta_m`
+    rejects readings two floors off, which are geometrically possible down a
+    tall atrium but useless as a next goal.
+    """
+    from scipy import ndimage
+
+    if costmap.height is None:
+        return []
+    rel = costmap.height - floor_y
+    other = np.isfinite(rel) & (np.abs(rel) >= min_delta_m) & (np.abs(rel) <= max_delta_m)
+    if not other.any():
+        return []
+
+    labels, n = ndimage.label(other, structure=np.ones((3, 3)))
+    portals: List[Portal] = []
+    for lbl in range(1, n + 1):
+        rc = np.argwhere(labels == lbl)
+        if rc.shape[0] < min_cells:
+            continue
+        ys = costmap.height[labels == lbl]
+        ys = ys[np.isfinite(ys)]
+        if ys.size == 0:
+            continue
+        target = float(np.median(ys))
+        portals.append(
+            Portal(
+                centroid_xy=costmap.grid_to_world(rc.mean(axis=0)),
+                target_y=target,
+                n_cells=int(rc.shape[0]),
+                delta_y=target - float(floor_y),
+            )
+        )
+    return _merge(sorted(portals, key=lambda p: -p.n_cells), merge_m)
+
+
+def _merge(portals: Sequence[Portal], merge_m: float) -> List[Portal]:
+    """Collapse portals onto the same opening -- a stairwell seen from several
+    poses yields several patches of one thing."""
+    kept: List[Portal] = []
+    for p in portals:
+        if any(
+            np.linalg.norm(p.centroid_xy - k.centroid_xy) < merge_m
+            and (p.delta_y > 0) == (k.delta_y > 0)
+            for k in kept
+        ):
+            continue
+        kept.append(p)
+    return kept
+
+
+# graph.priors adds this much when the target CATEGORY itself is mapped on the
+# floor, so any evidence at or above it means "the target is already here".
+_TARGET_PRESENT = 10
+
+
+class FloorSwitchPolicy:
+    """When may the agent leave the storey it is on?
+
+    ASCENT's gate rather than MFNP's weighted score, for reasons specific to
+    this repo: MFNP's score needs an LLM term, and `docs/history/INVESTIGATION.md`
+    records that LLM frontier guidance produced byte-identical trajectories to
+    the geometric heuristic here across all 35 episodes. Its other two terms
+    need new accumulators whose weights would have to be tuned at n=65, where
+    the standard error is ~6 points. ASCENT's rule reuses state this code
+    already computes and has the better published number (65.4 vs 58.3 SR).
+
+    The rule: switch only when nothing near is left to explore on this floor,
+    never twice in quick succession, and not at the very start or the very end
+    of the budget (MFNP's two free guards -- early on the current floor is
+    barely mapped, late there is no budget to recover from a wrong choice).
+    """
+
+    def __init__(
+        self,
+        max_steps: int = 500,
+        near_frontier_m: float = 4.0,
+        min_interval_steps: int = 50,
+        no_switch_before: int = 50,
+        no_switch_after_frac: float = 0.7,
+        use_target_evidence: bool = False,
+        early_switch_step: int = 30,
+        min_objects_to_judge: int = 8,
+        strong_evidence: int = 2,
+        evidence_patience_steps: int = 120,
+        dwell_on_arrival: bool = False,
+    ) -> None:
+        self.dwell_on_arrival = bool(dwell_on_arrival)
+        self.near_frontier_m = float(near_frontier_m)
+        self.min_interval_steps = int(min_interval_steps)
+        self.no_switch_before = int(no_switch_before)
+        self.no_switch_after = int(no_switch_after_frac * max_steps)
+        self.use_target_evidence = bool(use_target_evidence)
+        self.early_switch_step = int(early_switch_step)
+        self.min_objects_to_judge = int(min_objects_to_judge)
+        self.strong_evidence = int(strong_evidence)
+        self.evidence_patience_steps = int(evidence_patience_steps)
+        self.last_switch_step = -10 ** 9
+
+    def may_switch(
+        self,
+        step: int,
+        best_path_cost: Optional[float],
+        evidence: Optional[int] = None,
+        n_objects: int = 0,
+        steps_on_floor: int = 0,
+    ) -> bool:
+        """`evidence` is how many of the target's usual companions are on this
+        floor (see graph.priors); None means no usable prior for the category.
+
+        Two hard guards always apply -- the late cutoff and the interval. Within
+        those, the target evidence can both bring a switch FORWARD (this floor
+        has been looked at and shows no sign of the target) and hold one BACK
+        (it looks like the right kind of floor, so keep searching here).
+        """
+        if step > self.no_switch_after:
+            return False
+        if step - self.last_switch_step < self.min_interval_steps:
+            return False
+
+        if self.use_target_evidence and evidence is not None:
+            # A mapped instance of the target category itself (evidence carries
+            # a large bonus for it) settles the question: never leave a floor
+            # that has the thing we are looking for on it.
+            if evidence >= _TARGET_PRESENT:
+                return False
+
+            searched = (
+                n_objects >= self.min_objects_to_judge and step >= self.early_switch_step
+            )
+            promising = evidence >= self.strong_evidence
+            # Context said "the target's kind of floor", but a long search here
+            # has turned up nothing. The evidence is stale: a bathroom on this
+            # storey does not mean THIS storey's bathroom has the toilet.
+            stale = (
+                self.evidence_patience_steps > 0
+                and steps_on_floor >= self.evidence_patience_steps
+            )
+
+            # Go now, while there is budget to search the next floor. Requiring
+            # evidence to be exactly zero was far too strict -- almost any floor
+            # has one incidental companion object, so this fired on 3 of 24
+            # cross-floor episodes where the looser rule fired on 14.
+            if searched and (not promising or stale):
+                return True
+            if promising and not stale:
+                return False
+
+        if step < self.no_switch_before:
+            return False
+        if self.dwell_on_arrival and steps_on_floor < self.no_switch_before:
+            # A floor the agent has just reached has almost no map, so "no near
+            # frontier" is trivially true there and the agent leaves again
+            # before it has looked. Measured on 00808's yellow bottle: a
+            # committed descent to the object's floor at step 314, this clause
+            # satisfied at step 347, back upstairs by 418. The same dwell the
+            # start of an episode gets, from the moment of arrival.
+            return False
+        # "No near frontier": either nothing selectable at all, or the best
+        # thing left on this floor is further than a portal is worth.
+        return best_path_cost is None or best_path_cost > self.near_frontier_m
+
+    def may_switch_to_known_stairs(self, step: int, steps_on_floor: int) -> bool:
+        """The gate, minus the reason that does not apply to a known staircase.
+
+        `may_switch`'s last clause is "nothing near is left here", and it exists
+        because leaving a floor is expensive and speculative: you walk off toward
+        a patch of another storey that may not even be a way up. When the prior
+        map records a staircase it actually walked, the speculation is gone and
+        that objection weakens.
+
+        What stays is every guard about TIMING, because those are about budget
+        rather than about evidence: never in the last third of the episode, never
+        twice in quick succession, and not before the current floor has been
+        looked at. `steps_on_floor` rather than `step`, so arriving on a new
+        storey does not immediately license leaving it again.
+        """
+        if step > self.no_switch_after:
+            return False
+        if step - self.last_switch_step < self.min_interval_steps:
+            return False
+        return steps_on_floor >= self.no_switch_before
+
+    def note_switch(self, step: int) -> None:
+        self.last_switch_step = step

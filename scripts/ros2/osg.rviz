@@ -1,0 +1,273 @@
+# The OSG view of a Stretch 3 run: what the robot knows (map, costmaps, plan,
+# scan, TF), what the pipeline sees (the two camera streams), and what the
+# pipeline is asking for (/osg/goal, the pose the bridge last handed to Nav2).
+# Loaded by scripts/ros2/rviz.sh. Topic names match the `ros2` config group's
+# defaults and Nav2's; a topic the robot does not publish simply shows "No
+# messages received", which is itself information. The three /osg/* images are
+# the pipeline's own view, relayed by the bridge (src/osg/eval/debug_stream.py):
+# the rotated frame it consumes, the detector's boxes and masks on it, and the
+# two-panel picture the simulator's debug video shows. /osg/scene_graph is the
+# scene graph itself as markers: objects as ellipsoids coloured by presence
+# belief, containers, rooms, the trajectory, path, chosen frontier and goal,
+# and a status line (storey, and the storey the agent WANTS -- the operator's
+# cue to carry it). Storeys stack in z by floor.virtual_storey_m. The raw
+# camera streams are kept but off by default; they are the room on its side.
+# Window Geometry: size and position only. A hand-written QMainWindow State
+# string does not match these panels and docks every image view as a collapsed
+# strip with the 3D view crushed into a corner -- which looks like "RViz shows
+# nothing" -- and with NO geometry block at all rviz2 sat on its splash screen
+# indefinitely on this software-GL setup. Save a real layout from a session
+# (File > Save Config) if a fixed one is ever wanted.
+Panels:
+- Class: rviz_common/Displays
+  Name: Displays
+- Class: rviz_common/Views
+  Name: Views
+Visualization Manager:
+  Class: ''
+  Displays:
+  - Class: rviz_default_plugins/Grid
+    Enabled: true
+    Name: Grid
+    Cell Size: 1
+    Plane Cell Count: 20
+    Reference Frame: <Fixed Frame>
+    Value: true
+  - Class: rviz_default_plugins/TF
+    Enabled: true
+    Name: TF
+    Frame Timeout: 15
+    Marker Scale: 0.5
+    Show Arrows: false
+    Show Axes: true
+    Show Names: true
+    Update Interval: 0
+    Value: true
+  - Class: rviz_default_plugins/Map
+    Enabled: true
+    Name: Map
+    Alpha: 0.7
+    Color Scheme: map
+    Draw Behind: true
+    Topic:
+      Depth: 5
+      Durability Policy: Transient Local
+      History Policy: Keep Last
+      Reliability Policy: Reliable
+      Value: /map
+    Update Topic:
+      Depth: 5
+      Durability Policy: Volatile
+      History Policy: Keep Last
+      Reliability Policy: Reliable
+      Value: /map_updates
+    Value: true
+  - Class: rviz_default_plugins/Map
+    Enabled: true
+    Name: Global costmap
+    Alpha: 0.4
+    Color Scheme: costmap
+    Draw Behind: false
+    Topic:
+      Depth: 5
+      Durability Policy: Transient Local
+      History Policy: Keep Last
+      Reliability Policy: Reliable
+      Value: /global_costmap/costmap
+    Update Topic:
+      Depth: 5
+      Durability Policy: Volatile
+      History Policy: Keep Last
+      Reliability Policy: Reliable
+      Value: /global_costmap/costmap_updates
+    Value: true
+  - Class: rviz_default_plugins/Map
+    Enabled: false
+    Name: Local costmap
+    Alpha: 0.4
+    Color Scheme: costmap
+    Draw Behind: false
+    Topic:
+      Depth: 5
+      Durability Policy: Transient Local
+      History Policy: Keep Last
+      Reliability Policy: Reliable
+      Value: /local_costmap/costmap
+    Update Topic:
+      Depth: 5
+      Durability Policy: Volatile
+      History Policy: Keep Last
+      Reliability Policy: Reliable
+      Value: /local_costmap/costmap_updates
+    Value: true
+  - Class: rviz_default_plugins/LaserScan
+    Enabled: true
+    Name: Scan
+    Channel Name: intensity
+    Color: 255; 255; 255
+    Color Transformer: FlatColor
+    Position Transformer: XYZ
+    Size (m): 0.04
+    Style: Flat Squares
+    Topic:
+      Depth: 5
+      Durability Policy: Volatile
+      History Policy: Keep Last
+      Reliability Policy: Best Effort
+      Value: /scan
+    Use Fixed Frame: true
+    Value: true
+  - Class: rviz_default_plugins/Path
+    Enabled: true
+    Name: Global plan
+    Alpha: 1
+    Color: 25; 255; 0
+    Line Style: Billboards
+    Line Width: 0.04
+    Topic:
+      Depth: 5
+      Durability Policy: Volatile
+      History Policy: Keep Last
+      Reliability Policy: Reliable
+      Value: /plan
+    Value: true
+  - Class: rviz_default_plugins/Path
+    Enabled: true
+    Name: Local plan
+    Alpha: 1
+    Color: 0; 170; 255
+    Line Style: Billboards
+    Line Width: 0.03
+    Topic:
+      Depth: 5
+      Durability Policy: Volatile
+      History Policy: Keep Last
+      Reliability Policy: Reliable
+      Value: /local_plan
+    Value: true
+  - Class: rviz_default_plugins/Pose
+    Enabled: true
+    Name: OSG goal
+    Alpha: 1
+    Axes Length: 1
+    Axes Radius: 0.1
+    Color: 255; 25; 0
+    Head Length: 0.3
+    Head Radius: 0.15
+    Shaft Length: 0.6
+    Shaft Radius: 0.06
+    Shape: Arrow
+    Topic:
+      Depth: 5
+      Durability Policy: Transient Local
+      History Policy: Keep Last
+      Reliability Policy: Reliable
+      Value: /osg/goal
+    Value: true
+  - Class: rviz_default_plugins/MarkerArray
+    Enabled: true
+    Name: OSG scene graph
+    Namespaces: {}
+    Topic:
+      Depth: 1
+      Durability Policy: Volatile
+      History Policy: Keep Last
+      Reliability Policy: Reliable
+      Value: /osg/scene_graph
+    Value: true
+  - Class: rviz_default_plugins/Image
+    Enabled: true
+    Name: OSG rotated RGB
+    Max Value: 1
+    Median window: 5
+    Min Value: 0
+    Normalize Range: true
+    Topic:
+      Depth: 1
+      Durability Policy: Volatile
+      History Policy: Keep Last
+      Reliability Policy: Reliable
+      Value: /osg/rgb
+    Value: true
+  - Class: rviz_default_plugins/Image
+    Enabled: true
+    Name: OSG detections (boxes + masks)
+    Max Value: 1
+    Median window: 5
+    Min Value: 0
+    Normalize Range: true
+    Topic:
+      Depth: 1
+      Durability Policy: Volatile
+      History Policy: Keep Last
+      Reliability Policy: Reliable
+      Value: /osg/detections
+    Value: true
+  - Class: rviz_default_plugins/Image
+    Enabled: true
+    Name: OSG debug panel (sim view)
+    Max Value: 1
+    Median window: 5
+    Min Value: 0
+    Normalize Range: true
+    Topic:
+      Depth: 1
+      Durability Policy: Volatile
+      History Policy: Keep Last
+      Reliability Policy: Reliable
+      Value: /osg/debug
+    Value: true
+  - Class: rviz_default_plugins/Image
+    Enabled: false
+    Name: RGB (as published)
+    Max Value: 1
+    Median window: 5
+    Min Value: 0
+    Normalize Range: true
+    Topic:
+      Depth: 5
+      Durability Policy: Volatile
+      History Policy: Keep Last
+      Reliability Policy: Best Effort
+      Value: /camera/color/image_raw
+    Value: true
+  - Class: rviz_default_plugins/Image
+    Enabled: false
+    Name: Depth as published
+    Max Value: 1
+    Median window: 5
+    Min Value: 0
+    Normalize Range: true
+    Topic:
+      Depth: 5
+      Durability Policy: Volatile
+      History Policy: Keep Last
+      Reliability Policy: Best Effort
+      Value: /camera/aligned_depth_to_color/image_raw
+    Value: true
+  Enabled: true
+  Global Options:
+    Background Color: 48; 48; 48
+    Fixed Frame: map
+    Frame Rate: 30
+  Name: root
+  Tools:
+  - Class: rviz_default_plugins/MoveCamera
+  - Class: rviz_default_plugins/Select
+  - Class: rviz_default_plugins/FocusCamera
+  - Class: rviz_default_plugins/Measure
+  Value: true
+  Views:
+    Current:
+      Class: rviz_default_plugins/TopDownOrtho
+      Name: Top-down
+      Scale: 60
+      Target Frame: <Fixed Frame>
+      X: 0
+      Y: 0
+    Saved: null
+Window Geometry:
+  Height: 1000
+  Width: 1700
+  X: 100
+  Y: 60

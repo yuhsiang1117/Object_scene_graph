@@ -1,0 +1,13 @@
+# @package _global_
+#
+# The local inquiry, restricted to things that could be the object.
+#
+# The unfused arm picked a pillow 13 times, a lamp 5 and a bench 4 over 24 mug
+# and scissors trials: 37 of its 44 picks were furniture. A crop of a bed is a
+# better match for "a photo of a mug" than a 40-pixel smudge of the real mug,
+# and DualMap never meets that problem because its detector proposes the small
+# object. This bounds the pick by mapped geometry instead.
+defaults:
+  - archive/dualmap_protocol_osg_look_flat_anchor_v2_island_close_feat
+feature_memory:
+  local_max_extent_m: 0.6

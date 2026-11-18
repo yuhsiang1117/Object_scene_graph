@@ -1,0 +1,113 @@
+# syntax=docker/dockerfile:1
+# ---------------------------------------------------------------------------
+# The ROS 2 half: rclpy, and nothing else.
+#
+# A separate, tiny image rather than ROS bolted onto the Thor one, and the
+# reason is measurable: with ROS stubbed out, importing `osg.ros2.bridge_node`
+# pulls numpy and the standard library and NOTHING further -- no torch, no
+# OpenCV, no scipy. That was the design intent of `src/osg/ros2/` (it has to
+# import under two interpreters) and this is what it buys.
+#
+# Three things follow from it:
+#
+#   The image matches the ROBOT. A Stretch 3 runs ROS 2 Humble on Ubuntu 22.04;
+#   `ros:humble-ros-base` is Ubuntu 22.04 with Humble's own rclpy, so the two
+#   ends of every topic and action are the same distro. No cross-distro DDS, no
+#   Humble compiled from source against a Python it was never tested on.
+#
+#   It needs no CUDA. Nothing here links against the host's L4T libraries, so
+#   running a jammy userspace on JetPack's Ubuntu is not a compatibility
+#   question -- the ML container is the only one that touches the GPU.
+#
+#   It is architecture-agnostic. `ros:humble-ros-base` is multi-arch, so this
+#   same file builds on the Thor (arm64), on an x86 workstation, or on the
+#   robot's own computer if the bridge is ever moved there.
+#
+# Built and run by docker/compose.thor.yaml. See docs/THOR.md.
+# ---------------------------------------------------------------------------
+ARG ROS_BASE=ros:humble-ros-base
+# Two targets: `bridge` (the default -- compose names it explicitly, because
+# without that Docker builds the LAST stage) and `rviz`, below.
+FROM ${ROS_BASE} AS bridge
+
+ARG DEBIAN_FRONTEND=noninteractive
+SHELL ["/bin/bash", "-o", "pipefail", "-c"]
+
+# Exactly what `bridge_node.py` imports, and nothing beyond it.
+#   nav2-msgs        NavigateToPose -- the goal the pipeline publishes
+#   control-msgs     FollowJointTrajectory -- the head tilt for look_up/down
+#   message-filters  the RGB/depth time synchroniser
+#   tf2-ros-py       map -> camera lookups
+#   rmw-cyclonedds   the Stretch's DDS implementation
+# Images are decoded with numpy and quaternions turned by hand (frames.py), so
+# there is no cv_bridge and no tf_transformations here.
+#
+# python3-pip is in this list because `ros:humble-ros-base` does not ship one
+# -- only `ros-base`'s colcon tooling, which does not pull pip in. Without it
+# the hydra install below fails with `pip3: command not found`.
+RUN --mount=type=cache,target=/var/cache/apt,sharing=private \
+    rm -f /etc/apt/apt.conf.d/docker-clean \
+    && apt-get update && apt-get install -y --no-install-recommends \
+       ros-humble-nav2-msgs \
+       ros-humble-rtabmap-msgs \
+       ros-humble-control-msgs \
+       ros-humble-message-filters \
+       ros-humble-tf2-ros-py \
+       ros-humble-rmw-cyclonedds-cpp \
+       python3-numpy \
+       python3-pip \
+       python3-opencv \
+       sudo tmux \
+    && rm -rf /var/lib/apt/lists/*
+
+# `scripts/ros2/bridge.sh` composes the `ros2` config group to build the
+# bridge's flags, so `ros2.depth_topic` in a yaml is what the node actually
+# subscribes to. That needs hydra -- pure Python, and `osg.core.config` imports
+# nothing heavier (checked: hydra and omegaconf only).
+RUN --mount=type=cache,target=/root/.cache/pip \
+    pip3 install --no-cache-dir "hydra-core>=1.3" omegaconf
+
+ENV PYTHONPATH=/workspace/src \
+    RMW_IMPLEMENTATION=rmw_cyclonedds_cpp
+# The bridge's interpreter IS this image's python3 (Humble's own, 3.10), and
+# the config is composed with the same one -- there is no second environment
+# here, unlike the Thor image where these differ.
+ENV ROS_SETUP=/opt/ros/humble/setup.bash \
+    CONFIG_PYTHON=/usr/bin/python3
+
+ARG USERNAME=user
+ARG USER_UID=1000
+ARG USER_GID=1000
+RUN groupadd -g $USER_GID $USERNAME 2>/dev/null || true \
+ && useradd -m -s /bin/bash -u $USER_UID -g $USER_GID -G sudo $USERNAME 2>/dev/null || true \
+ && echo '%sudo ALL=(ALL) NOPASSWD:ALL' >> /etc/sudoers \
+ && printf 'umask 002\n' > /etc/profile.d/00-shared-umask.sh \
+ && printf '\nsource /opt/ros/humble/setup.bash\numask 002\n' >> /etc/bash.bashrc
+
+USER $USERNAME
+WORKDIR /workspace
+# No custom entrypoint: the base image's already sources the ROS overlay, and
+# compose supplies the command (scripts/ros2/bridge.sh).
+CMD ["bash", "scripts/ros2/bridge.sh"]
+
+# ---------------------------------------------------------------------------
+# rviz: the same image plus RViz, as a SEPARATE build target so the bridge
+# proper stays the ~270 MB it was designed to be -- rviz2 and Qt roughly
+# triple that. It is the only ROS process on the Thor, so it is the only place
+# an RViz can run; compose exposes it as the on-demand `rviz` service
+# (profile `tools`), which puts the window on the Thor's own screen.
+#
+# libgl1-mesa-dri is the software renderer (llvmpipe). The bridge image has no
+# GPU on purpose, and a debug view does not need one.
+# ---------------------------------------------------------------------------
+FROM bridge AS rviz
+ARG USERNAME=user
+USER root
+RUN --mount=type=cache,target=/var/cache/apt,sharing=private \
+    apt-get update && apt-get install -y --no-install-recommends \
+       ros-humble-rviz2 \
+       ros-humble-rqt-image-view \
+       libgl1-mesa-dri \
+    && rm -rf /var/lib/apt/lists/*
+USER $USERNAME
+CMD ["bash", "scripts/ros2/rviz.sh"]

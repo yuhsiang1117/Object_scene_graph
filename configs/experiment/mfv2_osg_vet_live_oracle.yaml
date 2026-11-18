@@ -1,0 +1,13 @@
+# @package _global_
+#
+# The final arm (`mfv2_osg_landing_vet_live`) with ONE change: the staircase walked by the navmesh follower (privileged: a ceiling on the climb, not a comparable arm).
+# Paired against osg_landing_vet_live_s<seed>; the same ablation on the earlier
+# arm is `mfv2_osg_mouth_walk_oracle`.
+#
+#   bash scripts/run_mfv2.sh osg_vet_live_oracle <seed>
+defaults:
+  - mfv2_osg_landing_vet_live
+  - _self_
+
+agent:
+  climb_oracle: true

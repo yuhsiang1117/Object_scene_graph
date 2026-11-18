@@ -1,0 +1,20 @@
+# @package _global_
+#
+# `mfv2_osg_landing_vet`, and the approach's depth stop at 0.8 m instead of 1.0
+# (`agent.approach_stop_depth_m`). The benchmark scores a STOP by the horizontal
+# distance to the object's position, success within 1.0 m; the depth stop
+# measures to the object's FRONT surface, so stopping at a depth of 1.0 m lands
+# on the boundary. The 1.0 came from HM3D ObjectNav, whose success region is
+# defined differently.
+#
+# osg_landing, 3 seeds: on-storey STOPs that succeeded ended 0.45 / 0.62 / 0.85 m
+# from the object (10th / 50th / 90th percentile); 9 STOPs in 5 failed episodes
+# ended at 1.0-1.25 m, 5 of them after a commit to the object itself.
+#
+#   bash scripts/run_mfv2.sh osg_landing_vet_close <seed>
+defaults:
+  - mfv2_osg_landing_vet
+  - _self_
+
+agent:
+  approach_stop_depth_m: 0.8

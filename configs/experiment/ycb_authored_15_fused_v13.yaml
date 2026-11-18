@@ -1,0 +1,30 @@
+# @package _global_
+#
+# The structural change: a staircase read off the height layer, and a goal
+# kept on its treads.
+#
+# v9-v12 built and instrumented a sensor-only climb and it never ascended: 11
+# climbs, 0.34 m at best. The reason was the target. The detector's `stairs`
+# mask, seen from below, stamps cells under the upper flight -- on 00821 its
+# target sat 2.7 m beside the true foot -- and a depth-ray carrot only works
+# from ON the flight. Meanwhile a goal placed on the treads is what the PointNav
+# mover will climb, slowly.
+#
+# `floor.climb_targets: flights_first` finds staircases as connected runs of
+# intermediate-height cells whose heights span at least a metre (a table is a
+# plateau; a flight joins two storeys), takes the lowest tread as the foot, and
+# marks the treads traversable. `agent.climb_flight_carrot` then aims each step
+# at the tread 0.35-1.0 m above the agent's standing height, so the goal stays
+# on the flight all the way up. v11's plumbing is kept; the detector-mask
+# targeting and cell carrot of v9/v12 are left off.
+defaults:
+  - ycb_authored_15_fused_v11
+
+agent:
+  climb_flight_carrot: true
+  climb_cell_carrot: false
+  climb_blocked_turn_after: 4
+  climb_max_steps: 200
+
+floor:
+  climb_targets: flights_first

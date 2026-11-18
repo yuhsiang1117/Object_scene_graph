@@ -1,0 +1,21 @@
+# @package _global_
+#
+# v9, with the stair evidence that v9 turned out to be missing.
+#
+# v9's first cross-floor episode climbed exactly as designed -- engaged at the
+# goal, forced forward 31 times, gained nothing, stalled out, remembered the
+# failure -- at a portal, because it had no staircase to aim at: 8 of the 12
+# genuine storey changes are descents, the agent never looked down
+# (`down_look_every` defaults to 0), stair evidence accumulated only on the one
+# frame of a look-down, and `StairDetector.extract` had no caller anywhere.
+#
+# So: stamp the detector's `stairs` masks on every keyframe, look down every 30
+# steps so drop-offs register, and offer the extracted up/down regions as climb
+# targets beside the semantic tracks, with the flight's direction respected when
+# a storey has been requested.
+defaults:
+  - ycb_authored_15_fused_v9
+
+agent:
+  stair_evidence_every_kf: true
+  down_look_every: 30

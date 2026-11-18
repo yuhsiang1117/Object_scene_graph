@@ -1,0 +1,13 @@
+# @package _global_
+#
+# Ablation of the final arm (`mfv2_osg_mouth_walk`): the presence filter off: a mapped object is believed where it was mapped until a
+# detection contradicts it (Table III's first ablation, on the final arm).
+#
+#   bash scripts/run_mfv2.sh osg_mouth_walk_no_presence <seed>
+defaults:
+  - mfv2_osg_mouth_walk
+  - _self_
+
+scene_graph:
+  presence:
+    enabled: false

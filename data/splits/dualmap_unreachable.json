@@ -1,0 +1,21 @@
+{
+ "rule": "no navmesh point within 1.0 m of the object for radius 0.18 / height 0.88",
+ "source": "scripts/legacy/analyze_reachability_ceiling.py",
+ "trial_ids": [
+  "00829-QaLdnwvtxbs__cross_anchor__0129-1__scissors",
+  "00829-QaLdnwvtxbs__in_anchor__0118__pitcher",
+  "00848-ziup5kvtCCR__cross_anchor__0128-1__cracker_box",
+  "00848-ziup5kvtCCR__cross_anchor__0129-1__pitcher",
+  "00848-ziup5kvtCCR__in_anchor__0116__pitcher",
+  "00848-ziup5kvtCCR__in_anchor__0117__banana",
+  "00848-ziup5kvtCCR__in_anchor__0118__cracker_box",
+  "00848-ziup5kvtCCR__in_anchor__0118__pitcher",
+  "00848-ziup5kvtCCR__in_anchor__0118__plate",
+  "00880-Nfvxx8J5NCo__cross_anchor__0128-2__soup_can",
+  "00880-Nfvxx8J5NCo__cross_anchor__0129-1__pitcher",
+  "00880-Nfvxx8J5NCo__in_anchor__0116__plate",
+  "00880-Nfvxx8J5NCo__in_anchor__0117__cracker_box",
+  "00880-Nfvxx8J5NCo__in_anchor__0117__plate",
+  "00880-Nfvxx8J5NCo__in_anchor__0118__cracker_box"
+ ]
+}

@@ -1,0 +1,19 @@
+# @package _global_
+#
+# Fix 1 of 4: stop at the closest pose the approach reached, not the pose its
+# terminal rule happened to fire in.
+#
+# Measured over 81 trials the agent gives up a median 0.18 m between its closest
+# approach and where it stops. On the 21 trials the stall arm still loses to the
+# navmesh arm it gives up 0.04-1.72 m, and ten of the sixteen with ground truth
+# had already come inside 1.0 m and every one of them stopped outside it.
+#
+# 0.15 m: below one forward step (0.25 m), so a pose that is merely a step past
+# the tangent point is worth walking back for, while ordinary jitter is not.
+# Sensor-only -- the distance is to the agent's own estimate of the track centre.
+
+defaults:
+  - dualmap_protocol_osg_sensor_r10_fit
+
+agent:
+  approach_stop_at_best_m: 0.15

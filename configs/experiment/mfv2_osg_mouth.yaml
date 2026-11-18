@@ -1,0 +1,29 @@
+# @package _global_
+#
+# `mfv2_osg_descent` with the storey switch aimed at the staircase the prior
+# map walked, read the way it was recorded (`floor.prior_stair_mouth: arrival`,
+# agent/floor_policy.py `_remembered_arrival`): both points of a saved stair
+# edge lie on the storey ARRIVED at, so this storey's mouth toward the target
+# is where pass 1 arrived here from that side. Benchmark v2 seed 42
+# (mfv2_osg_climb): 13 of the 18 cross-storey episodes that never reached the
+# object's storey had such an arrival 0.3-0.8 m from the true mouth, and chased
+# sightline portals (00873: a patch at (-7.8, -6.48), 3.4 m from the lip) or
+# misread flights instead. Used ahead of any portal; given up after two failed
+# pursuits beside it.
+#
+# And the route climb's stall rule allows the walk to the flight
+# (`agent.climb_route_approach_steps`): 00873 static 50002 on mfv2_osg_descent
+# stalled at step 41 on the flat floor, heading for the lip 1 m away.
+#
+#   bash scripts/run_mfv2.sh osg_mouth <seed>
+defaults:
+  - mfv2_osg_descent
+  - _self_
+
+floor:
+  prior_stair_mouth: arrival
+  prefer_prior_stairs: true
+  prior_stair_max_failures: 2
+
+agent:
+  climb_route_approach_steps: 60

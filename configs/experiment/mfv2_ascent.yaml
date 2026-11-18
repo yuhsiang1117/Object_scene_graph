@@ -1,0 +1,42 @@
+# @package _global_
+#
+# ASCENT on Benchmark v2 (`mfv2_dataset`), with the target detector ASCENT
+# itself uses for a query COCO cannot name: GroundingDINO by name
+# (`map_controller.py:715-719`) at VLFM's `non_coco_threshold` 0.4
+# (`vlfm/policy/base_objectnav_policy.py:59`), the config ASCENT's policy is
+# built from. v1's ASCENT arm (`mf5_ascent_crossanchor`) never set
+# `detector.gdino_target_url`, so D-FINE alone looked for a cracker box, a toy
+# airplane and a tin can -- classes it has no name for -- and scored 0/25.
+#
+# Like v1, ASCENT gets no prior map: it is a memoryless explorer, and that IS
+# the arm. An ASCENT given pass 1's obstacle map is the memory-matched
+# baseline still to be built: `load_obstacle_map` pastes into OSG's floor
+# stack, not into ASCENT's own `ObstacleMap`s.
+#
+#   bash scripts/serve_perception.sh
+#   python scripts/run_eval.py +experiment=mfv2_ascent output_dir=outputs/mfv2/ascent_s42
+defaults:
+  - mf5_ascent_crossanchor
+  - mfv2_dataset
+  - _self_
+
+detector:
+  gdino_target_url: http://localhost:13184/gdino
+  gdino_target_conf: 0.4
+
+eval:
+  # The protocol's three attempts (PAPER.md, Metrics), as the OSG arm has them.
+  # v1's ASCENT arm and this preset's first Benchmark v2 runs (snapshot 8be0651,
+  # outputs/mfv2/ascent_s4*) composed to ONE: every ASCENT episode ended at its
+  # first wrong STOP while OSG had two more. A failed attempt re-arms ASCENT
+  # through its own false-positive path (`AscentNavAgent.rearm`). The
+  # single-attempt runs still give first-attempt SR, which
+  # `scripts/analyze_multifloor.py` reports for every arm.
+  attempts: 3
+
+verification:
+  # What a failed attempt rules out, as the OSG arm has it: the place within
+  # `scene_graph.fp_disable_radius_m` (0.5 m) of the burnt cloud. Without it
+  # the smoke (00800 toy airplane) spent all three attempts in 35 steps on one
+  # ceiling fixture re-detected a cell over.
+  failed_attempt_disables_place: true

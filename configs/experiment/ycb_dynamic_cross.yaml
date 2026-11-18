@@ -1,0 +1,38 @@
+# @package _global_
+#
+# The cross_anchor-optimised configuration: condition Q, replicated.
+#
+#   run          in_anchor  cross_anchor  overall   SPL
+#   Q                0.708         0.500    0.604  0.303
+#   Q2 (repeat)      0.708         0.542    0.625  0.304
+#   mean             0.708         0.521    0.615
+#
+# in_anchor is IDENTICAL across the two runs and cross_anchor is the best of the
+# whole A-U campaign. Q is also the only condition that has ever moved scene
+# 00848, whose in_anchor sat at 0.600 for five consecutive runs.
+#
+# Use `+experiment=ycb_dynamic_best` instead when overall SR is what matters:
+# condition N scores 0.635 with in_anchor 0.812 and cross_anchor 0.458. The two
+# presets differ by ONE flag, and that flag is the trade:
+#
+#   ycb_dynamic_best   anchors the search on the last known pose always
+#   ycb_dynamic_cross  drops the anchor once the agent has BEEN there and found
+#                      nothing, which turns the search into a nearest-first
+#                      sweep -- worth +6 cross_anchor episodes and -5 in_anchor
+#
+# Measured over the 114 relocations, inspections a greedy search needs to reach
+# the true destination surface:
+#
+#                       reaches it   median   within 10
+#     in_anchor   prox    23/57         2        23
+#     in_anchor   flat    15/57        17         5
+#     cross       prox    12/57        22         4
+#     cross       flat    20/57        16         9
+#
+# The two halves want opposite models and no mixture serves both; the agent's
+# own presence belief is what says which half it is in.
+defaults:
+  - ycb_dynamic_best
+
+exploration:
+  search_drop_proximity_after_absence: true

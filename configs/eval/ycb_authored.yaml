@@ -1,0 +1,7 @@
+defaults:
+  - base_hm3d
+
+mode: ycb_authored
+split: val
+num_episodes: -1
+

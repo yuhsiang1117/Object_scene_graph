@@ -1,0 +1,14 @@
+# Shim for the Khronos build: conda-forge's glog ships only a CMake config, while spatial_hash and
+# Hydra look it up through pkg-config, as Ubuntu's libgoogle-glog-dev provides it. glog 0.7's
+# headers need GLOG_USE_GLOG_EXPORT when not consumed through the glog::glog target.
+# env.sh puts this directory on PKG_CONFIG_PATH; `envdir` is the conda env (not `prefix`, which pkg-config re-points at this file) it points into.
+envdir=/workspace/.conda-envs/khronos
+libdir=${envdir}/lib
+includedir=${envdir}/include
+
+Name: libglog
+Description: Google Log (glog) C++ logging framework
+Version: 0.7.1
+Requires.private: gflags
+Libs: -L${libdir} -lglog
+Cflags: -I${includedir} -DGLOG_USE_GLOG_EXPORT

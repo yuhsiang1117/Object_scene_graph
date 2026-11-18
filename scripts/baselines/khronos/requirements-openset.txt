@@ -1,0 +1,23 @@
+# semantic_inference's open-set segmenter (FastSAM + CLIP ViT-L/14) in the Khronos env.
+# Its pyproject pins numpy<2 for boxmot<20, which only the closed-set instance tracker imports
+# (lazily, models/instance_tracker.py); RoboStack Jazzy's Python bindings are built against
+# numpy 2. So semantic_inference itself goes in with --no-deps and these instead:
+#
+#   pip install -r scripts/baselines/khronos/requirements-openset.txt
+#   pip install --no-deps -e relative_work/baselines/khronos_ws/src/semantic_inference/semantic_inference
+torch
+torchvision
+ultralytics
+open_clip_torch
+clip @ git+https://github.com/openai/CLIP.git
+spark_config @ git+https://github.com/MIT-SPARK/Spark-Config.git
+click
+einops
+imageio
+rich
+ruamel.yaml
+distinctipy
+pandas
+seaborn
+onnx
+rosbags
